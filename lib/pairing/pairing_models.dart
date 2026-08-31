@@ -44,10 +44,17 @@ class PairingQrPayload {
 class PairingExchangeResponse {
   const PairingExchangeResponse({required this.device, required this.gatewayUrl, required this.credential});
   factory PairingExchangeResponse.fromJson(JsonMap json) {
+    const fields = {'device', 'gatewayUrl', 'credential'};
+    if (json.keys.toSet().difference(fields).isNotEmpty ||
+        fields.difference(json.keys.toSet()).isNotEmpty) {
+      throw const FormatException(
+        'Pairing exchange fields do not match Gateway v1',
+      );
+    }
     final rawDevice = json['device'];
     if (rawDevice is! Map) throw const FormatException('Missing paired device identity');
     final gatewayUrl = Uri.tryParse(_text(json, 'gatewayUrl'));
-    if (gatewayUrl == null || gatewayUrl.scheme != 'wss' || gatewayUrl.host.isEmpty || gatewayUrl.userInfo.isNotEmpty) throw const FormatException('gatewayUrl must use WSS');
+    if (gatewayUrl == null || gatewayUrl.scheme != 'wss' || gatewayUrl.host.isEmpty || gatewayUrl.userInfo.isNotEmpty || gatewayUrl.query.isNotEmpty || gatewayUrl.fragment.isNotEmpty) throw const FormatException('gatewayUrl must use WSS');
     return PairingExchangeResponse(device: V1HostIdentity.fromJson(Map<String, dynamic>.from(rawDevice)), gatewayUrl: gatewayUrl, credential: _text(json, 'credential'));
   }
   final V1HostIdentity device;

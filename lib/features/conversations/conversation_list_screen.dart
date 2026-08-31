@@ -344,6 +344,7 @@ class _StatusDot extends StatelessWidget {
     final color = switch (status) {
       ConversationStatus.running => Colors.green,
       ConversationStatus.waitingApproval => Colors.orange,
+      ConversationStatus.waitingUserInput => Colors.amber,
       ConversationStatus.error => Theme.of(context).colorScheme.error,
       ConversationStatus.archived => Colors.grey,
       ConversationStatus.idle => Theme.of(context).colorScheme.outline,
@@ -410,6 +411,7 @@ String _statusLabel(ConversationStatus status) {
     ConversationStatus.idle => '空闲',
     ConversationStatus.running => '运行中',
     ConversationStatus.waitingApproval => '等待审批',
+    ConversationStatus.waitingUserInput => '等待输入',
     ConversationStatus.error => '错误',
     ConversationStatus.archived => '已归档',
   };

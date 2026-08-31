@@ -18,6 +18,44 @@ void main() {
     expect(sortRecentConversations([old, recent, other]).map((item) => item.id), ['recent', 'other', 'old']);
   });
 
+  test('groups only by the Host project projection and preserves routed conversations', () {
+    final codex = _routedConversation(
+      nativeId: 'thread-codex',
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: 'codex-work',
+      workspaceRoot: '/logical/project',
+      updatedAt: 2000,
+    );
+    final claude = _routedConversation(
+      nativeId: 'thread-claude',
+      providerPluginId: 'dev.codepet.claude',
+      providerInstanceId: 'claude-work',
+      workspaceRoot: '/logical/project',
+      updatedAt: 1000,
+    );
+    final duplicate = _routedConversation(
+      nativeId: 'thread-codex',
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: 'codex-work',
+      workspaceRoot: '/logical/project',
+      updatedAt: 1500,
+    );
+
+    final projects = groupConversationsByProject(
+      hostDeviceId: 'host-one',
+      values: [claude, duplicate, codex],
+    );
+
+    expect(projects, hasLength(1));
+    expect(projects.single.workspaceRoot, '/logical/project');
+    expect(projects.single.key, 'host-one\u0000/logical/project');
+    expect(
+      projects.single.conversations.map((item) => item.id),
+      [codex.id, claude.id],
+    );
+    expect(codex.id, isNot(claude.id));
+  });
+
   test('sessions isolate projections and disconnect clears runtime data', () async {
     final firstClient = _FakeClient([_conversation('first', '/one', 1000)]);
     final secondClient = _FakeClient([_conversation('second', '/two', 2000)]);
@@ -118,6 +156,33 @@ ConversationSummary _conversation(String id, String? root, int milliseconds) => 
   createdAt: DateTime.fromMillisecondsSinceEpoch(milliseconds, isUtc: true),
   updatedAt: DateTime.fromMillisecondsSinceEpoch(milliseconds, isUtc: true),
 );
+
+ConversationSummary _routedConversation({
+  required String nativeId,
+  required String providerPluginId,
+  required String providerInstanceId,
+  required String workspaceRoot,
+  required int updatedAt,
+}) {
+  final resource = {
+    'deviceId': 'host-one',
+    'providerPluginId': providerPluginId,
+    'providerInstanceId': providerInstanceId,
+    'nativeResourceId': nativeId,
+  };
+  final id = resource.values.join('\u0000');
+  return ConversationSummary(
+    id: id,
+    providerId: providerInstanceId,
+    title: nativeId,
+    status: ConversationStatus.idle,
+    permissionLevel: PermissionLevel.readOnly,
+    workspaceRoot: workspaceRoot,
+    createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt, isUtc: true),
+    wireResource: resource,
+  );
+}
 
 class _FakeClient implements GatewayClient {
   _FakeClient(this.values);

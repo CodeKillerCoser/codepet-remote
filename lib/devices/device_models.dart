@@ -8,6 +8,7 @@ class PairedDevice {
     required this.displayName,
     required this.connectionKind,
     this.alias,
+    this.descriptor,
     this.tlsFingerprint,
     this.endpointHints = const [],
     this.credentialKeyRef,
@@ -19,6 +20,7 @@ class PairedDevice {
   final String deviceId;
   final String displayName;
   final String? alias;
+  final DeviceDescriptor? descriptor;
   final String? tlsFingerprint;
   final List<String> endpointHints;
   final String? credentialKeyRef;
@@ -34,6 +36,7 @@ class PairedDevice {
         displayName: displayName,
         connectionKind: connectionKind,
         alias: alias,
+        descriptor: descriptor,
         tlsFingerprint: tlsFingerprint,
         endpointHints: endpointHints,
         credentialKeyRef: credentialKeyRef,
@@ -42,10 +45,25 @@ class PairedDevice {
         autoConnect: autoConnect,
       );
 
+  PairedDevice withDescriptor(DeviceDescriptor value) => PairedDevice(
+        deviceId: deviceId,
+        displayName: value.deviceName,
+        connectionKind: connectionKind,
+        alias: alias,
+        descriptor: value,
+        tlsFingerprint: tlsFingerprint,
+        endpointHints: endpointHints,
+        credentialKeyRef: credentialKeyRef,
+        clientId: clientId,
+        preferredEndpoint: preferredEndpoint,
+        autoConnect: autoConnect,
+      );
+
   Map<String, Object?> toJson() => {
         'deviceId': deviceId,
         'displayName': displayName,
         'alias': alias,
+        'descriptor': descriptor?.toJson(),
         'tlsFingerprint': tlsFingerprint,
         'endpointHints': endpointHints,
         'credentialKeyRef': credentialKeyRef,
@@ -55,18 +73,25 @@ class PairedDevice {
         'connectionKind': connectionKind.name,
       };
 
-  factory PairedDevice.fromJson(Map<String, dynamic> json) => PairedDevice(
-    deviceId: json['deviceId'] as String,
-    displayName: json['displayName'] as String,
-    alias: json['alias'] as String?,
-    tlsFingerprint: json['tlsFingerprint'] as String?,
-    endpointHints: (json['endpointHints'] as List? ?? const []).cast<String>(),
-    credentialKeyRef: json['credentialKeyRef'] as String?,
-    clientId: json['clientId'] as String?,
-    preferredEndpoint: json['preferredEndpoint'] as String?,
-    autoConnect: json['autoConnect'] == true,
-    connectionKind: DeviceConnectionKind.values.byName(json['connectionKind'] as String),
-  );
+  factory PairedDevice.fromJson(Map<String, dynamic> json) {
+    final descriptor = json['descriptor'];
+    return PairedDevice(
+      deviceId: json['deviceId'] as String,
+      displayName: json['displayName'] as String,
+      alias: json['alias'] as String?,
+      descriptor: descriptor is Map
+          ? DeviceDescriptor.fromJson(Map<String, dynamic>.from(descriptor))
+          : null,
+      tlsFingerprint: json['tlsFingerprint'] as String?,
+      endpointHints: (json['endpointHints'] as List? ?? const []).cast<String>(),
+      credentialKeyRef: json['credentialKeyRef'] as String?,
+      clientId: json['clientId'] as String?,
+      preferredEndpoint: json['preferredEndpoint'] as String?,
+      autoConnect: json['autoConnect'] == true,
+      connectionKind:
+          DeviceConnectionKind.values.byName(json['connectionKind'] as String),
+    );
+  }
 }
 
 abstract interface class PairingService {

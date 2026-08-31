@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../gateway/models.dart';
 import '../security/pinned_tls.dart';
 import 'device_models.dart';
 
@@ -37,7 +38,7 @@ class DeviceRegistry {
   static const clientIdKey = 'remote_installation_client_id_v1';
   final DeviceMetadataStore metadata;
   final CredentialStore credentials;
-  Future<void> _endpointMutation = Future<void>.value();
+  Future<void> _metadataMutation = Future<void>.value();
 
   Future<String> loadOrCreateClientId() async {
     final existing = await metadata.read(clientIdKey);
@@ -60,14 +61,42 @@ class DeviceRegistry {
   Future<void> save(List<PairedDevice> devices) => metadata.write(devicesKey, jsonEncode(devices.map((device) => device.toJson()).toList()));
 
   Future<void> updatePreferredEndpoint(String deviceId, String endpoint) {
-    final mutation = _endpointMutation.then((_) async {
+    final mutation = _metadataMutation.then((_) async {
       final devices = await load();
       final index = devices.indexWhere((device) => device.deviceId == deviceId);
       if (index == -1 || devices[index].preferredEndpoint == endpoint) return;
       devices[index] = devices[index].withPreferredEndpoint(endpoint);
       await save(devices);
     });
-    _endpointMutation = mutation.catchError((_) {});
+    _metadataMutation = mutation.catchError((_) {});
+    return mutation;
+  }
+
+  Future<void> updateHostDescriptor({
+    required String deviceId,
+    required String clientId,
+    required String tlsFingerprint,
+    required DeviceDescriptor descriptor,
+  }) {
+    final mutation = _metadataMutation.then((_) async {
+      final devices = await load();
+      final index = devices.indexWhere((device) =>
+          device.deviceId == deviceId &&
+          device.clientId == clientId &&
+          device.tlsFingerprint == tlsFingerprint);
+      if (index == -1) {
+        throw StateError('Host descriptor does not match the paired identity');
+      }
+      final current = devices[index].descriptor;
+      if (current?.deviceName == descriptor.deviceName &&
+          current?.operatingSystem == descriptor.operatingSystem &&
+          current?.systemVersion == descriptor.systemVersion) {
+        return;
+      }
+      devices[index] = devices[index].withDescriptor(descriptor);
+      await save(devices);
+    });
+    _metadataMutation = mutation.catchError((_) {});
     return mutation;
   }
 

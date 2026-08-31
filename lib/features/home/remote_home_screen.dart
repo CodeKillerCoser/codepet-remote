@@ -103,7 +103,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                   const SizedBox(height: 12),
                   _DeviceActions(session: session),
                   const SizedBox(height: 28),
-                  _SectionTitle(title: '项目', count: groupConversationsByWorkspace(session.conversations).length),
+                  _SectionTitle(title: '项目', count: groupConversationsByProject(hostDeviceId: session.device.deviceId, values: session.conversations).length),
                   const SizedBox(height: 10),
                   ..._projectWidgets(context, session),
                   const SizedBox(height: 28),
@@ -143,7 +143,10 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
         ),
       ];
     }
-    final projects = groupConversationsByWorkspace(session.conversations);
+    final projects = groupConversationsByProject(
+      hostDeviceId: session.device.deviceId,
+      values: session.conversations,
+    );
     if (projects.isEmpty) {
       return const [
         _MessageCard(
@@ -153,23 +156,27 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
         ),
       ];
     }
-    return projects.entries.map((entry) {
-      final name = entry.key.split(RegExp(r'[/\\]')).where((part) => part.isNotEmpty).last;
+    return projects.map((project) {
+      final pathParts = project.workspaceRoot
+          .split(RegExp(r'[/\\]'))
+          .where((part) => part.isNotEmpty)
+          .toList(growable: false);
+      final name = pathParts.isEmpty ? project.workspaceRoot : pathParts.last;
       return Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Card(
           margin: EdgeInsets.zero,
           elevation: 0,
           child: ListTile(
-            key: Key('project-${entry.key}'),
+            key: Key('project-${project.key}'),
             leading: const Icon(Icons.folder_outlined),
             title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text('${entry.value.length} 个会话 · ${entry.key}', maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text('${project.conversations.length} 个会话 · ${project.workspaceRoot}', maxLines: 1, overflow: TextOverflow.ellipsis),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).push<void>(MaterialPageRoute(
               builder: (_) => _ProjectConversationsScreen(
                 projectName: name,
-                conversations: entry.value,
+                conversations: project.conversations,
                 session: session,
               ),
             )),
@@ -217,6 +224,16 @@ class _DeviceSelector extends StatelessWidget {
         separatorBuilder: (_, _) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
           final session = sessions[index];
+          final descriptor = session.handshake?.deviceDescriptor ??
+              session.device.descriptor;
+          final alias = session.device.alias?.trim();
+          final deviceDetails = [
+            if (alias?.isNotEmpty == true && descriptor != null)
+              descriptor.deviceName,
+            if (descriptor != null)
+              '${descriptor.operatingSystem} ${descriptor.systemVersion}',
+            _deviceStateLabel(session.connectionState),
+          ].join(' · ');
           final selected = index == selectedIndex;
           return ChoiceChip(
             key: Key('device-${session.device.deviceId}'),
@@ -232,9 +249,20 @@ class _DeviceSelector extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(session.device.effectiveName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(
+                      alias?.isNotEmpty == true
+                          ? alias!
+                          : descriptor?.deviceName ?? session.device.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     const SizedBox(height: 3),
-                    Text(_deviceStateLabel(session.connectionState), style: Theme.of(context).textTheme.bodySmall),
+                    Text(
+                      deviceDetails,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ],
                 )),
               ]),

@@ -88,14 +88,15 @@ class GatewayEventWindow {
 }
 
 class ProtocolGatewayClient implements GatewayClient {
-  ProtocolGatewayClient({required this.transport, required this.clientId, required this.expectedDeviceId, required this.expectedIdentityFingerprint, this.clientName = 'CodePet Remote', this.clientVersion = '0.1.0', this.onValidatedEndpoint});
+  ProtocolGatewayClient({required this.transport, required this.clientId, required this.clientDevice, required this.expectedDeviceId, required this.expectedIdentityFingerprint, this.clientVersion = '0.1.0', this.onValidatedEndpoint, this.onValidatedHostDescriptor});
   final GatewayTransport transport;
   final String clientId;
+  final DeviceDescriptor clientDevice;
   final String expectedDeviceId;
   final String expectedIdentityFingerprint;
-  final String clientName;
   final String clientVersion;
   final FutureOr<void> Function(Uri endpoint)? onValidatedEndpoint;
+  final FutureOr<void> Function(DeviceDescriptor descriptor)? onValidatedHostDescriptor;
   final StreamController<GatewayEvent> _events = StreamController<GatewayEvent>.broadcast(sync: true);
   StreamSubscription<JsonMap>? _transportEvents;
   String? _latestEventCursor;
@@ -109,7 +110,7 @@ class ProtocolGatewayClient implements GatewayClient {
   Future<GatewayHandshake> connect() async {
     _transportEvents ??= transport.events.listen((raw) {
       try {
-        final event = _eventFromV1(raw);
+        final event = _eventFromV1(raw, expectedDeviceId: expectedDeviceId);
         if (!_seenEventCursors.add(event.eventCursor)) return;
         _latestEventCursor = event.eventCursor;
         _events.add(event);
@@ -122,7 +123,7 @@ class ProtocolGatewayClient implements GatewayClient {
     }, onError: _events.addError);
     await transport.connect();
     final raw = await transport.request('protocol.handshake', {
-      'clientId': clientId, 'clientName': clientName, 'clientVersion': clientVersion,
+      'clientId': clientId, 'device': clientDevice.toJson(), 'clientVersion': clientVersion,
       'supportedVersions': {'minVersion': 1, 'maxVersion': 1},
     });
     final handshake = V1Handshake.fromJson(raw);
@@ -130,6 +131,7 @@ class ProtocolGatewayClient implements GatewayClient {
       await transport.close();
       throw const GatewayConnectionException('Gateway identity mismatch');
     }
+    await onValidatedHostDescriptor?.call(handshake.device.descriptor);
     _seenEventCursors.add(handshake.eventCursor);
     final subscription = await transport.request('event.subscribe', {'afterCursor': handshake.eventCursor});
     if (subscription['subscribedAfterCursor'] != handshake.eventCursor) {
@@ -146,7 +148,7 @@ class ProtocolGatewayClient implements GatewayClient {
       final capabilities = Map<String, dynamic>.from(json['capabilities'] as Map);
       return GatewayProvider(id: route['providerInstanceId'] as String, providerType: json['pluginId'] as String, displayName: json['displayName'] as String, status: ProviderStatus.fromWire(json['status']), methods: (capabilities['methods'] as List).cast<String>());
     }).toList(growable: false);
-    return GatewayHandshake(protocolVersion: 1, serverName: handshake.serverName, serverVersion: handshake.serverVersion, providers: providers, eventCursor: handshake.eventCursor, deviceId: handshake.device.deviceId, identityFingerprint: handshake.device.identityFingerprint);
+    return GatewayHandshake(protocolVersion: 1, serverName: handshake.serverName, serverVersion: handshake.serverVersion, providers: providers, eventCursor: handshake.eventCursor, deviceId: handshake.device.deviceId, identityFingerprint: handshake.device.identityFingerprint, deviceDescriptor: handshake.device.descriptor);
   }
 
   @override
@@ -155,7 +157,14 @@ class ProtocolGatewayClient implements GatewayClient {
     final raw = result['conversations'];
     final pageInfo = result['pageInfo'];
     if (raw is! List || pageInfo is! Map || result['snapshotCursor'] is! String) throw const FormatException('Invalid conversation.list result');
-    return ConversationPage(conversations: raw.map((item) => V1Conversation.fromJson(Map<String, dynamic>.from(item as Map)).toDomain()).toList(growable: false), nextCursor: pageInfo['nextCursor'] as String?, snapshotCursor: result['snapshotCursor'] as String);
+    final conversations = raw.map((item) {
+      final conversation = V1Conversation.fromJson(Map<String, dynamic>.from(item as Map));
+      if (conversation.resource.deviceId != expectedDeviceId) throw const FormatException('Conversation route does not belong to the connected Host');
+      return conversation.toDomain();
+    }).toList(growable: false);
+    final nextCursor = pageInfo['nextCursor'];
+    if (nextCursor != null && nextCursor is! String) throw const FormatException('Invalid conversation.list next cursor');
+    return ConversationPage(conversations: conversations, nextCursor: nextCursor as String?, snapshotCursor: result['snapshotCursor'] as String);
   }
 
   @override
@@ -164,9 +173,42 @@ class ProtocolGatewayClient implements GatewayClient {
     if (resource == null) throw const FormatException('Conversation has no v1 routed identity');
     final result = await transport.request('conversation.get', {'conversation': resource});
     final raw = result['conversation'];
+    final rawItems = result['items'];
     final cursor = result['snapshotCursor'];
-    if (raw is! Map || cursor is! String) throw const FormatException('Invalid conversation.get result');
-    return ConversationSnapshot(detail: ConversationDetail(summary: V1Conversation.fromJson(Map<String, dynamic>.from(raw)).toDomain()), snapshotCursor: cursor);
+    if (raw is! Map || rawItems is! List || cursor is! String) throw const FormatException('Invalid conversation.get result');
+    final wireConversation = V1Conversation.fromJson(Map<String, dynamic>.from(raw));
+    final requested = RoutedResourceId.fromJson(resource);
+    if (wireConversation.resource.key != requested.key || wireConversation.resource.deviceId != expectedDeviceId) {
+      throw const FormatException('conversation.get returned a different routed conversation');
+    }
+    final items = <V1ConversationItem>[];
+    for (final rawItem in rawItems) {
+      if (rawItem is! Map) throw const FormatException('Invalid conversation history item');
+      final item = V1ConversationItem.fromJson(Map<String, dynamic>.from(rawItem));
+      if (item.conversation.key != requested.key ||
+          !item.resource.hasRouteOf(requested) ||
+          !item.turn.hasRouteOf(requested) ||
+          (item.relatedItem != null &&
+              !item.relatedItem!.hasRouteOf(requested)) ||
+          (item.approval != null &&
+              (item.approval!.conversation.key != requested.key ||
+                  item.approval!.turn.key != item.turn.key ||
+                  !item.approval!.resource.hasRouteOf(requested)))) {
+        throw const FormatException('Conversation history route mismatch');
+      }
+      items.add(item);
+    }
+    return ConversationSnapshot(
+      detail: ConversationDetail(
+        summary: wireConversation.toDomain(),
+        committedMessages: [
+          for (var index = 0; index < items.length; index++)
+            items[index].toDomain(index),
+        ],
+        lastEventCursor: cursor,
+      ),
+      snapshotCursor: cursor,
+    );
   }
 
   @override
@@ -178,29 +220,35 @@ class ProtocolGatewayClient implements GatewayClient {
   }
 }
 
-GatewayEvent _eventFromV1(JsonMap json) {
+GatewayEvent _eventFromV1(JsonMap json, {required String expectedDeviceId}) {
   final cursor = json['eventCursor'];
   final event = json['event'];
   final payload = json['payload'];
   if (cursor is! String || cursor.isEmpty || event is! String || payload is! Map) throw const FormatException('Invalid Gateway v1 event envelope');
   final data = Map<String, dynamic>.from(payload);
   if (event == 'conversation.upserted' && data['conversation'] is Map) {
-    return ConversationUpsertedEvent(eventCursor: cursor, conversation: V1Conversation.fromJson(Map<String, dynamic>.from(data['conversation'] as Map)).toDomain());
+    final conversation = V1Conversation.fromJson(Map<String, dynamic>.from(data['conversation'] as Map));
+    if (conversation.resource.deviceId != expectedDeviceId) throw const FormatException('Conversation event route does not belong to the connected Host');
+    return ConversationUpsertedEvent(eventCursor: cursor, conversation: conversation.toDomain());
   }
   if (event == 'turn.upserted' && data['turn'] is Map) {
     final turn = Map<String, dynamic>.from(data['turn'] as Map);
     final resource = RoutedResourceId.fromJson(Map<String, dynamic>.from(turn['resource'] as Map));
     final conversation = RoutedResourceId.fromJson(Map<String, dynamic>.from(turn['conversation'] as Map));
+    if (resource.deviceId != expectedDeviceId || conversation.deviceId != expectedDeviceId || !resource.hasRouteOf(conversation)) throw const FormatException('Invalid turn route');
     return TurnUpsertedEvent(eventCursor: cursor, turn: TurnTask(id: resource.key, providerId: resource.providerInstanceId, conversationId: conversation.key, status: TurnStatus.fromWire(turn['status']), displaySummary: turn['displaySummary'] as String?, startedAt: _optionalV1Time(turn['startedAt']), updatedAt: _optionalV1Time(turn['updatedAt']) ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true), completedAt: _optionalV1Time(turn['completedAt']), wireResource: resource.toJson(), conversationWireResource: conversation.toJson()));
   }
   if (event == 'turn.outputDelta') {
     final turn = RoutedResourceId.fromJson(Map<String, dynamic>.from(data['turn'] as Map));
     final conversation = RoutedResourceId.fromJson(Map<String, dynamic>.from(data['conversation'] as Map));
-    final outputId = data['outputId'];
+    if (turn.deviceId != expectedDeviceId || conversation.deviceId != expectedDeviceId || !turn.hasRouteOf(conversation)) throw const FormatException('Invalid output delta route');
+    final itemId = data['itemId'];
+    final contentId = data['contentId'];
     final kind = data['kind'];
     final delta = data['delta'];
-    if (outputId is! String || outputId.isEmpty || kind is! String || kind.isEmpty || delta is! String) throw const FormatException('Invalid turn.outputDelta payload');
-    return TurnOutputDeltaEvent(eventCursor: cursor, providerId: turn.providerInstanceId, conversationId: conversation.key, turnId: turn.key, outputId: outputId, kind: kind, delta: delta);
+    const contentKinds = {'text', 'reasoning-summary', 'command', 'output', 'activity-summary'};
+    if (itemId is! String || itemId.isEmpty || contentId is! String || contentId.isEmpty || kind is! String || !contentKinds.contains(kind) || delta is! String) throw const FormatException('Invalid turn.outputDelta payload');
+    return TurnOutputDeltaEvent(eventCursor: cursor, providerId: turn.providerInstanceId, conversationId: conversation.key, turnId: turn.key, itemId: itemId, contentId: contentId, kind: kind, delta: delta);
   }
   return UnknownGatewayEvent(eventCursor: cursor, name: event, payload: data);
 }

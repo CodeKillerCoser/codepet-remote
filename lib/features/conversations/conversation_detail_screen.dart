@@ -320,7 +320,7 @@ class _NoHistoryNotice extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Gateway v1 当前不返回历史消息正文；这里会展示连接后收到的流式事件。',
+              'Host 当前没有返回已提交的历史内容；连接后的实时输出仍会显示在这里。',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           ),
@@ -337,6 +337,9 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (message.role == MessageRole.system) {
+      return _ActivityCard(message: message);
+    }
     final isUser = message.role == MessageRole.user;
     final colorScheme = Theme.of(context).colorScheme;
     return Align(
@@ -386,11 +389,98 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
+class _ActivityCard extends StatelessWidget {
+  const _ActivityCard({required this.message});
+
+  final GatewayMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final title = message.title ?? _historyKindLabel(message.kind);
+    final status = message.approvalStatus ?? message.status;
+    return Container(
+      key: Key('history-${message.id}'),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(_historyKindIcon(message.kind), size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              if (status != null)
+                Text(
+                  _historyStatusLabel(status),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                ),
+            ],
+          ),
+          if (message.content.isNotEmpty && message.content != title) ...[
+            const SizedBox(height: 8),
+            Text(message.content),
+          ],
+          if (message.isStreaming) ...[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String _historyKindLabel(String kind) => switch (kind) {
+      'reasoning' => '推理摘要',
+      'command' => '命令',
+      'file-change' => '文件变更',
+      'tool' => '工具',
+      'approval' => '审批',
+      'unknown' => '活动',
+      _ => '活动',
+    };
+
+IconData _historyKindIcon(String kind) => switch (kind) {
+      'reasoning' => Icons.psychology_outlined,
+      'command' => Icons.terminal_outlined,
+      'file-change' => Icons.edit_document,
+      'tool' => Icons.build_outlined,
+      'approval' => Icons.approval_outlined,
+      _ => Icons.info_outline,
+    };
+
+String _historyStatusLabel(String status) => switch (status) {
+      'pending' => '等待中',
+      'running' => '进行中',
+      'completed' => '已完成',
+      'failed' => '失败',
+      'interrupted' => '已中断',
+      'declined' => '已拒绝',
+      'approved' => '已批准',
+      'denied' => '已拒绝',
+      'expired' => '已过期',
+      _ => status,
+    };
+
 String _statusLabel(ConversationStatus status) {
   return switch (status) {
     ConversationStatus.idle => '空闲',
     ConversationStatus.running => '运行中',
     ConversationStatus.waitingApproval => '等待审批',
+    ConversationStatus.waitingUserInput => '等待输入',
     ConversationStatus.error => '错误',
     ConversationStatus.archived => '已归档',
   };

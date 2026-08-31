@@ -1,11 +1,12 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:codepet_remote/pairing/pairing_models.dart';
 import 'package:codepet_remote/security/pinned_tls.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  // Fixture copied from CodePet origin/v0@f5f29fc protocol/gateway/v1/fixtures.
+  // Fixture copied from CodePet@7c06e05 protocol/gateway/v1/fixtures.
   test('parses the Gateway v1 QR fixture with strict fields', () {
     final source = File('test/fixtures/gateway_v1/pairing-qr-payload.json').readAsStringSync();
     final qr = PairingQrPayload.parse(source, now: DateTime.utc(2026, 1, 1));
@@ -26,5 +27,34 @@ void main() {
     expect(constantTimeEquals('a' * 64, 'a' * 64), isTrue);
     expect(constantTimeEquals('a' * 64, '${'a' * 63}b'), isFalse);
     expect(constantTimeEquals('a' * 64, 'a' * 63), isFalse);
+  });
+
+  test('decodes the Host descriptor from the pairing exchange fixture', () {
+    final json = jsonDecode(
+      File('test/fixtures/gateway_v1/pairing-exchange-response.json')
+          .readAsStringSync(),
+    ) as Map;
+    final response = PairingExchangeResponse.fromJson(
+      Map<String, dynamic>.from(json),
+    );
+
+    expect(response.device.descriptor.deviceName, 'MacBook');
+    expect(response.device.descriptor.operatingSystem, 'macOS');
+    expect(response.device.descriptor.systemVersion, '15.6');
+  });
+
+  test('rejects the obsolete Host identity shape without descriptor', () {
+    expect(
+      () => PairingExchangeResponse.fromJson({
+        'device': {
+          'deviceId': 'device-old',
+          'displayName': 'Old Host',
+          'identityFingerprint': 'a' * 64,
+        },
+        'gatewayUrl': 'wss://host:1/remote/v1/gateway',
+        'credential': 'opaque',
+      }),
+      throwsFormatException,
+    );
   });
 }

@@ -2,10 +2,31 @@ import 'package:codepet_remote/gateway/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('device descriptor encodes and decodes the Gateway v1 shape', () {
+    const descriptor = DeviceDescriptor(
+      deviceName: 'Alice phone',
+      operatingSystem: 'Android',
+      systemVersion: '16',
+    );
+
+    final decoded = DeviceDescriptor.fromJson(descriptor.toJson());
+
+    expect(decoded.deviceName, descriptor.deviceName);
+    expect(decoded.operatingSystem, descriptor.operatingSystem);
+    expect(decoded.systemVersion, descriptor.systemVersion);
+    expect(
+      () => DeviceDescriptor.fromJson({
+        'deviceName': 'Alice phone',
+        'operatingSystem': 'Android',
+      }),
+      throwsFormatException,
+    );
+  });
+
   group('ConversationDetail event projection', () {
     final summary = ConversationSummary.fromJson(_conversationJson());
 
-    test('merges output deltas by output id', () {
+    test('merges output deltas by routed content id', () {
       var detail = ConversationDetail(summary: summary);
 
       detail = detail.apply(
@@ -14,7 +35,8 @@ void main() {
           providerId: 'codex',
           conversationId: 'conversation-1',
           turnId: 'turn-1',
-          outputId: 'output-1',
+          itemId: 'item-1',
+          contentId: 'item-1:text',
           kind: 'text',
           delta: 'hello ',
         ),
@@ -25,7 +47,8 @@ void main() {
           providerId: 'codex',
           conversationId: 'conversation-1',
           turnId: 'turn-1',
-          outputId: 'output-1',
+          itemId: 'item-1',
+          contentId: 'item-1:text',
           kind: 'text',
           delta: 'world',
         ),
@@ -44,7 +67,8 @@ void main() {
           providerId: 'codex',
           conversationId: 'conversation-1',
           turnId: 'turn-1',
-          outputId: 'output-1',
+          itemId: 'item-1',
+          contentId: 'item-1:text',
           kind: 'text',
           delta: 'done',
         ),
@@ -87,7 +111,7 @@ void main() {
       expect(detail.liveOutputMessages, isEmpty);
     });
 
-    test('does not merge equal output ids from different routed turns', () {
+    test('does not merge equal content ids from different routed turns', () {
       var detail = ConversationDetail(summary: summary);
       for (final turnId in ['turn-a', 'turn-b']) {
         detail = detail.apply(TurnOutputDeltaEvent(
@@ -95,7 +119,8 @@ void main() {
           providerId: 'codex',
           conversationId: 'conversation-1',
           turnId: turnId,
-          outputId: 'same-output',
+          itemId: 'same-item',
+          contentId: 'same-item:text',
           kind: 'text',
           delta: turnId,
         ));
@@ -112,13 +137,47 @@ void main() {
           providerId: 'codex',
           conversationId: 'conversation-2',
           turnId: 'turn-2',
-          outputId: 'output-2',
+          itemId: 'item-2',
+          contentId: 'item-2:text',
           kind: 'text',
           delta: 'unrelated',
         ),
       );
 
       expect(identical(next, detail), isTrue);
+    });
+
+    test('discards a replayed delta already committed by the snapshot', () {
+      final committed = GatewayMessage(
+        id: 'history-item',
+        itemId: 'item-1',
+        turnId: 'turn-1',
+        role: MessageRole.assistant,
+        kind: 'message',
+        content: 'committed body',
+        contentIds: const ['item-1:text'],
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        isStreaming: false,
+      );
+      final detail = ConversationDetail(
+        summary: summary,
+        committedMessages: [committed],
+      ).apply(
+        const TurnOutputDeltaEvent(
+          eventCursor: 'event-after-snapshot',
+          providerId: 'codex',
+          conversationId: 'conversation-1',
+          turnId: 'turn-1',
+          itemId: 'item-1',
+          contentId: 'item-1:text',
+          kind: 'text',
+          delta: 'committed body',
+        ),
+      );
+
+      expect(detail.committedMessages, [committed]);
+      expect(detail.liveOutputMessages, isEmpty);
+      expect(detail.lastEventCursor, 'event-after-snapshot');
     });
   });
 

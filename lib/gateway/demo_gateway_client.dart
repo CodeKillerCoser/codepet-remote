@@ -100,6 +100,11 @@ class DemoGatewayClient implements GatewayClient {
         ),
       ],
       eventCursor: _cursor,
+      deviceDescriptor: DeviceDescriptor(
+        deviceName: profileId == 'laptop' ? '演示随身电脑' : '演示工作室 Mac',
+        operatingSystem: profileId == 'laptop' ? 'Android' : 'macOS',
+        systemVersion: 'Demo',
+      ),
     );
   }
 
@@ -189,7 +194,8 @@ class DemoGatewayClient implements GatewayClient {
               providerId: conversation.providerId,
               conversationId: conversation.id,
               turnId: 'turn-demo',
-              outputId: 'demo-output',
+              itemId: 'demo-item',
+              contentId: 'demo-item:text',
               kind: 'text',
               delta: chunks[index],
             ),

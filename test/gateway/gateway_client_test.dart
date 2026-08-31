@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:codepet_remote/gateway/gateway_client.dart';
 import 'package:codepet_remote/gateway/models.dart';
@@ -17,10 +19,11 @@ void main() {
       },
       'conversation.get': {
         'conversation': _conversationJson(),
+        'items': <Object>[],
         'snapshotCursor': 'opaque-snapshot',
       },
     });
-    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
 
     final handshake = await client.connect();
     final page = await client.listConversations(limit: 25);
@@ -30,6 +33,8 @@ void main() {
     expect(handshake.protocolVersion, gatewayProtocolVersion);
     expect(handshake.providers.single.id, 'codex-work');
     expect(transport.requests[0].method, 'protocol.handshake');
+    expect(transport.requests[0].params['device'], _clientDevice.toJson());
+    expect(transport.requests[0].params, isNot(contains('clientName')));
     expect(transport.requests[0].params['supportedVersions'], {'minVersion': 1, 'maxVersion': 1});
     expect(transport.requests[1].method, 'event.subscribe');
     expect(transport.requests[1].params['afterCursor'], 'opaque-handshake');
@@ -43,12 +48,111 @@ void main() {
     expect(transport.closed, isTrue);
   });
 
+  test('decodes the Host committed history fixture in wire order', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _fixtureResult('handshake-response.json'),
+      'event.subscribe': {'subscribedAfterCursor': 'event-40'},
+      'conversation.list': _fixtureResult('conversation-list-response.json'),
+      'conversation.get': _fixtureResult('conversation-get-response.json'),
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'remote-client-phone-1',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-macbook-1',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+
+    final handshake = await client.connect();
+    final page = await client.listConversations();
+    final snapshot = await client.getConversation(page.conversations.single);
+    final history = snapshot.detail.committedMessages;
+
+    expect(handshake.deviceDescriptor?.deviceName, 'MacBook');
+    expect(handshake.deviceDescriptor?.operatingSystem, 'macOS');
+    expect(history, hasLength(5));
+    expect(history[0].role, MessageRole.user);
+    expect(history[0].content, 'Show the Gateway history.');
+    expect(history[1].kind, 'reasoning');
+    expect(history[1].content, 'Inspecting the stored thread items.');
+    expect(history[2].kind, 'command');
+    expect(history[2].title, 'Run git status --short');
+    expect(history[3].kind, 'approval');
+    expect(history[3].approvalStatus, 'approved');
+    expect(history[4].role, MessageRole.assistant);
+    expect(history[4].content, 'The committed history is ready.');
+    expect(history[4].contentIds, ['message-agent-01:text']);
+    await client.close();
+  });
+
+  test('rejects the pre-history conversation.get shape without items', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'conversation.list': {
+        'conversations': [_conversationJson()],
+        'pageInfo': <String, dynamic>{},
+        'snapshotCursor': 'opaque-handshake',
+      },
+      'conversation.get': {
+        'conversation': _conversationJson(),
+        'snapshotCursor': 'opaque-handshake',
+      },
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+    final page = await client.listConversations();
+
+    expect(
+      () => client.getConversation(page.conversations.single),
+      throwsFormatException,
+    );
+    await client.close();
+  });
+
+  test('does not accept or refresh descriptor for a mismatched Host identity', () async {
+    final handshake = _handshakeJson();
+    final device = Map<String, dynamic>.from(handshake['device'] as Map);
+    handshake['device'] = {
+      ...device,
+      'identityFingerprint': 'f' * 64,
+    };
+    final transport = _FakeTransport({
+      'protocol.handshake': handshake,
+    });
+    var descriptorRefreshes = 0;
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+      onValidatedHostDescriptor: (_) {
+        descriptorRefreshes++;
+      },
+    );
+
+    await expectLater(
+      client.connect(),
+      throwsA(isA<GatewayConnectionException>()),
+    );
+    expect(descriptorRefreshes, 0);
+    expect(transport.closed, isTrue);
+    await client.close();
+  });
+
   test('projects transport events into Gateway events', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _handshakeJson(),
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
     });
-    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
     await client.connect();
     final eventFuture = client.events.first;
 
@@ -70,7 +174,7 @@ void main() {
       'protocol.handshake': _handshakeJson(),
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
     });
-    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
     final received = <GatewayEvent>[];
     final subscription = client.events.listen(received.add);
     await client.connect();
@@ -107,7 +211,7 @@ void main() {
         }
       },
     );
-    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
     await client.connect();
     expect(client.latestEventCursor, 'opaque-replay');
     await client.close();
@@ -118,7 +222,7 @@ void main() {
       'protocol.handshake': _handshakeJson(),
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
     });
-    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
     await client.connect();
     final received = <GatewayEvent>[];
     final subscription = client.events.listen(received.add);
@@ -142,7 +246,7 @@ void main() {
       'protocol.handshake': _handshakeJson(),
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
     });
-    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
     await client.connect();
     final expectation = expectLater(client.events.first, throwsA(isA<FormatException>()));
     transport.emit({'protocolVersion': 1, 'eventCursor': 'bad', 'event': 'turn.outputDelta', 'payload': <String, dynamic>{}});
@@ -232,7 +336,7 @@ JsonMap _turnEvent(String name, String cursor) {
     'event': name,
     'payload': name == 'turn.upserted'
         ? {'turn': {'resource': turn, 'conversation': conversation, 'status': 'running', 'updatedAt': 3000}}
-        : {'turn': turn, 'conversation': conversation, 'outputId': 'output-1', 'kind': 'text', 'delta': 'live'},
+        : {'turn': turn, 'conversation': conversation, 'itemId': 'item-1', 'contentId': 'item-1:text', 'kind': 'text', 'delta': 'live'},
   };
 }
 
@@ -289,7 +393,15 @@ JsonMap _handshakeJson() {
     'selectedVersion': 1,
     'serverName': 'CodePet Host',
     'serverVersion': '0.1.0',
-    'device': {'deviceId': 'device-test', 'displayName': 'Test', 'identityFingerprint': _fingerprint},
+    'device': {
+      'deviceId': 'device-test',
+      'descriptor': {
+        'deviceName': 'Test Host',
+        'operatingSystem': 'TestOS',
+        'systemVersion': '1.0',
+      },
+      'identityFingerprint': _fingerprint,
+    },
     'devices': <Object>[],
     'providers': [
       {
@@ -324,3 +436,17 @@ JsonMap _conversationJson() {
 }
 
 const _fingerprint = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+const _clientDevice = DeviceDescriptor(
+  deviceName: 'Test Phone',
+  operatingSystem: 'Android',
+  systemVersion: '16',
+);
+
+JsonMap _fixtureResult(String name) {
+  final decoded = jsonDecode(
+    File('test/fixtures/gateway_v1/$name').readAsStringSync(),
+  ) as Map;
+  final response = Map<String, dynamic>.from(decoded['response'] as Map);
+  return Map<String, dynamic>.from(response['result'] as Map);
+}

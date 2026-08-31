@@ -11,7 +11,7 @@ enum DeviceConnectionState { offline, connecting, online, failed }
 class DeviceSession extends ChangeNotifier {
   DeviceSession({required this.device, required this.clientFactory});
 
-  final PairedDevice device;
+  PairedDevice device;
   final GatewayClient Function() clientFactory;
   GatewayClient? _client;
   GatewayEventWindow? _eventWindow;
@@ -44,8 +44,14 @@ class DeviceSession extends ChangeNotifier {
       final window = client.openEventWindow();
       _eventWindow = window;
       handshake = await client.connect();
+      final hostDescriptor = handshake!.deviceDescriptor;
+      if (hostDescriptor != null) {
+        device = device.withDescriptor(hostDescriptor);
+      }
       final page = await client.listConversations();
-      conversations = sortRecentConversations(page.conversations);
+      conversations = sortRecentConversations(
+        deduplicateRoutedConversations(page.conversations),
+      );
       window.install(
         baselineCursor: handshake!.eventCursor,
         snapshotCursor: page.snapshotCursor,
@@ -96,9 +102,10 @@ class DeviceSession extends ChangeNotifier {
   void _applyEvent(GatewayEvent event) {
     if (event is! ConversationUpsertedEvent) return;
     final next = [...conversations];
-    final index = next.indexWhere((item) =>
-        item.id == event.conversation.id &&
-        item.providerId == event.conversation.providerId);
+    final eventKey = conversationRoutingKey(event.conversation);
+    final index = next.indexWhere(
+      (item) => conversationRoutingKey(item) == eventKey,
+    );
     if (index == -1) {
       next.add(event.conversation);
     } else {
@@ -141,8 +148,8 @@ Map<String, List<ConversationSummary>> groupConversationsByWorkspace(
 ) {
   final groups = <String, List<ConversationSummary>>{};
   for (final conversation in values) {
-    final root = conversation.workspaceRoot?.trim();
-    if (root == null || root.isEmpty) continue;
+    final root = conversation.workspaceRoot;
+    if (root == null || root.trim().isEmpty) continue;
     groups.putIfAbsent(root, () => []).add(conversation);
   }
   for (final conversations in groups.values) {
@@ -156,6 +163,55 @@ Map<String, List<ConversationSummary>> groupConversationsByWorkspace(
       }),
   );
 }
+
+class ConversationProject {
+  const ConversationProject({
+    required this.hostDeviceId,
+    required this.workspaceRoot,
+    required this.conversations,
+  });
+
+  final String hostDeviceId;
+  final String workspaceRoot;
+  final List<ConversationSummary> conversations;
+
+  String get key => '$hostDeviceId\u0000$workspaceRoot';
+}
+
+List<ConversationProject> groupConversationsByProject({
+  required String hostDeviceId,
+  required Iterable<ConversationSummary> values,
+}) {
+  final groups = groupConversationsByWorkspace(
+    deduplicateRoutedConversations(values),
+  );
+  return groups.entries
+      .map((entry) => ConversationProject(
+            hostDeviceId: hostDeviceId,
+            workspaceRoot: entry.key,
+            conversations: entry.value,
+          ))
+      .toList(growable: false);
+}
+
+Iterable<ConversationSummary> deduplicateRoutedConversations(
+  Iterable<ConversationSummary> values,
+) {
+  final conversations = <String, ConversationSummary>{};
+  for (final conversation in values) {
+    final key = conversationRoutingKey(conversation);
+    final current = conversations[key];
+    if (current == null || conversation.updatedAt.isAfter(current.updatedAt)) {
+      conversations[key] = conversation;
+    }
+  }
+  return conversations.values;
+}
+
+String conversationRoutingKey(ConversationSummary conversation) =>
+    conversation.wireResource == null
+        ? '${conversation.providerId}\u0000${conversation.id}'
+        : conversation.id;
 
 Future<int> replaceDeviceSession(
   List<DeviceSession> sessions,

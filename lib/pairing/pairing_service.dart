@@ -1,34 +1,76 @@
 import '../devices/device_models.dart';
 import '../devices/device_registry.dart';
+import '../devices/local_device_descriptor.dart';
+import '../gateway/models.dart';
 import '../security/pinned_tls.dart';
 import 'pairing_models.dart';
 
+abstract interface class PairingExchangeClient {
+  Future<JsonMap> exchange({
+    required String expectedFingerprint,
+    required Uri uri,
+    required JsonMap body,
+  });
+}
+
+class PinnedPairingExchangeClient implements PairingExchangeClient {
+  const PinnedPairingExchangeClient();
+
+  @override
+  Future<JsonMap> exchange({
+    required String expectedFingerprint,
+    required Uri uri,
+    required JsonMap body,
+  }) =>
+      PinnedTlsConnection(expectedSha256: expectedFingerprint).jsonRequest(
+        method: 'POST',
+        uri: uri,
+        body: body,
+      );
+}
+
 class GatewayV1PairingService {
-  const GatewayV1PairingService({required this.registry});
+  GatewayV1PairingService({
+    required this.registry,
+    DeviceDescriptorProvider? descriptorProvider,
+    this.exchangeClient = const PinnedPairingExchangeClient(),
+  }) : descriptorProvider =
+            descriptorProvider ?? LocalDeviceDescriptorProvider();
+
   final DeviceRegistry registry;
+  final DeviceDescriptorProvider descriptorProvider;
+  final PairingExchangeClient exchangeClient;
 
   Future<PairedDevice> pair(String rawPayload) async {
     final qr = PairingQrPayload.parse(rawPayload);
     final clientId = await registry.loadOrCreateClientId();
-    final tls = PinnedTlsConnection(expectedSha256: qr.certSha256);
-    final json = await tls.jsonRequest(method: 'POST', uri: qr.exchangeUrl, body: {
-      'pairingSecret': qr.pairingSecret,
-      'clientId': clientId,
-      'clientName': 'CodePet Remote',
-      'platform': 'android',
-    });
+    final descriptor = await descriptorProvider.load();
+    final json = await exchangeClient.exchange(
+      expectedFingerprint: qr.certSha256,
+      uri: qr.exchangeUrl,
+      body: {
+        'pairingSecret': qr.pairingSecret,
+        'clientId': clientId,
+        'device': descriptor.toJson(),
+      },
+    );
     final response = PairingExchangeResponse.fromJson(json);
     if (response.device.deviceId != qr.hostDeviceId ||
-        !constantTimeEquals(response.device.identityFingerprint, qr.certSha256) ||
+        !constantTimeEquals(
+          response.device.identityFingerprint,
+          qr.certSha256,
+        ) ||
         response.gatewayUrl.host != qr.httpsBaseUrl.host ||
         response.gatewayUrl.port != qr.httpsBaseUrl.port ||
         response.gatewayUrl.path != '/remote/v1/gateway') {
       throw const FormatException('Pairing identity or endpoint mismatch');
     }
-    final credentialKey = 'gateway-v1-credential:${qr.hostDeviceId}:$clientId';
+    final credentialKey =
+        'gateway-v1-credential:${qr.hostDeviceId}:$clientId';
     final device = PairedDevice(
       deviceId: qr.hostDeviceId,
-      displayName: response.device.displayName,
+      displayName: response.device.descriptor.deviceName,
+      descriptor: response.device.descriptor,
       tlsFingerprint: qr.certSha256,
       endpointHints: [qr.httpsBaseUrl.toString()],
       credentialKeyRef: credentialKey,

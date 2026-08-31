@@ -7,12 +7,12 @@ CodePet Remote 是面向 CodePet Host 的独立 Remote Client。v1 以 Android �
 - 设备与 Gateway 连接入口
 - Gateway v1 QR pairing with leaf-certificate SHA-256 pinning
 - Android Keystore-backed opaque credentials and persisted device metadata
-- `protocol.handshake` followed by one `event.subscribe`
-- `conversation.list`
-- `conversation.get`
+- 双向 `DeviceDescriptor` pairing/handshake，随后建立一次 `event.subscribe`
+- `conversation.list` 的 Host 逻辑项目投影
+- `conversation.get` 的有序 committed history
 - Gateway v1 opaque-cursor server event stream
 - 会话列表与会话详情
-- `turn.outputDelta` 增量消息投影
+- `turn.outputDelta` 增量消息投影及 snapshot content 去重
 - 无 Host 时可使用本地演示数据检查完整 UI 链路
 
 Gateway v1 的事实来源是 CodePet `protocol/gateway/v1` 与 `protocol/core/v1`。Remote 使用四段 `RoutedResourceId` 处理 wire 身份，再映射为 UI 所需的最小领域投影，不复制 Codex Provider 的原生 DTO。
@@ -53,10 +53,8 @@ flutter doctor --android-licenses
 - 请求、响应与 event envelope 遵循 Gateway v1 schema 和 fixtures
 - 从实际 peer leaf X509 DER 计算 SHA-256，并与 QR pin 常量时间比较
 - 以 Android 安全存储中的 opaque credential 发送 Bearer authorization
-- handshake 再次核对 Host deviceId 与 identityFingerprint
+- handshake 再次核对 Host deviceId 与 identityFingerprint，并仅在核对通过后刷新 Host descriptor
 - `conversation.list` 和 `conversation.get` 使用 opaque `snapshotCursor` fence 安装订阅窗口；cursor 只比较相等性，不解析或持久化
 - 同一 WebSocket 订阅内按 opaque `eventCursor` 去除 replay window 内的完全重复事件，去重缓存保持有界
 
-普通存储只保存设备身份、endpoint、TLS 指纹、clientId 与 credential key reference；credential、会话、消息、Turn、live output 和 cursor 均不写入普通持久层。详情投影将 committed snapshot 与订阅后的 live output 分开保存，两者不重叠；terminal turn 会重新获取 snapshot，再清除对应 live output。
-
-`conversation.get` 在当前 Gateway v1 Host 中只返回会话元数据与 snapshotCursor，不包含历史消息正文。详情页会明确展示这一限制。
+普通存储只保存设备 descriptor、连接身份、endpoint、TLS 指纹、clientId 与 credential key reference；credential、会话、消息、Turn、live output 和 cursor 均不写入普通持久层。项目仅按 Host 投影的 `workspaceRoot` 分组，Remote 不读取 Git/worktree 元数据。详情先安装 `conversation.get.items` 的有序 committed snapshot，再应用 `snapshotCursor` 之后的 live output；已经由相同 `contentId` 提交的重放 delta 会被丢弃，terminal turn 则重新拉取 snapshot 并清理对应 live output。

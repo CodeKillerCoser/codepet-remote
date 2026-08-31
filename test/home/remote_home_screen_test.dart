@@ -16,6 +16,8 @@ void main() {
     await tester.tap(find.byKey(const Key('add-dynamic-session')));
     await tester.pumpAndSettle();
     expect(find.text('动态事件会话'), findsNothing);
+    expect(find.text('Host Metadata'), findsOneWidget);
+    expect(find.text('TestOS 9 · 在线'), findsOneWidget);
 
     client.emit(ConversationUpsertedEvent(
       eventCursor: 'event-1',
@@ -91,7 +93,7 @@ class _EventClient implements GatewayClient {
   @override Stream<GatewayEvent> get events => controller.stream;
   @override String? get latestEventCursor => 'handshake';
   @override GatewayEventWindow openEventWindow() => GatewayEventWindow.forStream('handshake', events);
-  @override Future<GatewayHandshake> connect() async => const GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: [], eventCursor: 'handshake');
+  @override Future<GatewayHandshake> connect() async => const GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: [], eventCursor: 'handshake', deviceDescriptor: DeviceDescriptor(deviceName: 'Host Metadata', operatingSystem: 'TestOS', systemVersion: '9'));
   @override Future<ConversationPage> listConversations({String? providerId, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: 'handshake');
   @override Future<void> close() => controller.close();

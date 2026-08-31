@@ -14,6 +14,39 @@ class DeviceConnection {
   final String pairingToken;
 }
 
+class DeviceDescriptor {
+  const DeviceDescriptor({
+    required this.deviceName,
+    required this.operatingSystem,
+    required this.systemVersion,
+  });
+
+  factory DeviceDescriptor.fromJson(JsonMap json) {
+    const fields = {'deviceName', 'operatingSystem', 'systemVersion'};
+    if (json.keys.toSet().difference(fields).isNotEmpty ||
+        fields.difference(json.keys.toSet()).isNotEmpty) {
+      throw const FormatException(
+        'Device descriptor fields do not match Gateway v1',
+      );
+    }
+    return DeviceDescriptor(
+      deviceName: _requiredString(json, 'deviceName'),
+      operatingSystem: _requiredString(json, 'operatingSystem'),
+      systemVersion: _requiredString(json, 'systemVersion'),
+    );
+  }
+
+  final String deviceName;
+  final String operatingSystem;
+  final String systemVersion;
+
+  JsonMap toJson() => {
+        'deviceName': deviceName,
+        'operatingSystem': operatingSystem,
+        'systemVersion': systemVersion,
+      };
+}
+
 enum ProviderStatus {
   disconnected('disconnected'),
   connecting('connecting'),
@@ -37,6 +70,7 @@ enum ConversationStatus {
   idle('idle'),
   running('running'),
   waitingApproval('waiting-approval'),
+  waitingUserInput('waiting-user-input'),
   error('error'),
   archived('archived');
 
@@ -132,6 +166,7 @@ class GatewayHandshake {
     required this.eventCursor,
     this.deviceId,
     this.identityFingerprint,
+    this.deviceDescriptor,
   });
 
   factory GatewayHandshake.fromJson(JsonMap json) {
@@ -153,6 +188,7 @@ class GatewayHandshake {
   final String eventCursor;
   final String? deviceId;
   final String? identityFingerprint;
+  final DeviceDescriptor? deviceDescriptor;
 }
 
 class TurnTask {
@@ -256,6 +292,12 @@ class GatewayMessage {
     required this.createdAt,
     required this.isStreaming,
     this.isLiveOutput = false,
+    this.itemId,
+    this.contentId,
+    this.contentIds = const [],
+    this.title,
+    this.status,
+    this.approvalStatus,
   });
 
   final String id;
@@ -266,6 +308,12 @@ class GatewayMessage {
   final DateTime createdAt;
   final bool isStreaming;
   final bool isLiveOutput;
+  final String? itemId;
+  final String? contentId;
+  final List<String> contentIds;
+  final String? title;
+  final String? status;
+  final String? approvalStatus;
 
   GatewayMessage copyWith({
     String? content,
@@ -280,6 +328,12 @@ class GatewayMessage {
       createdAt: createdAt,
       isStreaming: isStreaming ?? this.isStreaming,
       isLiveOutput: isLiveOutput,
+      itemId: itemId,
+      contentId: contentId,
+      contentIds: contentIds,
+      title: title,
+      status: status,
+      approvalStatus: approvalStatus,
     );
   }
 }
@@ -307,14 +361,19 @@ class ConversationDetail {
     ConversationDetail snapshot, {
     String? completedTurnId,
   }) {
+    final committedContentIds = snapshot.committedMessages
+        .expand((message) => message.contentIds)
+        .toSet();
     return ConversationDetail(
       summary: snapshot.summary,
       committedMessages: snapshot.committedMessages,
-      liveOutputMessages: completedTurnId == null
-          ? liveOutputMessages
-          : liveOutputMessages
-              .where((message) => message.turnId != completedTurnId)
-              .toList(growable: false),
+      liveOutputMessages: liveOutputMessages
+          .where((message) =>
+              message.contentId == null ||
+              !committedContentIds.contains(message.contentId))
+          .where((message) =>
+              completedTurnId == null || message.turnId != completedTurnId)
+          .toList(growable: false),
       turns: snapshot.turns,
       lastEventCursor: snapshot.lastEventCursor,
     );
@@ -350,8 +409,21 @@ class ConversationDetail {
     }
 
     if (event is TurnOutputDeltaEvent && event.conversationId == summary.id) {
+      final alreadyCommitted = committedMessages.any(
+        (message) => message.contentIds.contains(event.contentId),
+      );
+      if (alreadyCommitted) {
+        return ConversationDetail(
+          summary: summary,
+          committedMessages: committedMessages,
+          liveOutputMessages: liveOutputMessages,
+          turns: turns,
+          lastEventCursor: event.eventCursor,
+        );
+      }
       final nextMessages = [...liveOutputMessages];
-      final liveKey = '${event.turnId}\u0000${event.outputId}';
+      final liveKey =
+          '${event.turnId}\u0000${event.itemId}\u0000${event.contentId}';
       final messageIndex = nextMessages.indexWhere(
         (message) => message.id == liveKey,
       );
@@ -366,6 +438,9 @@ class ConversationDetail {
             createdAt: DateTime.now().toUtc(),
             isStreaming: true,
             isLiveOutput: true,
+            itemId: event.itemId,
+            contentId: event.contentId,
+            contentIds: [event.contentId],
           ),
         );
       } else {
@@ -433,7 +508,8 @@ sealed class GatewayEvent {
           providerId: _requiredString(payload, 'providerId'),
           conversationId: _requiredString(payload, 'conversationId'),
           turnId: _requiredString(payload, 'turnId'),
-          outputId: _requiredString(payload, 'outputId'),
+          itemId: _requiredString(payload, 'itemId'),
+          contentId: _requiredString(payload, 'contentId'),
           kind: _requiredString(payload, 'kind'),
           delta: _requiredString(payload, 'delta', allowEmpty: true),
         ),
@@ -472,7 +548,8 @@ class TurnOutputDeltaEvent extends GatewayEvent {
     required this.providerId,
     required this.conversationId,
     required this.turnId,
-    required this.outputId,
+    required this.itemId,
+    required this.contentId,
     required this.kind,
     required this.delta,
   });
@@ -480,7 +557,8 @@ class TurnOutputDeltaEvent extends GatewayEvent {
   final String providerId;
   final String conversationId;
   final String turnId;
-  final String outputId;
+  final String itemId;
+  final String contentId;
   final String kind;
   final String delta;
 }

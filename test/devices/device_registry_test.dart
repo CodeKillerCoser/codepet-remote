@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:codepet_remote/devices/device_models.dart';
 import 'package:codepet_remote/devices/device_registry.dart';
+import 'package:codepet_remote/gateway/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -9,10 +10,11 @@ void main() {
     final metadata = _Metadata();
     final credentials = _Credentials();
     final registry = DeviceRegistry(metadata: metadata, credentials: credentials);
-    const device = PairedDevice(deviceId: 'host-1', displayName: 'Host', tlsFingerprint: 'fingerprint', credentialKeyRef: 'secure:key', clientId: 'client', preferredEndpoint: 'wss://host/remote/v1/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
+    const device = PairedDevice(deviceId: 'host-1', displayName: 'Host', descriptor: DeviceDescriptor(deviceName: 'Host', operatingSystem: 'macOS', systemVersion: '15.6'), tlsFingerprint: 'fingerprint', credentialKeyRef: 'secure:key', clientId: 'client', preferredEndpoint: 'wss://host/remote/v1/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
     await registry.register(device, 'secret-credential');
     final reloaded = await DeviceRegistry(metadata: metadata, credentials: credentials).load();
     expect(reloaded.single.deviceId, 'host-1');
+    expect(reloaded.single.descriptor?.systemVersion, '15.6');
     expect(jsonEncode(metadata.values), isNot(contains('secret-credential')));
     expect(await credentials.read('secure:key'), 'secret-credential');
   });
@@ -49,6 +51,54 @@ void main() {
     final writes = metadata.writeCount;
     await registry.updatePreferredEndpoint('one', 'wss://new-one/gateway');
     expect(metadata.writeCount, writes);
+  });
+
+  test('descriptor refresh keeps the client and certificate binding', () async {
+    final metadata = _Metadata();
+    final registry = DeviceRegistry(
+      metadata: metadata,
+      credentials: _Credentials(),
+    );
+    const paired = PairedDevice(
+      deviceId: 'host-bound',
+      displayName: 'Old name',
+      descriptor: DeviceDescriptor(
+        deviceName: 'Old name',
+        operatingSystem: 'macOS',
+        systemVersion: '15.5',
+      ),
+      clientId: 'client-bound',
+      tlsFingerprint: 'fingerprint-bound',
+      connectionKind: DeviceConnectionKind.pairedGateway,
+    );
+    await registry.save([paired]);
+
+    await registry.updateHostDescriptor(
+      deviceId: 'host-bound',
+      clientId: 'client-bound',
+      tlsFingerprint: 'fingerprint-bound',
+      descriptor: const DeviceDescriptor(
+        deviceName: 'New name',
+        operatingSystem: 'macOS',
+        systemVersion: '15.6',
+      ),
+    );
+    expect((await registry.load()).single.displayName, 'New name');
+
+    await expectLater(
+      registry.updateHostDescriptor(
+        deviceId: 'host-bound',
+        clientId: 'different-client',
+        tlsFingerprint: 'fingerprint-bound',
+        descriptor: const DeviceDescriptor(
+          deviceName: 'Attacker name',
+          operatingSystem: 'Unknown',
+          systemVersion: '0',
+        ),
+      ),
+      throwsStateError,
+    );
+    expect((await registry.load()).single.displayName, 'New name');
   });
 }
 
