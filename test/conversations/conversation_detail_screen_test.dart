@@ -7,6 +7,214 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('shows the latest history page and reveals earlier messages', (tester) async {
+    final client = _DetailClient(
+      committedMessages: [
+        for (var index = 0; index < 45; index++)
+          _history(
+            'history-$index',
+            MessageRole.user,
+            'message',
+            '历史消息 $index',
+            createdMilliseconds: index,
+          ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: ConversationDetailScreen(
+        client: client,
+        conversation: _conversation,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('message-history-0')), findsNothing);
+    expect(find.byKey(const Key('message-history-44')), findsOneWidget);
+
+    final position = _detailScrollPosition(tester);
+    position.jumpTo(0);
+    await tester.pump();
+    expect(find.byKey(const Key('show-earlier-messages')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('show-earlier-messages')));
+    await tester.pump();
+    await tester.pump();
+
+    position.jumpTo(0);
+    await tester.pump();
+    expect(find.byKey(const Key('show-earlier-messages')), findsNothing);
+    expect(find.byKey(const Key('message-history-0')), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('message-history-0'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const Key('message-history-1'))).dy,
+      ),
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('keeps committed history in source order', (tester) async {
+    final client = _DetailClient(
+      committedMessages: [
+        _history(
+          'source-first',
+          MessageRole.user,
+          'message',
+          '输入中的第一条',
+          createdMilliseconds: 2000,
+        ),
+        _history(
+          'source-second',
+          MessageRole.assistant,
+          'message',
+          '输入中的第二条',
+          createdMilliseconds: 1000,
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: ConversationDetailScreen(
+        client: client,
+        conversation: _conversation,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.byKey(const Key('message-source-first'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const Key('message-source-second'))).dy,
+      ),
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('collapses history and accumulates new output while collapsed', (tester) async {
+    final client = _DetailClient(
+      committedMessages: [
+        _history('one', MessageRole.user, 'message', '第一条'),
+        _history('two', MessageRole.assistant, 'message', '第二条'),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: ConversationDetailScreen(
+        client: client,
+        conversation: _conversation,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('messages-section-toggle')));
+    await tester.pump();
+    expect(find.byKey(const Key('message-one')), findsNothing);
+    expect(find.byKey(const Key('message-two')), findsNothing);
+
+    client.emit(const TurnOutputDeltaEvent(
+      eventCursor: 'collapsed-live',
+      providerId: 'provider',
+      conversationId: 'conversation',
+      turnId: 'collapsed-turn',
+      itemId: 'collapsed-item',
+      contentId: 'collapsed-item:text',
+      kind: 'text',
+      delta: '折叠期间的新消息',
+    ));
+    await tester.pump();
+    expect(find.text('折叠期间的新消息'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('messages-section-toggle')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('第一条'), findsOneWidget);
+    expect(find.text('第二条'), findsOneWidget);
+    expect(find.text('折叠期间的新消息'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('shows a scroll-to-bottom button and scrolls on tap', (tester) async {
+    final client = _DetailClient(
+      committedMessages: _longHistory(),
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: ConversationDetailScreen(
+        client: client,
+        conversation: _conversation,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final position = _detailScrollPosition(tester);
+    expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+    position.jumpTo(0);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('scroll-to-bottom')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('scroll-to-bottom')));
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+    expect(find.byKey(const Key('scroll-to-bottom')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('follows live output near bottom but preserves far scroll position', (tester) async {
+    final client = _DetailClient(
+      committedMessages: _longHistory(),
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: ConversationDetailScreen(
+        client: client,
+        conversation: _conversation,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final position = _detailScrollPosition(tester);
+    client.emit(const TurnOutputDeltaEvent(
+      eventCursor: 'near-live',
+      providerId: 'provider',
+      conversationId: 'conversation',
+      turnId: 'near-turn',
+      itemId: 'near-item',
+      contentId: 'near-item:text',
+      kind: 'text',
+      delta: '近底部实时消息',
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+    expect(find.text('近底部实时消息'), findsOneWidget);
+
+    position.jumpTo(0);
+    await tester.pump();
+    final farOffset = position.pixels;
+    client.emit(const TurnOutputDeltaEvent(
+      eventCursor: 'far-live',
+      providerId: 'provider',
+      conversationId: 'conversation',
+      turnId: 'far-turn',
+      itemId: 'far-item',
+      contentId: 'far-item:text',
+      kind: 'text',
+      delta: '远离底部实时消息',
+    ));
+    await tester.pump();
+    await tester.pump();
+    expect(position.pixels, closeTo(farOffset, 1));
+    expect(position.extentAfter, greaterThan(160));
+
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('terminal turn refresh clears only its in-memory live output', (tester) async {
     final client = _DetailClient();
     await tester.pumpWidget(MaterialApp(home: ConversationDetailScreen(client: client, conversation: _conversation)));
@@ -119,6 +327,7 @@ GatewayMessage _history(
   String? title,
   String? status,
   String? approvalStatus,
+  int createdMilliseconds = 0,
 }) =>
     GatewayMessage(
       id: id,
@@ -126,12 +335,34 @@ GatewayMessage _history(
       role: role,
       kind: kind,
       content: content,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        createdMilliseconds,
+        isUtc: true,
+      ),
       isStreaming: false,
       title: title,
       status: status,
       approvalStatus: approvalStatus,
     );
+
+List<GatewayMessage> _longHistory() => [
+  for (var index = 0; index < 60; index++)
+    _history(
+      'long-$index',
+      index.isEven ? MessageRole.user : MessageRole.assistant,
+      'message',
+      '长历史 $index ${List.filled(20, '内容 ').join()}',
+      createdMilliseconds: index,
+    ),
+];
+
+ScrollPosition _detailScrollPosition(WidgetTester tester) {
+  final scrollable = find.descendant(
+    of: find.byKey(const Key('conversation-detail')),
+    matching: find.byType(Scrollable),
+  );
+  return tester.state<ScrollableState>(scrollable).position;
+}
 
 final _conversation = ConversationSummary(
   id: 'conversation',

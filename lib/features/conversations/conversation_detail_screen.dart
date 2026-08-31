@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import '../../gateway/gateway_client.dart';
 import '../../gateway/models.dart';
 
+const int _messagePageSize = 40;
+const double _nearBottomThreshold = 160;
+
 class ConversationDetailScreen extends StatefulWidget {
   const ConversationDetailScreen({
     super.key,
@@ -27,21 +30,32 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   final Set<String> _refreshingTurns = {};
   ConversationDetail? _detail;
   String? _error;
+  bool _messagesExpanded = true;
+  int _hiddenMessageCount = 0;
+  bool _showScrollToBottom = false;
+  bool _followOnExpand = true;
+  int _scrollRequest = 0;
 
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_handleScroll);
     unawaited(_load());
   }
 
   @override
   void dispose() {
     unawaited(_eventWindow?.close());
+    _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _load({String? completedTurnId}) async {
+  Future<void> _load({
+    String? completedTurnId,
+    bool? followBottom,
+  }) async {
+    final shouldFollowBottom = followBottom ?? _detail == null;
     setState(() {
       _error = null;
     });
@@ -72,6 +86,13 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       _eventWindow = window;
       setState(() {
         _detail = detail;
+        if (previous == null) {
+          _hiddenMessageCount = detail.messages.length > _messagePageSize
+              ? detail.messages.length - _messagePageSize
+              : 0;
+        } else {
+          _convergeHiddenMessageCount(detail.messages.length);
+        }
       });
       window.install(
         baselineCursor: baseline,
@@ -82,13 +103,19 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             setState(() {
               _detail = null;
               _error = '事件流异常：$error';
+              _showScrollToBottom = false;
+              _scrollRequest++;
             });
           }
           _eventWindow = null;
           unawaited(window.close());
         },
       );
-      _scrollToBottom();
+      if (shouldFollowBottom && _messagesExpanded) {
+        _scrollToBottom();
+      } else {
+        _scheduleScrollStateUpdate();
+      }
     } catch (error) {
       await window.close();
       await _eventWindow?.close();
@@ -97,6 +124,8 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         setState(() {
           _detail = null;
           _error = error.toString();
+          _showScrollToBottom = false;
+          _scrollRequest++;
         });
       }
     }
@@ -106,25 +135,40 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     if (!mounted || !_appliedCursors.add(event.eventCursor)) return;
     final detail = _detail;
     if (detail == null) return;
+    final wasNearBottom = _messagesExpanded && _isNearBottom();
     final next = detail.apply(event);
     if (identical(next, detail)) {
       return;
     }
     setState(() {
       _detail = next;
+      _convergeHiddenMessageCount(next.messages.length);
     });
-    _scrollToBottom();
+    if (event is TurnOutputDeltaEvent && wasNearBottom) {
+      _scrollToBottom();
+    } else {
+      _scheduleScrollStateUpdate();
+    }
     if (event is TurnUpsertedEvent &&
         event.turn.conversationId == detail.summary.id &&
         event.turn.status.isTerminal &&
         _refreshingTurns.add(event.turn.id)) {
-      unawaited(_reloadCompletedTurn(event.turn.id));
+      unawaited(_reloadCompletedTurn(
+        event.turn.id,
+        followBottom: wasNearBottom,
+      ));
     }
   }
 
-  Future<void> _reloadCompletedTurn(String turnId) async {
+  Future<void> _reloadCompletedTurn(
+    String turnId, {
+    required bool followBottom,
+  }) async {
     try {
-      await _load(completedTurnId: turnId);
+      await _load(
+        completedTurnId: turnId,
+        followBottom: followBottom,
+      );
       final detail = _detail;
       if (mounted && detail != null) {
         setState(() {
@@ -132,6 +176,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             detail,
             completedTurnId: turnId,
           );
+          _convergeHiddenMessageCount(_detail!.messages.length);
         });
       }
     } finally {
@@ -139,16 +184,119 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     }
   }
 
-  void _scrollToBottom() {
+  void _convergeHiddenMessageCount(int messageCount) {
+    if (_hiddenMessageCount <= messageCount) return;
+    _hiddenMessageCount = messageCount > _messagePageSize
+        ? messageCount - _messagePageSize
+        : 0;
+  }
+
+  bool _isNearBottom() {
+    if (!_scrollController.hasClients) return true;
+    return _scrollController.position.extentAfter <= _nearBottomThreshold;
+  }
+
+  void _handleScroll() {
+    if (!mounted) return;
+    final shouldShow = _messagesExpanded &&
+        _scrollController.hasClients &&
+        !_isNearBottom();
+    if (shouldShow == _showScrollToBottom) return;
+    setState(() {
+      _showScrollToBottom = shouldShow;
+    });
+  }
+
+  void _scheduleScrollStateUpdate() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) {
+      _handleScroll();
+    });
+  }
+
+  void _scrollToBottom() {
+    final request = ++_scrollRequest;
+    _animateToBottom(request, retriesRemaining: 2);
+  }
+
+  void _animateToBottom(
+    int request, {
+    required int retriesRemaining,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          request != _scrollRequest ||
+          !_scrollController.hasClients) {
         return;
       }
-      _scrollController.animateTo(
+      final animation = _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOut,
       );
+      if (retriesRemaining == 0) return;
+      unawaited(animation.whenComplete(() {
+        if (!mounted ||
+            request != _scrollRequest ||
+            !_scrollController.hasClients ||
+            _scrollController.position.extentAfter <= 1) {
+          return;
+        }
+        _animateToBottom(
+          request,
+          retriesRemaining: retriesRemaining - 1,
+        );
+      }));
+    });
+  }
+
+  void _toggleMessages() {
+    final willExpand = !_messagesExpanded;
+    final shouldFollowBottom = willExpand
+        ? _followOnExpand
+        : _isNearBottom();
+    setState(() {
+      _messagesExpanded = willExpand;
+      if (!willExpand) {
+        _followOnExpand = shouldFollowBottom;
+        _showScrollToBottom = false;
+        _scrollRequest++;
+      }
+    });
+    if (willExpand && shouldFollowBottom) {
+      _scrollToBottom();
+    } else {
+      _scheduleScrollStateUpdate();
+    }
+  }
+
+  void _showEarlierMessages() {
+    if (_hiddenMessageCount == 0) return;
+    _scrollRequest++;
+    final previousOffset = _scrollController.hasClients
+        ? _scrollController.offset
+        : 0.0;
+    final previousMaxExtent = _scrollController.hasClients
+        ? _scrollController.position.maxScrollExtent
+        : 0.0;
+    setState(() {
+      _hiddenMessageCount = _hiddenMessageCount > _messagePageSize
+          ? _hiddenMessageCount - _messagePageSize
+          : 0;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final addedExtent =
+          _scrollController.position.maxScrollExtent - previousMaxExtent;
+      final target = previousOffset + addedExtent;
+      final maxExtent = _scrollController.position.maxScrollExtent;
+      _scrollController.jumpTo(
+        target < 0
+            ? 0.0
+            : target > maxExtent
+                ? maxExtent
+                : target,
+      );
+      _handleScroll();
     });
   }
 
@@ -163,6 +311,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         ),
       ),
       body: _buildBody(),
+      floatingActionButton: _showScrollToBottom
+          ? FloatingActionButton.small(
+              key: const Key('scroll-to-bottom'),
+              tooltip: '回到底部',
+              onPressed: _scrollToBottom,
+              child: const Icon(Icons.arrow_downward),
+            )
+          : null,
     );
   }
 
@@ -187,39 +343,138 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       );
     }
 
-    return ListView(
-      key: const Key('conversation-detail'),
-      controller: _scrollController,
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-      children: [
-        _ConversationMetadata(summary: detail.summary),
-        if (_error != null) ...[
-          const SizedBox(height: 12),
-          MaterialBanner(
-            content: Text(_error!),
-            actions: [
-              TextButton(onPressed: _load, child: const Text('重新加载')),
-            ],
+    final messages = detail.messages;
+    final visibleMessageCount = messages.length - _hiddenMessageCount;
+    return NotificationListener<ScrollStartNotification>(
+      onNotification: (notification) {
+        if (notification.dragDetails != null) {
+          _scrollRequest++;
+        }
+        return false;
+      },
+      child: CustomScrollView(
+        key: const Key('conversation-detail'),
+        controller: _scrollController,
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate.fixed([
+                _ConversationMetadata(summary: detail.summary),
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  MaterialBanner(
+                    content: Text(_error!),
+                    actions: [
+                      TextButton(
+                        onPressed: _load,
+                        child: const Text('重新加载'),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 20),
+                _MessagesSectionHeader(
+                  expanded: _messagesExpanded,
+                  count: messages.length,
+                  onTap: _toggleMessages,
+                ),
+                if (_messagesExpanded && _hiddenMessageCount > 0) ...[
+                  const SizedBox(height: 8),
+                  Center(
+                    child: TextButton.icon(
+                      key: const Key('show-earlier-messages'),
+                      onPressed: _showEarlierMessages,
+                      icon: const Icon(Icons.expand_less),
+                      label: const Text('显示更早消息'),
+                    ),
+                  ),
+                ],
+                if (_messagesExpanded) const SizedBox(height: 12),
+              ]),
+            ),
           ),
-        ],
-        const SizedBox(height: 20),
-        Text(
-          '消息与事件',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
+          if (_messagesExpanded && messages.isEmpty)
+            const SliverPadding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 28),
+              sliver: SliverToBoxAdapter(child: _NoHistoryNotice()),
+            ),
+          if (_messagesExpanded && messages.isNotEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final message = messages[_hiddenMessageCount + index];
+                    return Padding(
+                      key: Key('message-${message.id}'),
+                      padding: EdgeInsets.only(
+                        bottom: index == visibleMessageCount - 1 ? 0 : 10,
+                      ),
+                      child: _MessageBubble(message: message),
+                    );
+                  },
+                  childCount: visibleMessageCount,
+                ),
               ),
-        ),
-        const SizedBox(height: 12),
-        if (detail.messages.isEmpty)
-          const _NoHistoryNotice()
-        else
-          for (final message in detail.messages) ...[
-            _MessageBubble(message: message),
-            const SizedBox(height: 10),
-          ],
-      ],
+            ),
+          if (!_messagesExpanded)
+            const SliverToBoxAdapter(child: SizedBox(height: 28)),
+        ],
+      ),
     );
   }
+}
+
+class _MessagesSectionHeader extends StatelessWidget {
+  const _MessagesSectionHeader({
+    required this.expanded,
+    required this.count,
+    required this.onTap,
+  });
+
+  final bool expanded;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: const Key('messages-section-toggle'),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      Text(
+                        '消息与事件',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '$count',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  expanded ? Icons.expand_less : Icons.expand_more,
+                  semanticLabel: expanded ? '折叠消息与事件' : '展开消息与事件',
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
 }
 
 class _ConversationMetadata extends StatelessWidget {
