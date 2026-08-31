@@ -10,7 +10,7 @@ void main() {
 
       detail = detail.apply(
         const TurnOutputDeltaEvent(
-          sequence: 8,
+          eventCursor: 'event-8',
           providerId: 'codex',
           conversationId: 'conversation-1',
           turnId: 'turn-1',
@@ -21,7 +21,7 @@ void main() {
       );
       detail = detail.apply(
         const TurnOutputDeltaEvent(
-          sequence: 9,
+          eventCursor: 'event-9',
           providerId: 'codex',
           conversationId: 'conversation-1',
           turnId: 'turn-1',
@@ -34,13 +34,13 @@ void main() {
       expect(detail.messages, hasLength(1));
       expect(detail.messages.single.content, 'hello world');
       expect(detail.messages.single.isStreaming, isTrue);
-      expect(detail.lastEventSequence, 9);
+      expect(detail.lastEventCursor, 'event-9');
     });
 
-    test('marks streamed output complete with the turn event', () {
+    test('keeps live output separate until a terminal snapshot is installed', () {
       var detail = ConversationDetail(summary: summary).apply(
         const TurnOutputDeltaEvent(
-          sequence: 8,
+          eventCursor: 'event-8',
           providerId: 'codex',
           conversationId: 'conversation-1',
           turnId: 'turn-1',
@@ -52,7 +52,7 @@ void main() {
 
       detail = detail.apply(
         TurnUpsertedEvent(
-          sequence: 9,
+          eventCursor: 'event-9',
           turn: TurnTask(
             id: 'turn-1',
             providerId: 'codex',
@@ -67,15 +67,48 @@ void main() {
         ),
       );
 
-      expect(detail.messages.single.isStreaming, isFalse);
+      expect(detail.liveOutputMessages.single.isStreaming, isTrue);
       expect(detail.turns.single.status, TurnStatus.completed);
+
+      final committed = GatewayMessage(
+        id: 'history',
+        turnId: 'turn-1',
+        role: MessageRole.assistant,
+        kind: 'text',
+        content: 'committed',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
+        isStreaming: false,
+      );
+      detail = detail.installCommittedSnapshot(
+        ConversationDetail(summary: summary, committedMessages: [committed]),
+        completedTurnId: 'turn-1',
+      );
+      expect(detail.committedMessages, [committed]);
+      expect(detail.liveOutputMessages, isEmpty);
+    });
+
+    test('does not merge equal output ids from different routed turns', () {
+      var detail = ConversationDetail(summary: summary);
+      for (final turnId in ['turn-a', 'turn-b']) {
+        detail = detail.apply(TurnOutputDeltaEvent(
+          eventCursor: 'cursor-$turnId',
+          providerId: 'codex',
+          conversationId: 'conversation-1',
+          turnId: turnId,
+          outputId: 'same-output',
+          kind: 'text',
+          delta: turnId,
+        ));
+      }
+      expect(detail.liveOutputMessages, hasLength(2));
+      expect(detail.liveOutputMessages.map((message) => message.turnId), ['turn-a', 'turn-b']);
     });
 
     test('ignores events for another conversation', () {
       final detail = ConversationDetail(summary: summary);
       final next = detail.apply(
         const TurnOutputDeltaEvent(
-          sequence: 8,
+          eventCursor: 'event-8',
           providerId: 'codex',
           conversationId: 'conversation-2',
           turnId: 'turn-2',

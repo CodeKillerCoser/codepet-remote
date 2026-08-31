@@ -22,54 +22,80 @@ class ConversationDetailScreen extends StatefulWidget {
 
 class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   final ScrollController _scrollController = ScrollController();
-  final List<GatewayEvent> _pendingEvents = [];
-  StreamSubscription<GatewayEvent>? _eventSubscription;
+  GatewayEventWindow? _eventWindow;
+  final Set<String> _appliedCursors = {};
+  final Set<String> _refreshingTurns = {};
   ConversationDetail? _detail;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _eventSubscription = widget.client.events.listen(
-      _applyEvent,
-      onError: (Object error) {
-        if (mounted) {
-          setState(() {
-            _error = '事件流异常：$error';
-          });
-        }
-      },
-    );
     unawaited(_load());
   }
 
   @override
   void dispose() {
-    unawaited(_eventSubscription?.cancel());
+    unawaited(_eventWindow?.close());
     _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({String? completedTurnId}) async {
     setState(() {
       _error = null;
     });
+    final window = widget.client.openEventWindow();
     try {
-      var detail = await widget.client.getConversation(widget.conversation);
-      for (final event in _pendingEvents) {
-        detail = detail.apply(event);
+      final snapshot = await widget.client.getConversation(widget.conversation);
+      var detail = snapshot.detail;
+      final previous = _detail;
+      if (completedTurnId != null && previous != null) {
+        detail = previous.installCommittedSnapshot(
+          detail,
+          completedTurnId: completedTurnId,
+        );
       }
-      _pendingEvents.clear();
+      final baseline = window.startCursor;
+      if (baseline == null) {
+        throw const GatewayCursorGapException(
+          'Detail event window has no subscribed baseline cursor',
+        );
+      }
+      final previousWindow = _eventWindow;
+      _eventWindow = null;
+      if (previousWindow != null) unawaited(previousWindow.close());
       if (!mounted) {
+        await window.close();
         return;
       }
+      _eventWindow = window;
       setState(() {
         _detail = detail;
       });
+      window.install(
+        baselineCursor: baseline,
+        snapshotCursor: snapshot.snapshotCursor,
+        onEvent: _applyEvent,
+        onError: (Object error, StackTrace _) {
+          if (mounted) {
+            setState(() {
+              _detail = null;
+              _error = '事件流异常：$error';
+            });
+          }
+          _eventWindow = null;
+          unawaited(window.close());
+        },
+      );
       _scrollToBottom();
     } catch (error) {
+      await window.close();
+      await _eventWindow?.close();
+      _eventWindow = null;
       if (mounted) {
         setState(() {
+          _detail = null;
           _error = error.toString();
         });
       }
@@ -77,14 +103,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   }
 
   void _applyEvent(GatewayEvent event) {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted || !_appliedCursors.add(event.eventCursor)) return;
     final detail = _detail;
-    if (detail == null) {
-      _pendingEvents.add(event);
-      return;
-    }
+    if (detail == null) return;
     final next = detail.apply(event);
     if (identical(next, detail)) {
       return;
@@ -93,6 +114,29 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       _detail = next;
     });
     _scrollToBottom();
+    if (event is TurnUpsertedEvent &&
+        event.turn.conversationId == detail.summary.id &&
+        event.turn.status.isTerminal &&
+        _refreshingTurns.add(event.turn.id)) {
+      unawaited(_reloadCompletedTurn(event.turn.id));
+    }
+  }
+
+  Future<void> _reloadCompletedTurn(String turnId) async {
+    try {
+      await _load(completedTurnId: turnId);
+      final detail = _detail;
+      if (mounted && detail != null) {
+        setState(() {
+          _detail = detail.installCommittedSnapshot(
+            detail,
+            completedTurnId: turnId,
+          );
+        });
+      }
+    } finally {
+      _refreshingTurns.remove(turnId);
+    }
   }
 
   void _scrollToBottom() {
@@ -173,17 +217,6 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             _MessageBubble(message: message),
             const SizedBox(height: 10),
           ],
-        if (detail.lastEventSequence != null) ...[
-          const SizedBox(height: 6),
-          Center(
-            child: Text(
-              '事件序号 ${detail.lastEventSequence}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ),
-          ),
-        ],
       ],
     );
   }

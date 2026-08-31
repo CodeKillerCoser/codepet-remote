@@ -29,6 +29,19 @@ class PairedDevice {
 
   String get effectiveName => alias?.trim().isNotEmpty == true ? alias! : displayName;
 
+  PairedDevice withPreferredEndpoint(String endpoint) => PairedDevice(
+        deviceId: deviceId,
+        displayName: displayName,
+        connectionKind: connectionKind,
+        alias: alias,
+        tlsFingerprint: tlsFingerprint,
+        endpointHints: endpointHints,
+        credentialKeyRef: credentialKeyRef,
+        clientId: clientId,
+        preferredEndpoint: endpoint,
+        autoConnect: autoConnect,
+      );
+
   Map<String, Object?> toJson() => {
         'deviceId': deviceId,
         'displayName': displayName,

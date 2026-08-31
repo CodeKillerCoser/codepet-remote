@@ -16,11 +16,18 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   WebSocket? _socket;
   HttpClient? _httpClient;
   int _nextId = 1;
+  bool _closing = false;
 
   @override Stream<JsonMap> get events => _events.stream;
 
   @override
   Future<void> connect() async {
+    if (gatewayUri.scheme != 'wss') {
+      throw const GatewayConnectionException(
+        'Gateway WebSocket URI must use wss',
+      );
+    }
+    _closing = false;
     final context = SecurityContext(withTrustedRoots: false);
     final client = HttpClient(context: context);
     client.badCertificateCallback = (certificate, host, port) => constantTimeEquals(certificateSha256(certificate), certSha256);
@@ -71,11 +78,17 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   }
 
   void _handleError(Object error, StackTrace stack) { _fail(error); _events.addError(error, stack); }
-  void _handleDone() { _socket = null; _fail(const GatewayConnectionException('Gateway connection closed')); }
+  void _handleDone() {
+    _socket = null;
+    const error = GatewayConnectionException('Gateway connection closed');
+    _fail(error);
+    if (!_closing && !_events.isClosed) _events.addError(error);
+  }
   void _fail(Object error) { final pending = _pending.values.toList(); _pending.clear(); for (final item in pending) { if (!item.isCompleted) item.completeError(error); } }
 
   @override
   Future<void> close() async {
+    _closing = true;
     _fail(const GatewayConnectionException('Gateway connection closed'));
     await _socket?.close();
     _socket = null;

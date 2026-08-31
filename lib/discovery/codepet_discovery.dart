@@ -11,7 +11,7 @@ class DiscoveredCodePetHost {
 }
 
 class CodePetDiscovery {
-  static const serviceType = '_codepet._tcp.local';
+  static const serviceType = '_codepet._tcp.local.';
 
   Stream<DiscoveredCodePetHost> discover({Duration timeout = const Duration(seconds: 4)}) async* {
     final client = MDnsClient();

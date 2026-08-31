@@ -8,9 +8,9 @@ import '../devices/device_registry.dart';
 import '../devices/device_session.dart';
 import '../features/connection/pair_device_screen.dart';
 import '../features/home/remote_home_screen.dart';
+import '../discovery/resolving_gateway_transport.dart';
 import '../gateway/demo_gateway_client.dart';
 import '../gateway/gateway_client.dart';
-import '../gateway/pinned_web_socket_transport.dart';
 import '../pairing/pairing_service.dart';
 
 class CodePetRemoteApp extends StatefulWidget {
@@ -72,11 +72,19 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     final credential = key == null ? null : await _registry.credentials.read(key);
     final gateway = Uri.tryParse(device.preferredEndpoint ?? '');
     if (credential == null || gateway == null || device.tlsFingerprint == null || device.clientId == null) return null;
+    var preferredGateway = gateway;
     return DeviceSession(
       device: device,
       clientFactory: () => ProtocolGatewayClient(
-        transport: PinnedWebSocketGatewayTransport(gatewayUri: gateway, credential: credential, certSha256: device.tlsFingerprint!),
+        transport: ResolvingPinnedGatewayTransport(deviceId: device.deviceId, preferredGatewayUri: preferredGateway, credential: credential, certSha256: device.tlsFingerprint!),
         clientId: device.clientId!, expectedDeviceId: device.deviceId, expectedIdentityFingerprint: device.tlsFingerprint!,
+        onValidatedEndpoint: (endpoint) async {
+          if (endpoint == preferredGateway) return;
+          preferredGateway = endpoint;
+          try {
+            await _registry.updatePreferredEndpoint(device.deviceId, endpoint.toString());
+          } catch (_) {}
+        },
       ),
     );
   }
@@ -87,7 +95,9 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
       onPaired: (device) async {
         final session = await _sessionFor(device);
         if (session == null) throw StateError('Credential was not stored securely');
-        setState(() { _sessions.add(session); _selectedIndex = _sessions.length - 1; });
+        final index = await replaceDeviceSession(_sessions, session);
+        if (!mounted) return;
+        setState(() => _selectedIndex = index);
         _navigatorKey.currentState!.pop();
         unawaited(session.connect());
       },

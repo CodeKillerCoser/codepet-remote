@@ -46,15 +46,17 @@ flutter doctor --android-licenses
 
 ## LAN transport 边界
 
-正式 LAN transport 使用 Host pairing response 返回的固定 WSS URL：
+正式 LAN transport 优先使用已保存的 preferred WSS endpoint；连接失败时，可从前台 `_codepet._tcp.local.` 发现中选择 `deviceId` 相同且版本范围包含 v1 的候选 host/port，以应对局域网 IP 或端口变化。mDNS 只提供 endpoint 候选，不更新 TLS pin、deviceId 或其他信任信息：
 
 - 仅接受 `wss://` URI，不降级到明文 `ws://`
 - 一个 WebSocket 同时承载 JSON request、response 和 server event frame
-- 请求/响应/event envelope 与 Gateway v0 生成契约一致
+- 请求、响应与 event envelope 遵循 Gateway v1 schema 和 fixtures
 - 从实际 peer leaf X509 DER 计算 SHA-256，并与 QR pin 常量时间比较
 - 以 Android 安全存储中的 opaque credential 发送 Bearer authorization
 - handshake 再次核对 Host deviceId 与 identityFingerprint
+- `conversation.list` 和 `conversation.get` 使用 opaque `snapshotCursor` fence 安装订阅窗口；cursor 只比较相等性，不解析或持久化
+- 同一 WebSocket 订阅内按 opaque `eventCursor` 去除 replay window 内的完全重复事件，去重缓存保持有界
 
-普通存储只保存设备身份、endpoint、TLS 指纹、clientId 与 credential key reference；credential、会话、消息、Turn、live output 和 cursor 均不写入普通持久层。
+普通存储只保存设备身份、endpoint、TLS 指纹、clientId 与 credential key reference；credential、会话、消息、Turn、live output 和 cursor 均不写入普通持久层。详情投影将 committed snapshot 与订阅后的 live output 分开保存，两者不重叠；terminal turn 会重新获取 snapshot，再清除对应 live output。
 
 `conversation.get` 在当前 Gateway v1 Host 中只返回会话元数据与 snapshotCursor，不包含历史消息正文。详情页会明确展示这一限制。

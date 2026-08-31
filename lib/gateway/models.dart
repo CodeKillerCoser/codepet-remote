@@ -129,8 +129,7 @@ class GatewayHandshake {
     required this.serverName,
     required this.serverVersion,
     required this.providers,
-    required this.eventSequence,
-    this.eventCursor,
+    required this.eventCursor,
     this.deviceId,
     this.identityFingerprint,
   });
@@ -143,7 +142,7 @@ class GatewayHandshake {
       providers: _mapList(json, 'providers')
           .map(GatewayProvider.fromJson)
           .toList(growable: false),
-      eventSequence: _requiredInt(json, 'eventSequence'),
+      eventCursor: _requiredString(json, 'eventCursor'),
     );
   }
 
@@ -151,8 +150,7 @@ class GatewayHandshake {
   final String serverName;
   final String serverVersion;
   final List<GatewayProvider> providers;
-  final int eventSequence;
-  final String? eventCursor;
+  final String eventCursor;
   final String? deviceId;
   final String? identityFingerprint;
 }
@@ -167,6 +165,8 @@ class TurnTask {
     this.displaySummary,
     this.startedAt,
     this.completedAt,
+    this.wireResource,
+    this.conversationWireResource,
   });
 
   factory TurnTask.fromJson(JsonMap json) {
@@ -190,6 +190,8 @@ class TurnTask {
   final DateTime? startedAt;
   final DateTime updatedAt;
   final DateTime? completedAt;
+  final JsonMap? wireResource;
+  final JsonMap? conversationWireResource;
 }
 
 class ConversationSummary {
@@ -253,6 +255,7 @@ class GatewayMessage {
     required this.content,
     required this.createdAt,
     required this.isStreaming,
+    this.isLiveOutput = false,
   });
 
   final String id;
@@ -262,6 +265,7 @@ class GatewayMessage {
   final String content;
   final DateTime createdAt;
   final bool isStreaming;
+  final bool isLiveOutput;
 
   GatewayMessage copyWith({
     String? content,
@@ -275,6 +279,7 @@ class GatewayMessage {
       content: content ?? this.content,
       createdAt: createdAt,
       isStreaming: isStreaming ?? this.isStreaming,
+      isLiveOutput: isLiveOutput,
     );
   }
 }
@@ -282,24 +287,48 @@ class GatewayMessage {
 class ConversationDetail {
   const ConversationDetail({
     required this.summary,
-    this.messages = const [],
+    this.committedMessages = const [],
+    this.liveOutputMessages = const [],
     this.turns = const [],
-    this.lastEventSequence,
+    this.lastEventCursor,
   });
 
   final ConversationSummary summary;
-  final List<GatewayMessage> messages;
+  final List<GatewayMessage> committedMessages;
+  final List<GatewayMessage> liveOutputMessages;
+  List<GatewayMessage> get messages => [
+        ...committedMessages,
+        ...liveOutputMessages,
+      ];
   final List<TurnTask> turns;
-  final int? lastEventSequence;
+  final String? lastEventCursor;
+
+  ConversationDetail installCommittedSnapshot(
+    ConversationDetail snapshot, {
+    String? completedTurnId,
+  }) {
+    return ConversationDetail(
+      summary: snapshot.summary,
+      committedMessages: snapshot.committedMessages,
+      liveOutputMessages: completedTurnId == null
+          ? liveOutputMessages
+          : liveOutputMessages
+              .where((message) => message.turnId != completedTurnId)
+              .toList(growable: false),
+      turns: snapshot.turns,
+      lastEventCursor: snapshot.lastEventCursor,
+    );
+  }
 
   ConversationDetail apply(GatewayEvent event) {
     if (event is ConversationUpsertedEvent &&
         event.conversation.id == summary.id) {
       return ConversationDetail(
         summary: event.conversation,
-        messages: messages,
+        committedMessages: committedMessages,
+        liveOutputMessages: liveOutputMessages,
         turns: turns,
-        lastEventSequence: event.sequence,
+        lastEventCursor: event.eventCursor,
       );
     }
 
@@ -311,38 +340,32 @@ class ConversationDetail {
       } else {
         nextTurns[turnIndex] = event.turn;
       }
-      final nextMessages = event.turn.status.isTerminal
-          ? messages
-              .map(
-                (message) => message.turnId == event.turn.id
-                    ? message.copyWith(isStreaming: false)
-                    : message,
-              )
-              .toList(growable: false)
-          : messages;
       return ConversationDetail(
         summary: summary,
-        messages: nextMessages,
+        committedMessages: committedMessages,
+        liveOutputMessages: liveOutputMessages,
         turns: nextTurns,
-        lastEventSequence: event.sequence,
+        lastEventCursor: event.eventCursor,
       );
     }
 
     if (event is TurnOutputDeltaEvent && event.conversationId == summary.id) {
-      final nextMessages = [...messages];
+      final nextMessages = [...liveOutputMessages];
+      final liveKey = '${event.turnId}\u0000${event.outputId}';
       final messageIndex = nextMessages.indexWhere(
-        (message) => message.id == event.outputId,
+        (message) => message.id == liveKey,
       );
       if (messageIndex == -1) {
         nextMessages.add(
           GatewayMessage(
-            id: event.outputId,
+            id: liveKey,
             turnId: event.turnId,
             role: MessageRole.assistant,
             kind: event.kind,
             content: event.delta,
             createdAt: DateTime.now().toUtc(),
             isStreaming: true,
+            isLiveOutput: true,
           ),
         );
       } else {
@@ -354,9 +377,10 @@ class ConversationDetail {
       }
       return ConversationDetail(
         summary: summary,
-        messages: nextMessages,
+        committedMessages: committedMessages,
+        liveOutputMessages: nextMessages,
         turns: turns,
-        lastEventSequence: event.sequence,
+        lastEventCursor: event.eventCursor,
       );
     }
 
@@ -367,9 +391,8 @@ class ConversationDetail {
 class ConversationPage {
   const ConversationPage({
     required this.conversations,
-    required this.eventSequence,
+    required this.snapshotCursor,
     this.nextCursor,
-    this.snapshotCursor,
   });
 
   factory ConversationPage.fromJson(JsonMap json) {
@@ -378,36 +401,35 @@ class ConversationPage {
           .map(ConversationSummary.fromJson)
           .toList(growable: false),
       nextCursor: _optionalString(json, 'nextCursor'),
-      eventSequence: _requiredInt(json, 'eventSequence'),
+      snapshotCursor: _requiredString(json, 'snapshotCursor'),
     );
   }
 
   final List<ConversationSummary> conversations;
   final String? nextCursor;
-  final int eventSequence;
-  final String? snapshotCursor;
+  final String snapshotCursor;
 }
 
 sealed class GatewayEvent {
-  const GatewayEvent({required this.sequence});
+  const GatewayEvent({required this.eventCursor});
 
   factory GatewayEvent.fromJson(JsonMap json) {
-    final sequence = _requiredInt(json, 'eventSequence');
+    final eventCursor = _requiredString(json, 'eventCursor');
     final eventName = _requiredString(json, 'event');
     final payload = _requiredMap(json, 'payload');
     return switch (eventName) {
       'conversation.upserted' => ConversationUpsertedEvent(
-          sequence: sequence,
+          eventCursor: eventCursor,
           conversation: ConversationSummary.fromJson(
             _requiredMap(payload, 'conversation'),
           ),
         ),
       'turn.upserted' => TurnUpsertedEvent(
-          sequence: sequence,
+          eventCursor: eventCursor,
           turn: TurnTask.fromJson(_requiredMap(payload, 'turn')),
         ),
       'turn.outputDelta' => TurnOutputDeltaEvent(
-          sequence: sequence,
+          eventCursor: eventCursor,
           providerId: _requiredString(payload, 'providerId'),
           conversationId: _requiredString(payload, 'conversationId'),
           turnId: _requiredString(payload, 'turnId'),
@@ -416,19 +438,19 @@ sealed class GatewayEvent {
           delta: _requiredString(payload, 'delta', allowEmpty: true),
         ),
       _ => UnknownGatewayEvent(
-          sequence: sequence,
+          eventCursor: eventCursor,
           name: eventName,
           payload: payload,
         ),
     };
   }
 
-  final int sequence;
+  final String eventCursor;
 }
 
 class ConversationUpsertedEvent extends GatewayEvent {
   const ConversationUpsertedEvent({
-    required super.sequence,
+    required super.eventCursor,
     required this.conversation,
   });
 
@@ -437,7 +459,7 @@ class ConversationUpsertedEvent extends GatewayEvent {
 
 class TurnUpsertedEvent extends GatewayEvent {
   const TurnUpsertedEvent({
-    required super.sequence,
+    required super.eventCursor,
     required this.turn,
   });
 
@@ -446,7 +468,7 @@ class TurnUpsertedEvent extends GatewayEvent {
 
 class TurnOutputDeltaEvent extends GatewayEvent {
   const TurnOutputDeltaEvent({
-    required super.sequence,
+    required super.eventCursor,
     required this.providerId,
     required this.conversationId,
     required this.turnId,
@@ -465,7 +487,7 @@ class TurnOutputDeltaEvent extends GatewayEvent {
 
 class UnknownGatewayEvent extends GatewayEvent {
   const UnknownGatewayEvent({
-    required super.sequence,
+    required super.eventCursor,
     required this.name,
     required this.payload,
   });

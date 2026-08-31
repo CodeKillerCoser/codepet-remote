@@ -14,7 +14,7 @@ class DeviceSession extends ChangeNotifier {
   final PairedDevice device;
   final GatewayClient Function() clientFactory;
   GatewayClient? _client;
-  StreamSubscription<GatewayEvent>? _eventSubscription;
+  GatewayEventWindow? _eventWindow;
   DeviceConnectionState connectionState = DeviceConnectionState.offline;
   GatewayHandshake? handshake;
   String? error;
@@ -24,40 +24,45 @@ class DeviceSession extends ChangeNotifier {
 
   Future<void> connect() async {
     if (connectionState == DeviceConnectionState.connecting) return;
+    final oldWindow = _eventWindow;
+    final oldClient = _client;
+    _eventWindow = null;
+    _client = null;
+    try {
+      await oldWindow?.close();
+    } catch (_) {}
+    try {
+      await oldClient?.close();
+    } catch (_) {}
+    handshake = null;
+    conversations = const [];
     connectionState = DeviceConnectionState.connecting;
     error = null;
     notifyListeners();
     try {
       final client = _client ??= clientFactory();
+      final window = client.openEventWindow();
+      _eventWindow = window;
       handshake = await client.connect();
-      await _eventSubscription?.cancel();
-      _eventSubscription = client.events.listen(
-        _applyEvent,
-        onError: (Object value) {
-          error = '事件流异常：$value';
-          connectionState = DeviceConnectionState.failed;
-          conversations = const [];
-          notifyListeners();
-        },
-        onDone: () {
-          if (connectionState == DeviceConnectionState.online) {
-            connectionState = DeviceConnectionState.offline;
-            conversations = const [];
-            notifyListeners();
-          }
-        },
-      );
       final page = await client.listConversations();
       conversations = sortRecentConversations(page.conversations);
+      window.install(
+        baselineCursor: handshake!.eventCursor,
+        snapshotCursor: page.snapshotCursor,
+        onEvent: _applyEvent,
+        onError: (Object value, StackTrace _) {
+          unawaited(_failRuntime('事件流异常：$value'));
+        },
+      );
       connectionState = DeviceConnectionState.online;
     } catch (value) {
       final connectionError = value.toString();
-      final subscription = _eventSubscription;
+      final window = _eventWindow;
       final client = _client;
-      _eventSubscription = null;
+      _eventWindow = null;
       _client = null;
       try {
-        await subscription?.cancel();
+        await window?.close();
       } catch (_) {}
       try {
         await client?.close();
@@ -68,6 +73,24 @@ class DeviceSession extends ChangeNotifier {
       conversations = const [];
     }
     notifyListeners();
+  }
+
+  Future<void> _failRuntime(String message) async {
+    final window = _eventWindow;
+    final client = _client;
+    _eventWindow = null;
+    _client = null;
+    handshake = null;
+    conversations = const [];
+    error = message;
+    connectionState = DeviceConnectionState.failed;
+    notifyListeners();
+    try {
+      await window?.close();
+    } catch (_) {}
+    try {
+      await client?.close();
+    } catch (_) {}
   }
 
   void _applyEvent(GatewayEvent event) {
@@ -86,8 +109,8 @@ class DeviceSession extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
-    await _eventSubscription?.cancel();
-    _eventSubscription = null;
+    await _eventWindow?.close();
+    _eventWindow = null;
     await _client?.close();
     _client = null;
     handshake = null;
@@ -99,7 +122,7 @@ class DeviceSession extends ChangeNotifier {
 
   @override
   void dispose() {
-    unawaited(_eventSubscription?.cancel());
+    unawaited(_eventWindow?.close());
     final client = _client;
     if (client != null) unawaited(client.close());
     super.dispose();
@@ -132,4 +155,22 @@ Map<String, List<ConversationSummary>> groupConversationsByWorkspace(
         return updated != 0 ? updated : left.key.compareTo(right.key);
       }),
   );
+}
+
+Future<int> replaceDeviceSession(
+  List<DeviceSession> sessions,
+  DeviceSession replacement,
+) async {
+  final index = sessions.indexWhere(
+    (session) => session.device.deviceId == replacement.device.deviceId,
+  );
+  if (index == -1) {
+    sessions.add(replacement);
+    return sessions.length - 1;
+  }
+  final previous = sessions[index];
+  sessions[index] = replacement;
+  await previous.disconnect();
+  previous.dispose();
+  return index;
 }

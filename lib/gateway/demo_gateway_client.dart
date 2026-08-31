@@ -14,6 +14,13 @@ class DemoGatewayClient implements GatewayClient {
   final List<Timer> _timers = [];
   final Set<String> _startedStreams = {};
   int _sequence = 12;
+  String get _cursor => 'demo-$_sequence';
+
+  @override
+  String? get latestEventCursor => _cursor;
+
+  @override
+  GatewayEventWindow openEventWindow() => GatewayEventWindow.forStream(_cursor, events);
 
   late final List<ConversationSummary> _conversations = profileId == 'laptop'
       ? [
@@ -79,7 +86,7 @@ class DemoGatewayClient implements GatewayClient {
   @override
   Future<GatewayHandshake> connect() async {
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    return const GatewayHandshake(
+    return GatewayHandshake(
       protocolVersion: gatewayProtocolVersion,
       serverName: 'CodePet Demo Host',
       serverVersion: '0.1.0-demo',
@@ -92,7 +99,7 @@ class DemoGatewayClient implements GatewayClient {
           methods: ['conversation.list', 'conversation.get'],
         ),
       ],
-      eventSequence: 12,
+      eventCursor: _cursor,
     );
   }
 
@@ -109,21 +116,22 @@ class DemoGatewayClient implements GatewayClient {
         .toList(growable: false);
     return ConversationPage(
       conversations: conversations,
-      eventSequence: _sequence,
+      snapshotCursor: _cursor,
     );
   }
 
   @override
-  Future<ConversationDetail> getConversation(
+  Future<ConversationSnapshot> getConversation(
     ConversationSummary conversation,
   ) async {
     await Future<void>.delayed(const Duration(milliseconds: 160));
     if (conversation.id == 'demo-running') {
       _scheduleStream(conversation);
-      return ConversationDetail(
-        summary: conversation,
+      return ConversationSnapshot(
+        snapshotCursor: _cursor,
+        detail: ConversationDetail(summary: conversation,
         turns: [if (conversation.activeTurn != null) conversation.activeTurn!],
-        messages: [
+        committedMessages: [
           GatewayMessage(
             id: 'demo-user',
             turnId: 'turn-demo',
@@ -134,18 +142,19 @@ class DemoGatewayClient implements GatewayClient {
             isStreaming: false,
           ),
         ],
-        lastEventSequence: _sequence,
+        lastEventCursor: _cursor),
       );
     }
-    return ConversationDetail(
-      summary: conversation,
-      messages: [
+    return ConversationSnapshot(
+      snapshotCursor: _cursor,
+      detail: ConversationDetail(summary: conversation,
+      committedMessages: [
         GatewayMessage(
           id: 'demo-user-idle',
           turnId: 'turn-idle',
           role: MessageRole.user,
           kind: 'text',
-          content: '当前 Gateway v0 覆盖了哪些读取能力？',
+          content: '当前 Gateway 覆盖了哪些读取能力？',
           createdAt: _now.subtract(const Duration(hours: 4)),
           isStreaming: false,
         ),
@@ -159,7 +168,7 @@ class DemoGatewayClient implements GatewayClient {
           isStreaming: false,
         ),
       ],
-      lastEventSequence: _sequence,
+      lastEventCursor: _cursor),
     );
   }
 
@@ -176,7 +185,7 @@ class DemoGatewayClient implements GatewayClient {
           }
           _events.add(
             TurnOutputDeltaEvent(
-              sequence: ++_sequence,
+              eventCursor: 'demo-${++_sequence}',
               providerId: conversation.providerId,
               conversationId: conversation.id,
               turnId: 'turn-demo',
@@ -195,7 +204,7 @@ class DemoGatewayClient implements GatewayClient {
         }
         _events.add(
           TurnUpsertedEvent(
-            sequence: ++_sequence,
+            eventCursor: 'demo-${++_sequence}',
             turn: TurnTask(
               id: 'turn-demo',
               providerId: conversation.providerId,

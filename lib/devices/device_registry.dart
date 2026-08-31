@@ -37,6 +37,7 @@ class DeviceRegistry {
   static const clientIdKey = 'remote_installation_client_id_v1';
   final DeviceMetadataStore metadata;
   final CredentialStore credentials;
+  Future<void> _endpointMutation = Future<void>.value();
 
   Future<String> loadOrCreateClientId() async {
     final existing = await metadata.read(clientIdKey);
@@ -57,6 +58,18 @@ class DeviceRegistry {
   }
 
   Future<void> save(List<PairedDevice> devices) => metadata.write(devicesKey, jsonEncode(devices.map((device) => device.toJson()).toList()));
+
+  Future<void> updatePreferredEndpoint(String deviceId, String endpoint) {
+    final mutation = _endpointMutation.then((_) async {
+      final devices = await load();
+      final index = devices.indexWhere((device) => device.deviceId == deviceId);
+      if (index == -1 || devices[index].preferredEndpoint == endpoint) return;
+      devices[index] = devices[index].withPreferredEndpoint(endpoint);
+      await save(devices);
+    });
+    _endpointMutation = mutation.catchError((_) {});
+    return mutation;
+  }
 
   Future<void> register(PairedDevice device, String credential) async {
     final key = device.credentialKeyRef;

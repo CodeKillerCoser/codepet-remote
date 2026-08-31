@@ -18,7 +18,7 @@ void main() {
     expect(find.text('动态事件会话'), findsNothing);
 
     client.emit(ConversationUpsertedEvent(
-      sequence: 1,
+      eventCursor: 'event-1',
       conversation: _conversation('dynamic', '动态事件会话'),
     ));
     await tester.pumpAndSettle();
@@ -89,8 +89,10 @@ class _EventClient implements GatewayClient {
   final StreamController<GatewayEvent> controller = StreamController<GatewayEvent>.broadcast();
   void emit(GatewayEvent event) => controller.add(event);
   @override Stream<GatewayEvent> get events => controller.stream;
-  @override Future<GatewayHandshake> connect() async => const GatewayHandshake(protocolVersion: 0, serverName: 'Test', serverVersion: '1', providers: [], eventSequence: 0);
-  @override Future<ConversationPage> listConversations({String? providerId, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], eventSequence: 0);
-  @override Future<ConversationDetail> getConversation(ConversationSummary conversation) async => ConversationDetail(summary: conversation);
+  @override String? get latestEventCursor => 'handshake';
+  @override GatewayEventWindow openEventWindow() => GatewayEventWindow.forStream('handshake', events);
+  @override Future<GatewayHandshake> connect() async => const GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: [], eventCursor: 'handshake');
+  @override Future<ConversationPage> listConversations({String? providerId, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
+  @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: 'handshake');
   @override Future<void> close() => controller.close();
 }

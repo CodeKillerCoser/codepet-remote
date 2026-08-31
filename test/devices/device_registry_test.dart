@@ -33,12 +33,30 @@ void main() {
     expect(await registry.load(), isEmpty);
     expect(await credentials.read('secure:forget'), isNull);
   });
+
+  test('serializes endpoint updates across devices and skips no-op writes', () async {
+    final metadata = _Metadata();
+    final registry = DeviceRegistry(metadata: metadata, credentials: _Credentials());
+    const first = PairedDevice(deviceId: 'one', displayName: 'One', preferredEndpoint: 'wss://old-one/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
+    const second = PairedDevice(deviceId: 'two', displayName: 'Two', preferredEndpoint: 'wss://old-two/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
+    await registry.save([first, second]);
+    await Future.wait([
+      registry.updatePreferredEndpoint('one', 'wss://new-one/gateway'),
+      registry.updatePreferredEndpoint('two', 'wss://new-two/gateway'),
+    ]);
+    final devices = await registry.load();
+    expect(devices.map((device) => device.preferredEndpoint), ['wss://new-one/gateway', 'wss://new-two/gateway']);
+    final writes = metadata.writeCount;
+    await registry.updatePreferredEndpoint('one', 'wss://new-one/gateway');
+    expect(metadata.writeCount, writes);
+  });
 }
 
 class _Metadata implements DeviceMetadataStore {
   final Map<String, String> values = {};
+  int writeCount = 0;
   @override Future<String?> read(String key) async => values[key];
-  @override Future<void> write(String key, String value) async { values[key] = value; }
+  @override Future<void> write(String key, String value) async { writeCount++; values[key] = value; }
 }
 class _Credentials implements CredentialStore {
   final Map<String, String> values = {};
