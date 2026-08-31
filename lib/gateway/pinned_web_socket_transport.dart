@@ -44,12 +44,23 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   @override
   Future<JsonMap> request(String method, JsonMap params) {
     final socket = _socket;
-    if (socket == null) throw const GatewayConnectionException('Gateway socket is not connected');
+    if (socket == null) {
+      throw const GatewayConnectionException(
+        'Gateway socket is not connected',
+        retryable: true,
+      );
+    }
     final id = 'remote-${_nextId++}';
     final completer = Completer<JsonMap>();
     _pending[id] = completer;
     socket.add(jsonEncode({'protocolVersion': 1, 'id': id, 'method': method, 'params': params}));
-    return completer.future.timeout(const Duration(seconds: 15), onTimeout: () { _pending.remove(id); throw GatewayConnectionException('$method request timed out'); });
+    return completer.future.timeout(const Duration(seconds: 15), onTimeout: () {
+      _pending.remove(id);
+      throw GatewayConnectionException(
+        '$method request timed out',
+        retryable: true,
+      );
+    });
   }
 
   void _handleFrame(dynamic frame) {
@@ -80,7 +91,10 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   void _handleError(Object error, StackTrace stack) { _fail(error); _events.addError(error, stack); }
   void _handleDone() {
     _socket = null;
-    const error = GatewayConnectionException('Gateway connection closed');
+    const error = GatewayConnectionException(
+      'Gateway connection closed',
+      retryable: true,
+    );
     _fail(error);
     if (!_closing && !_events.isClosed) _events.addError(error);
   }
@@ -89,7 +103,10 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   @override
   Future<void> close() async {
     _closing = true;
-    _fail(const GatewayConnectionException('Gateway connection closed'));
+    _fail(const GatewayConnectionException(
+      'Gateway connection closed',
+      retryable: true,
+    ));
     await _socket?.close();
     _socket = null;
     _httpClient?.close(force: true);

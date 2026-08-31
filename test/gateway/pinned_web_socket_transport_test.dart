@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:codepet_remote/gateway/pinned_web_socket_transport.dart';
 import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,5 +23,24 @@ void main() {
       ),
     );
     await transport.close();
+  });
+
+  test('classifies authentication and TLS failures as non-retryable', () {
+    expect(
+      isRetryableGatewayFailure(const WebSocketException('unauthorized', 401)),
+      isFalse,
+    );
+    expect(
+      isRetryableGatewayFailure(const WebSocketException('forbidden', 403)),
+      isFalse,
+    );
+    expect(
+      isRetryableGatewayFailure(const HandshakeException('pin mismatch')),
+      isFalse,
+    );
+    expect(
+      isRetryableGatewayFailure(const WebSocketException('unavailable', 503)),
+      isTrue,
+    );
   });
 }

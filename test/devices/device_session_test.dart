@@ -4,6 +4,7 @@ import 'package:codepet_remote/devices/device_models.dart';
 import 'package:codepet_remote/devices/device_session.dart';
 import 'package:codepet_remote/gateway/gateway_client.dart';
 import 'package:codepet_remote/gateway/models.dart';
+import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -343,6 +344,75 @@ void main() {
     session.dispose();
   });
 
+  test('failed connect automatically retries with a fresh client', () async {
+    final failed = _FailingClient();
+    final successful = _FakeClient([
+      _conversation('automatically-recovered', '/repo', 1000),
+    ]);
+    final clients = <GatewayClient>[failed, successful];
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('automatic-retry'),
+      clientFactory: () => clients[factoryCalls++],
+      reconnectDelays: const [Duration.zero],
+    );
+
+    await session.connect();
+    await pumpEventQueue();
+
+    expect(factoryCalls, 2);
+    expect(failed.closeCalled, isTrue);
+    expect(session.connectionState, DeviceConnectionState.online);
+    expect(session.conversations.single.id, 'automatically-recovered');
+    session.dispose();
+  });
+
+  test('explicit disconnect cancels a scheduled automatic retry', () async {
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('cancel-automatic-retry'),
+      clientFactory: () {
+        factoryCalls++;
+        return _FailingClient();
+      },
+      reconnectDelays: const [Duration.zero],
+    );
+
+    await session.connect();
+    await session.disconnect();
+    await pumpEventQueue();
+
+    expect(factoryCalls, 1);
+    expect(session.connectionState, DeviceConnectionState.offline);
+    session.dispose();
+  });
+
+  test('non-retryable connection failure does not loop in the background', () async {
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('rejected-credential'),
+      clientFactory: () {
+        factoryCalls++;
+        return _NonRetryableClient();
+      },
+      reconnectDelays: const [Duration.zero],
+    );
+
+    await session.connect();
+    await pumpEventQueue();
+
+    expect(factoryCalls, 1);
+    expect(session.connectionState, DeviceConnectionState.failed);
+    expect(session.error, 'credential rejected');
+
+    await session.connect();
+    await pumpEventQueue();
+
+    expect(factoryCalls, 2);
+    expect(session.connectionState, DeviceConnectionState.failed);
+    session.dispose();
+  });
+
   test('reconnect while online closes the old client and creates a new one', () async {
     var firstPageAttempts = 0;
     final first = _FakeClient(
@@ -445,6 +515,35 @@ void main() {
     expect(session.isLoadingMoreConversations, isFalse);
     expect(session.loadMoreError, isNull);
     expect(client.closed, isTrue);
+    session.dispose();
+  });
+
+  test('event stream failure automatically reconnects with a fresh client', () async {
+    final disconnected = _FakeClient([
+      _conversation('stale', '/repo', 1000),
+    ]);
+    final recovered = _FakeClient([
+      _conversation('fresh', '/repo', 2000),
+    ]);
+    final clients = <GatewayClient>[disconnected, recovered];
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('network-recovery'),
+      clientFactory: () => clients[factoryCalls++],
+      reconnectDelays: const [Duration.zero],
+    );
+    await session.connect();
+
+    disconnected.controller.addError(const GatewayConnectionException(
+      'socket lost',
+      retryable: true,
+    ));
+    await pumpEventQueue();
+
+    expect(factoryCalls, 2);
+    expect(disconnected.closed, isTrue);
+    expect(session.connectionState, DeviceConnectionState.online);
+    expect(session.conversations.single.id, 'fresh');
     session.dispose();
   });
 
@@ -563,11 +662,23 @@ class _FailingClient implements GatewayClient {
   @override Stream<GatewayEvent> get events => const Stream.empty();
   @override String? get latestEventCursor => null;
   @override GatewayEventWindow openEventWindow() => GatewayEventWindow.forStream(null, events);
-  @override Future<GatewayHandshake> connect() => Future.error('first connection failed');
+  @override Future<GatewayHandshake> connect() => Future.error(
+    const GatewayConnectionException(
+      'first connection failed',
+      retryable: true,
+    ),
+  );
   @override Future<ConversationPage> listConversations({String? providerId, String? cursor, int limit = 50}) => throw StateError('not reached');
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) => throw StateError('not reached');
   @override Future<void> close() async {
     closeCalled = true;
     throw StateError('close also failed');
   }
+}
+
+class _NonRetryableClient extends _FailingClient {
+  @override
+  Future<GatewayHandshake> connect() => Future.error(
+    const GatewayConnectionException('credential rejected'),
+  );
 }

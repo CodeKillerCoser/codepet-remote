@@ -140,7 +140,13 @@ void main() {
 
     await expectLater(
       client.connect(),
-      throwsA(isA<GatewayConnectionException>()),
+      throwsA(
+        isA<GatewayConnectionException>().having(
+          (error) => error.retryable,
+          'retryable',
+          isFalse,
+        ),
+      ),
     );
     expect(descriptorRefreshes, 0);
     expect(transport.closed, isTrue);

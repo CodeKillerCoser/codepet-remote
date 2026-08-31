@@ -4,23 +4,41 @@ import 'package:flutter/foundation.dart';
 
 import '../gateway/gateway_client.dart';
 import '../gateway/models.dart';
+import '../gateway/transport.dart';
 import 'device_models.dart';
 
 enum DeviceConnectionState { offline, connecting, online, failed }
 
 class DeviceSession extends ChangeNotifier {
-  DeviceSession({required this.device, required this.clientFactory});
+  DeviceSession({
+    required this.device,
+    required this.clientFactory,
+    this.autoReconnect = true,
+    this.reconnectDelays = const [
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 5),
+      Duration(seconds: 10),
+      Duration(seconds: 30),
+    ],
+  }) : assert(reconnectDelays.isNotEmpty);
 
   static const int conversationPageSize = 20;
 
   PairedDevice device;
   final GatewayClient Function() clientFactory;
+  final bool autoReconnect;
+  final List<Duration> reconnectDelays;
   GatewayClient? _client;
   GatewayEventWindow? _eventWindow;
+  Timer? _reconnectTimer;
   String? _nextConversationCursor;
   bool _isLoadingMoreConversations = false;
   String? _loadMoreError;
   int _runtimeGeneration = 0;
+  int _reconnectAttempt = 0;
+  bool _reconnectEnabled = false;
+  bool _disposed = false;
   DeviceConnectionState connectionState = DeviceConnectionState.offline;
   GatewayHandshake? handshake;
   String? error;
@@ -33,7 +51,13 @@ class DeviceSession extends ChangeNotifier {
   bool get isLoadingMoreConversations => _isLoadingMoreConversations;
   String? get loadMoreError => _loadMoreError;
 
-  Future<void> connect() async {
+  Future<void> connect() {
+    _reconnectEnabled = autoReconnect;
+    _cancelReconnect(resetAttempt: true);
+    return _connect();
+  }
+
+  Future<void> _connect() async {
     if (connectionState == DeviceConnectionState.connecting) return;
     final oldWindow = _eventWindow;
     final oldClient = _client;
@@ -85,6 +109,7 @@ class DeviceSession extends ChangeNotifier {
           unawaited(
             _failRuntime(
               '事件流异常：$value',
+              cause: value,
               generation: generation,
               client: client,
             ),
@@ -92,6 +117,7 @@ class DeviceSession extends ChangeNotifier {
         },
       );
       connectionState = DeviceConnectionState.online;
+      _reconnectAttempt = 0;
       notifyListeners();
     } catch (value) {
       if (generation != _runtimeGeneration) return;
@@ -112,7 +138,25 @@ class DeviceSession extends ChangeNotifier {
       try {
         await client?.close();
       } catch (_) {}
+      if (isRetryableGatewayFailure(value)) _scheduleReconnect();
     }
+  }
+
+  void _scheduleReconnect() {
+    if (!_reconnectEnabled || _disposed || _reconnectTimer != null) return;
+    final delayIndex = _reconnectAttempt.clamp(0, reconnectDelays.length - 1);
+    final delay = reconnectDelays[delayIndex];
+    _reconnectAttempt++;
+    _reconnectTimer = Timer(delay, () {
+      _reconnectTimer = null;
+      if (_reconnectEnabled && !_disposed) unawaited(_connect());
+    });
+  }
+
+  void _cancelReconnect({bool resetAttempt = false}) {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    if (resetAttempt) _reconnectAttempt = 0;
   }
 
   Future<void> loadMoreConversations() async {
@@ -164,6 +208,7 @@ class DeviceSession extends ChangeNotifier {
 
   Future<void> _failRuntime(
     String message, {
+    required Object cause,
     required int generation,
     required GatewayClient client,
   }) async {
@@ -183,6 +228,7 @@ class DeviceSession extends ChangeNotifier {
     try {
       await client.close();
     } catch (_) {}
+    if (isRetryableGatewayFailure(cause)) _scheduleReconnect();
   }
 
   void _applyEvent(GatewayEvent event) {
@@ -195,6 +241,8 @@ class DeviceSession extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    _reconnectEnabled = false;
+    _cancelReconnect(resetAttempt: true);
     final window = _eventWindow;
     final client = _client;
     _runtimeGeneration++;
@@ -215,6 +263,9 @@ class DeviceSession extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    _reconnectEnabled = false;
+    _cancelReconnect(resetAttempt: true);
     _runtimeGeneration++;
     final window = _eventWindow;
     final client = _client;

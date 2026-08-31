@@ -129,14 +129,20 @@ class ProtocolGatewayClient implements GatewayClient {
     final handshake = V1Handshake.fromJson(raw);
     if (handshake.selectedVersion != 1 || handshake.device.deviceId != expectedDeviceId || handshake.device.identityFingerprint != expectedIdentityFingerprint) {
       await transport.close();
-      throw const GatewayConnectionException('Gateway identity mismatch');
+      throw const GatewayConnectionException(
+        'Gateway identity mismatch',
+        retryable: false,
+      );
     }
     await onValidatedHostDescriptor?.call(handshake.device.descriptor);
     _seenEventCursors.add(handshake.eventCursor);
     final subscription = await transport.request('event.subscribe', {'afterCursor': handshake.eventCursor});
     if (subscription['subscribedAfterCursor'] != handshake.eventCursor) {
       await transport.close();
-      throw const GatewayConnectionException('Gateway subscription cursor mismatch');
+      throw const GatewayConnectionException(
+        'Gateway subscription cursor mismatch',
+        retryable: false,
+      );
     }
     _latestEventCursor ??= handshake.eventCursor;
     final endpoint = transport is EndpointAwareGatewayTransport

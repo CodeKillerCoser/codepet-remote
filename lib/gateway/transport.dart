@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'models.dart';
 
 abstract interface class GatewayTransport {
@@ -41,10 +44,25 @@ class GatewayProtocolException implements Exception {
 }
 
 class GatewayConnectionException implements Exception {
-  const GatewayConnectionException(this.message);
+  const GatewayConnectionException(
+    this.message, {
+    this.retryable = false,
+  });
 
   final String message;
+  final bool retryable;
 
   @override
   String toString() => message;
+}
+
+bool isRetryableGatewayFailure(Object error) {
+  if (error is GatewayConnectionException) return error.retryable;
+  if (error is GatewayProtocolException) return error.retryable;
+  if (error is TimeoutException || error is SocketException) return true;
+  if (error is WebSocketException) {
+    final status = error.httpStatusCode;
+    return status == null || status == 408 || status == 429 || status >= 500;
+  }
+  return false;
 }

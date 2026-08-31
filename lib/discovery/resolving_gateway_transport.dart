@@ -64,6 +64,9 @@ class ResolvingPinnedGatewayTransport
     throw GatewayConnectionException(
       'Preferred endpoint failed and no trusted mDNS candidate connected. '
       'Preferred: $preferredError; discovery: $discoveryError',
+      retryable: [preferredError, discoveryError]
+          .whereType<Object>()
+          .every(isRetryableGatewayFailure),
     );
   }
 
@@ -93,7 +96,10 @@ class ResolvingPinnedGatewayTransport
   Future<JsonMap> request(String method, JsonMap params) {
     final active = _active;
     if (active == null) {
-      throw const GatewayConnectionException('Gateway endpoint is not connected');
+      throw const GatewayConnectionException(
+        'Gateway endpoint is not connected',
+        retryable: true,
+      );
     }
     return active.request(method, params);
   }

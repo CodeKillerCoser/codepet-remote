@@ -118,6 +118,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
       return DeviceSession(
         device: device,
         clientFactory: () => throw StateError(registrationError),
+        autoReconnect: false,
       );
     }
     final restoredCredential = credential!;
