@@ -648,6 +648,14 @@ void main() {
           options: [ProviderChoice(id: 'old', displayName: 'Old mode')],
           defaultId: 'old',
         ),
+        reasoningEffort: ProviderChoiceSet(
+          options: [ProviderChoice(id: 'old', displayName: 'Old effort')],
+          defaultId: 'old',
+        ),
+        modelCatalog: FlatModelCatalog(
+          models: [ProviderChoice(id: 'old', displayName: 'Old model')],
+          defaultSelection: FlatModelSelection(modelId: 'old'),
+        ),
       ),
     );
     final client = _DetailClient(
@@ -657,7 +665,13 @@ void main() {
     final session = await _pumpDetail(
       tester,
       client,
-      conversation: _idleConversation(),
+      conversation: _idleConversation(
+        selection: const TurnSendSelection(
+          accessModeId: 'old',
+          reasoningEffortId: 'old',
+          model: FlatModelSelection(modelId: 'old'),
+        ),
+      ),
     );
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('turn-input')), 'keep this draft');
@@ -671,6 +685,12 @@ void main() {
         accessMode: ProviderChoiceSet(
           options: [ProviderChoice(id: 'new', displayName: 'New mode')],
           defaultId: 'new',
+        ),
+        reasoningEffort: ProviderChoiceSet(
+          options: [ProviderChoice(id: 'new', displayName: 'New effort')],
+        ),
+        modelCatalog: FlatModelCatalog(
+          models: [ProviderChoice(id: 'new', displayName: 'New model')],
         ),
       ),
     );
@@ -693,6 +713,24 @@ void main() {
         .map((text) => text.data)
         .toList();
     expect(accessLabels, contains('New mode'));
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('reasoning-effort-selector')),
+        matching: find.text('New effort'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('model-selector')),
+        matching: find.text('New model'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('turn-send'))).onPressed,
+      isNotNull,
+    );
     expect(find.text('keep this draft'), findsOneWidget);
 
     pending.complete(_receipt(client.sendCalls.single));

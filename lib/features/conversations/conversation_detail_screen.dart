@@ -292,23 +292,28 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       current?.reasoningEffortId,
     );
     final catalog = capabilities?.modelCatalog;
+    final currentModel = current?.model;
     if (catalog == null) {
       _modelSelection = null;
-    } else if (current?.model != null) {
-      _modelSelection = catalog.accepts(current!.model) ? current.model : null;
+    } else if (catalog.accepts(currentModel)) {
+      _modelSelection = currentModel;
     } else {
       final available = catalog.availableSelections.toList(growable: false);
-      _modelSelection = catalog.defaultSelection ??
-          (available.length == 1 ? available.single : null);
+      final defaultSelection = catalog.defaultSelection;
+      _modelSelection = catalog.accepts(defaultSelection)
+          ? defaultSelection
+          : available.length == 1
+              ? available.single
+              : null;
     }
   }
 
   String? _initialChoice(ProviderChoiceSet? choices, String? current) {
     if (choices == null) return null;
-    if (current != null) return choices.accepts(current) ? current : null;
+    if (choices.accepts(current)) return current;
+    if (choices.accepts(choices.defaultId)) return choices.defaultId;
     final available = choices.availableOptions;
-    return choices.defaultId ??
-        (available.length == 1 ? available.single.id : null);
+    return available.length == 1 ? available.single.id : null;
   }
 
   void _applyEvent(
