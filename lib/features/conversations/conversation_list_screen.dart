@@ -10,12 +10,14 @@ import 'conversation_detail_screen.dart';
 class ConversationListScreen extends StatefulWidget {
   const ConversationListScreen({
     super.key,
+    required this.session,
     required this.client,
     required this.handshake,
     required this.connection,
     required this.onDisconnect,
   });
 
+  final DeviceSession session;
   final GatewayClient client;
   final GatewayHandshake handshake;
   final DeviceConnection connection;
@@ -119,7 +121,7 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (context) => ConversationDetailScreen(
-          client: widget.client,
+          session: widget.session,
           conversation: conversation,
         ),
       ),

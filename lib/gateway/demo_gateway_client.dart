@@ -13,6 +13,8 @@ class DemoGatewayClient implements GatewayClient {
       StreamController<GatewayEvent>.broadcast();
   final List<Timer> _timers = [];
   final Set<String> _startedStreams = {};
+  final Map<String, List<GatewayMessage>> _sentHistory = {};
+  final Map<String, TurnTask> _activeTurns = {};
   int _sequence = 12;
   String get _cursor => 'demo-$_sequence';
   GatewayProviderRoute get _route => GatewayProviderRoute(
@@ -39,6 +41,7 @@ class DemoGatewayClient implements GatewayClient {
             workspaceRoot: '/workspace/mobile-client',
             createdAt: _now.subtract(const Duration(days: 2)),
             updatedAt: _now.subtract(const Duration(days: 1)),
+            wireResource: _conversationResource('laptop-review'),
           ),
           ConversationSummary(
             id: 'laptop-unscoped',
@@ -48,6 +51,7 @@ class DemoGatewayClient implements GatewayClient {
             permissionLevel: PermissionLevel.readOnly,
             createdAt: _now.subtract(const Duration(days: 4)),
             updatedAt: _now.subtract(const Duration(days: 3)),
+            wireResource: _conversationResource('laptop-unscoped'),
           ),
         ]
       : [
@@ -72,6 +76,7 @@ class DemoGatewayClient implements GatewayClient {
         startedAt: _now.subtract(const Duration(minutes: 1)),
         updatedAt: _now.subtract(const Duration(seconds: 10)),
       ),
+      wireResource: _conversationResource('demo-running'),
     ),
     ConversationSummary(
       id: 'demo-idle',
@@ -82,6 +87,7 @@ class DemoGatewayClient implements GatewayClient {
       permissionLevel: PermissionLevel.readOnly,
       createdAt: _now.subtract(const Duration(days: 1)),
       updatedAt: _now.subtract(const Duration(hours: 3)),
+      wireResource: _conversationResource('demo-idle'),
     ),
         ];
 
@@ -101,11 +107,59 @@ class DemoGatewayClient implements GatewayClient {
           providerType: _route.providerPluginId,
           displayName: 'Codex Demo',
           status: ProviderStatus.ready,
-          methods: [
-            'conversation.list',
-            'conversation.search',
-            'conversation.get',
-          ],
+          harness: const HarnessDescriptor(
+            id: 'demo-harness',
+            displayName: 'Demo Harness',
+            version: '1.0.0',
+          ),
+          capabilities: const GatewayCapabilities(
+            revision: 'demo-capabilities-1',
+            methods: [
+              'conversation.list',
+              'conversation.search',
+              'conversation.get',
+              'turn.send',
+            ],
+            turnSend: TurnSendCapabilities(
+              accessMode: ProviderChoiceSet(
+                options: [
+                  ProviderChoice(
+                    id: 'read-only',
+                    displayName: '只读',
+                    description: '只读取当前工作区',
+                  ),
+                  ProviderChoice(
+                    id: 'workspace-write',
+                    displayName: '工作区写入',
+                    description: '允许修改当前工作区',
+                  ),
+                ],
+                defaultId: 'workspace-write',
+              ),
+              reasoningEffort: ProviderChoiceSet(
+                options: [
+                  ProviderChoice(id: 'medium', displayName: '中等'),
+                  ProviderChoice(id: 'high', displayName: '高'),
+                ],
+                defaultId: 'medium',
+              ),
+              modelCatalog: FlatModelCatalog(
+                models: [
+                  ProviderChoice(
+                    id: 'demo-fast',
+                    displayName: 'Demo Fast',
+                  ),
+                  ProviderChoice(
+                    id: 'demo-deep',
+                    displayName: 'Demo Deep',
+                  ),
+                ],
+                defaultSelection: FlatModelSelection(
+                  modelId: 'demo-fast',
+                ),
+              ),
+            ),
+          ),
         ),
       ],
       eventCursor: _cursor,
@@ -172,8 +226,13 @@ class DemoGatewayClient implements GatewayClient {
       _scheduleStream(conversation);
       return ConversationSnapshot(
         snapshotCursor: _cursor,
-        detail: ConversationDetail(summary: conversation,
-        turns: [if (conversation.activeTurn != null) conversation.activeTurn!],
+      detail: ConversationDetail(summary: conversation,
+        turns: [
+          if (_activeTurns[conversation.id] != null)
+            _activeTurns[conversation.id]!
+          else if (conversation.activeTurn != null)
+            conversation.activeTurn!,
+        ],
         committedMessages: [
           GatewayMessage(
             id: 'demo-user',
@@ -184,6 +243,7 @@ class DemoGatewayClient implements GatewayClient {
             createdAt: _now.subtract(const Duration(minutes: 1)),
             isStreaming: false,
           ),
+          ...?_sentHistory[conversation.id],
         ],
         lastEventCursor: _cursor),
       );
@@ -210,9 +270,100 @@ class DemoGatewayClient implements GatewayClient {
           createdAt: _now.subtract(const Duration(hours: 3)),
           isStreaming: false,
         ),
+        ...?_sentHistory[conversation.id],
       ],
       lastEventCursor: _cursor),
     );
+  }
+
+  @override
+  Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) async {
+    if (route != _route || capabilityRevision != 'demo-capabilities-1') {
+      throw const FormatException('Demo turn.send capability is stale');
+    }
+    if (text.trim().isEmpty || _activeTurns[conversation.id] != null) {
+      throw const FormatException('Demo conversation cannot accept this turn');
+    }
+    final now = DateTime.now().toUtc();
+    final turnId = 'demo-turn-${++_sequence}';
+    final turn = TurnTask(
+      id: turnId,
+      providerId: _route.providerInstanceId,
+      conversationId: conversation.id,
+      status: TurnStatus.queued,
+      updatedAt: now,
+      clientRequestId: clientRequestId,
+    );
+    final input = GatewayMessage(
+      id: 'demo-input-$clientRequestId',
+      turnId: turnId,
+      role: MessageRole.user,
+      kind: 'message',
+      content: text,
+      createdAt: now,
+      isStreaming: false,
+    );
+    _sentHistory.putIfAbsent(conversation.id, () => []).add(input);
+    _activeTurns[conversation.id] = turn;
+    _scheduleSentTurn(conversation, turn, text);
+    return TurnSendReceipt(
+      clientRequestId: clientRequestId,
+      turn: turn,
+      inputItem: input,
+      effectiveSelection: selection,
+    );
+  }
+
+  void _scheduleSentTurn(
+    ConversationSummary conversation,
+    TurnTask turn,
+    String text,
+  ) {
+    const chunks = ['已收到：', '正在处理，', '演示回复完成。'];
+    for (var index = 0; index < chunks.length; index++) {
+      _timers.add(Timer(Duration(milliseconds: 250 + index * 350), () {
+        if (_events.isClosed) return;
+        _events.add(TurnOutputDeltaEvent(
+          eventCursor: 'demo-${++_sequence}',
+          providerId: conversation.providerId,
+          conversationId: conversation.id,
+          turnId: turn.id,
+          itemId: '${turn.id}-assistant',
+          contentId: '${turn.id}-assistant:text',
+          kind: 'text',
+          delta: chunks[index],
+        ));
+      }));
+    }
+    _timers.add(Timer(const Duration(milliseconds: 1450), () {
+      if (_events.isClosed) return;
+      final completed = TurnTask(
+        id: turn.id,
+        providerId: turn.providerId,
+        conversationId: turn.conversationId,
+        status: TurnStatus.completed,
+        updatedAt: DateTime.now().toUtc(),
+        completedAt: DateTime.now().toUtc(),
+        clientRequestId: turn.clientRequestId,
+      );
+      _activeTurns.remove(conversation.id);
+      _sentHistory.putIfAbsent(conversation.id, () => []).add(
+        GatewayMessage(
+          id: '${turn.id}-assistant',
+          turnId: turn.id,
+          role: MessageRole.assistant,
+          kind: 'message',
+          content: '${chunks.join()}\n$text',
+          createdAt: completed.updatedAt,
+          isStreaming: false,
+          contentIds: ['${turn.id}-assistant:text'],
+        ),
+      );
+      _events.add(TurnUpsertedEvent(
+        eventCursor: 'demo-${++_sequence}',
+        turn: completed,
+      ));
+    }));
   }
 
   void _scheduleStream(ConversationSummary conversation) {
@@ -246,19 +397,44 @@ class DemoGatewayClient implements GatewayClient {
         if (_events.isClosed) {
           return;
         }
+        final completedAt = DateTime.now().toUtc();
+        final completed = TurnTask(
+          id: 'turn-demo',
+          providerId: conversation.providerId,
+          conversationId: conversation.id,
+          status: TurnStatus.completed,
+          displaySummary: '事件投影已完成',
+          startedAt: _now.subtract(const Duration(minutes: 1)),
+          updatedAt: completedAt,
+          completedAt: completedAt,
+        );
+        _sentHistory.putIfAbsent(conversation.id, () => []).add(
+          GatewayMessage(
+            id: 'demo-item',
+            turnId: completed.id,
+            role: MessageRole.assistant,
+            kind: 'message',
+            content: chunks.join(),
+            createdAt: completedAt,
+            isStreaming: false,
+            contentIds: const ['demo-item:text'],
+          ),
+        );
+        final updatedConversation = _withoutActiveTurn(conversation);
+        final conversationIndex = _conversations.indexWhere(
+          (candidate) => candidate.id == conversation.id,
+        );
+        if (conversationIndex != -1) {
+          _conversations[conversationIndex] = updatedConversation;
+        }
+        _events.add(ConversationUpsertedEvent(
+          eventCursor: 'demo-${++_sequence}',
+          conversation: updatedConversation,
+        ));
         _events.add(
           TurnUpsertedEvent(
             eventCursor: 'demo-${++_sequence}',
-            turn: TurnTask(
-              id: 'turn-demo',
-              providerId: conversation.providerId,
-              conversationId: conversation.id,
-              status: TurnStatus.completed,
-              displaySummary: '事件投影已完成',
-              startedAt: _now.subtract(const Duration(minutes: 1)),
-              updatedAt: DateTime.now().toUtc(),
-              completedAt: DateTime.now().toUtc(),
-            ),
+            turn: completed,
           ),
         );
       }),
@@ -273,4 +449,26 @@ class DemoGatewayClient implements GatewayClient {
     _timers.clear();
     await _events.close();
   }
+
+  JsonMap _conversationResource(String id) => {
+        ..._route.toJson(),
+        'nativeResourceId': id,
+      };
+
+  ConversationSummary _withoutActiveTurn(ConversationSummary conversation) =>
+      ConversationSummary(
+        id: conversation.id,
+        providerId: conversation.providerId,
+        title: conversation.title,
+        preview: conversation.preview,
+        status: ConversationStatus.idle,
+        permissionLevel: conversation.permissionLevel,
+        model: conversation.model,
+        reasoningEffort: conversation.reasoningEffort,
+        workspaceRoot: conversation.workspaceRoot,
+        createdAt: conversation.createdAt,
+        updatedAt: DateTime.now().toUtc(),
+        turnSendSelection: conversation.turnSendSelection,
+        wireResource: conversation.wireResource,
+      );
 }

@@ -129,6 +129,8 @@ class V1Conversation {
     this.workspaceRoot,
     this.createdAt,
     this.updatedAt,
+    this.activeTurn,
+    this.turnSendSelection,
   });
 
   factory V1Conversation.fromJson(JsonMap json) {
@@ -144,6 +146,7 @@ class V1Conversation {
         'createdAt',
         'updatedAt',
         'activeTurn',
+        'selection',
       },
     );
     return V1Conversation(
@@ -165,6 +168,12 @@ class V1Conversation {
       workspaceRoot: _optionalString(json, 'workspaceRoot'),
       createdAt: _optionalTime(json, 'createdAt'),
       updatedAt: _optionalTime(json, 'updatedAt'),
+      activeTurn: json['activeTurn'] == null
+          ? null
+          : V1TurnTask.fromJson(_map(json, 'activeTurn')),
+      turnSendSelection: json['selection'] == null
+          ? null
+          : TurnSendSelection.fromJson(_map(json, 'selection')),
     );
   }
 
@@ -178,6 +187,8 @@ class V1Conversation {
   final String? workspaceRoot;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+  final V1TurnTask? activeTurn;
+  final TurnSendSelection? turnSendSelection;
 
   ConversationSummary toDomain() => ConversationSummary(
         id: resource.key,
@@ -200,7 +211,77 @@ class V1Conversation {
         updatedAt: updatedAt ??
             createdAt ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        activeTurn: activeTurn?.toDomain(),
+        turnSendSelection: turnSendSelection,
         wireResource: resource.toJson(),
+      );
+}
+
+class V1TurnTask {
+  const V1TurnTask({
+    required this.resource,
+    required this.conversation,
+    required this.status,
+    this.displaySummary,
+    this.startedAt,
+    this.updatedAt,
+    this.completedAt,
+  });
+
+  factory V1TurnTask.fromJson(JsonMap json) {
+    _fields(
+      json,
+      const {'resource', 'conversation', 'status'},
+      optional: const {
+        'displaySummary',
+        'startedAt',
+        'updatedAt',
+        'completedAt',
+      },
+    );
+    return V1TurnTask(
+      resource: RoutedResourceId.fromJson(_map(json, 'resource')),
+      conversation: RoutedResourceId.fromJson(_map(json, 'conversation')),
+      status: _enumString(json, 'status', const {
+        'queued',
+        'running',
+        'waiting-approval',
+        'completed',
+        'failed',
+        'interrupted',
+      }),
+      displaySummary: _optionalString(
+        json,
+        'displaySummary',
+        allowEmpty: true,
+      ),
+      startedAt: _optionalTime(json, 'startedAt'),
+      updatedAt: _optionalTime(json, 'updatedAt'),
+      completedAt: _optionalTime(json, 'completedAt'),
+    );
+  }
+
+  final RoutedResourceId resource;
+  final RoutedResourceId conversation;
+  final String status;
+  final String? displaySummary;
+  final DateTime? startedAt;
+  final DateTime? updatedAt;
+  final DateTime? completedAt;
+
+  TurnTask toDomain() => TurnTask(
+        id: resource.key,
+        providerId: resource.providerInstanceId,
+        conversationId: conversation.key,
+        status: TurnStatus.fromWire(status),
+        displaySummary: displaySummary,
+        startedAt: startedAt,
+        updatedAt: updatedAt ??
+            startedAt ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        completedAt: completedAt,
+        wireResource: resource.toJson(),
+        conversationWireResource: conversation.toJson(),
       );
 }
 
@@ -402,6 +483,44 @@ class V1ConversationItem {
       approvalStatus: approval?.status,
     );
   }
+}
+
+class V1TurnSendResponse {
+  const V1TurnSendResponse({
+    required this.accepted,
+    required this.turn,
+    required this.userItem,
+    required this.effectiveSelection,
+  });
+
+  factory V1TurnSendResponse.fromJson(JsonMap json) {
+    _fields(
+      json,
+      const {
+        'accepted',
+        'turn',
+        'userItem',
+        'effectiveSelection',
+      },
+    );
+    final accepted = json['accepted'];
+    if (accepted is! bool) {
+      throw const FormatException('Expected boolean accepted');
+    }
+    return V1TurnSendResponse(
+      accepted: accepted,
+      turn: V1TurnTask.fromJson(_map(json, 'turn')),
+      userItem: V1ConversationItem.fromJson(_map(json, 'userItem')),
+      effectiveSelection: TurnSendSelection.fromJson(
+        _map(json, 'effectiveSelection'),
+      ),
+    );
+  }
+
+  final bool accepted;
+  final V1TurnTask turn;
+  final V1ConversationItem userItem;
+  final TurnSendSelection effectiveSelection;
 }
 
 void _fields(

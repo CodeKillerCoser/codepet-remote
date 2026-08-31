@@ -262,7 +262,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => ConversationDetailScreen(
-          client: lease.client,
+          session: widget.session,
           conversation: conversation,
         ),
       ),

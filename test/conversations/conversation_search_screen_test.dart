@@ -431,6 +431,9 @@ class _SearchClient implements GatewayClient {
   }
 
   @override
+  Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
+
+  @override
   Future<void> close() async {
     if (!controller.isClosed) unawaited(controller.close());
   }

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:codepet_remote/gateway/gateway_client.dart';
 import 'package:codepet_remote/gateway/models.dart';
 import 'package:codepet_remote/gateway/transport.dart';
+import 'package:codepet_remote/gateway/v1_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -53,6 +54,141 @@ void main() {
     expect(transport.closed, isTrue);
   });
 
+  test('sends original text with route, revision and flat selection', () async {
+    final handshakeJson = _handshakeJson();
+    final provider = (handshakeJson['providers'] as List).single
+        as Map<String, dynamic>;
+    final capabilities = provider['capabilities'] as Map<String, dynamic>;
+    capabilities['turnSend'] = {
+      'modelCatalog': {
+        'kind': 'flat',
+        'models': [
+          {'id': 'model-a', 'displayName': 'Model A'},
+        ],
+        'defaultSelection': {'kind': 'flat', 'modelId': 'model-a'},
+      },
+    };
+    final transport = _FakeTransport({
+      'protocol.handshake': handshakeJson,
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'turn.send': _turnSendResult(
+        selection: {'model': {'kind': 'flat', 'modelId': 'model-a'}},
+      ),
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+    final conversation = V1Conversation.fromJson(_conversationJson()).toDomain();
+    const selection = TurnSendSelection(
+      model: FlatModelSelection(modelId: 'model-a'),
+    );
+
+    final receipt = await client.sendTurn(
+      route: _route,
+      conversation: conversation,
+      clientRequestId: 'request-1',
+      capabilityRevision: 'revision-1',
+      text: '  keep whitespace\n',
+      selection: selection,
+    );
+
+    expect(transport.requests.last.method, 'turn.send');
+    expect(transport.requests.last.params, {
+      'route': _route.toJson(),
+      'conversation': conversation.wireResource,
+      'clientRequestId': 'request-1',
+      'capabilityRevision': 'revision-1',
+      'input': {'kind': 'text', 'text': '  keep whitespace\n'},
+      'selection': {
+        'model': {'kind': 'flat', 'modelId': 'model-a'},
+      },
+    });
+    expect(receipt.clientRequestId, 'request-1');
+    expect(receipt.inputItem.content, '  keep whitespace\n');
+    expect(receipt.turn.conversationId, conversation.id);
+    await client.close();
+  });
+
+  test('preserves grouped model identity and rejects a mismatched receipt', () async {
+    final handshakeJson = _handshakeJson();
+    final provider = (handshakeJson['providers'] as List).single
+        as Map<String, dynamic>;
+    final capabilities = provider['capabilities'] as Map<String, dynamic>;
+    capabilities['turnSend'] = {
+      'modelCatalog': {
+        'kind': 'grouped',
+        'providers': [
+          {
+            'id': 'inference',
+            'displayName': 'Inference',
+            'models': [
+              {'id': 'model-a', 'displayName': 'Model A'},
+            ],
+          },
+        ],
+      },
+    };
+    final result = _turnSendResult(selection: {
+      'model': {
+        'kind': 'grouped',
+        'providerId': 'inference',
+        'modelId': 'model-a',
+      },
+    });
+    final userItem = result['userItem'] as Map<String, dynamic>;
+    userItem['conversation'] = {
+      ..._route.toJson(),
+      'nativeResourceId': 'another-conversation',
+    };
+    final transport = _FakeTransport({
+      'protocol.handshake': handshakeJson,
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'turn.send': result,
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+    final conversation = V1Conversation.fromJson(_conversationJson()).toDomain();
+
+    await expectLater(
+      client.sendTurn(
+        route: _route,
+        conversation: conversation,
+        clientRequestId: 'request-grouped',
+        capabilityRevision: 'revision-1',
+        text: 'hello',
+        selection: const TurnSendSelection(
+          model: GroupedModelSelection(
+            providerId: 'inference',
+            modelId: 'model-a',
+          ),
+        ),
+      ),
+      throwsFormatException,
+    );
+    expect(
+      transport.requests.last.params['selection'],
+      {
+        'model': {
+          'kind': 'grouped',
+          'providerId': 'inference',
+          'modelId': 'model-a',
+        },
+      },
+    );
+    await client.close();
+  });
+
   test('decodes the Host committed history fixture in wire order', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _fixtureResult('handshake-response.json'),
@@ -89,6 +225,63 @@ void main() {
     expect(history[4].role, MessageRole.assistant);
     expect(history[4].content, 'The committed history is ready.');
     expect(history[4].contentIds, ['message-agent-01:text']);
+    await client.close();
+  });
+
+  test('maps conversation selection and active turn from the routed snapshot', () async {
+    final handshakeJson = _handshakeJson();
+    final provider = (handshakeJson['providers'] as List).single
+        as Map<String, dynamic>;
+    final capabilities = provider['capabilities'] as Map<String, dynamic>;
+    capabilities['turnSend'] = {
+      'modelCatalog': {
+        'kind': 'flat',
+        'models': [
+          {'id': 'model-a', 'displayName': 'Model A'},
+        ],
+      },
+    };
+    final conversation = _conversationJson();
+    conversation['selection'] = {
+      'model': {'kind': 'flat', 'modelId': 'model-a'},
+    };
+    conversation['activeTurn'] = {
+      'resource': {
+        ..._route.toJson(),
+        'nativeResourceId': 'active-turn',
+      },
+      'conversation': conversation['resource'],
+      'status': 'running',
+      'updatedAt': 2500,
+    };
+    conversation['status'] = 'running';
+    final transport = _FakeTransport({
+      'protocol.handshake': handshakeJson,
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'conversation.get': {
+        'conversation': conversation,
+        'items': <Object>[],
+        'snapshotCursor': 'opaque-handshake',
+      },
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+    final requested = V1Conversation.fromJson(_conversationJson()).toDomain();
+
+    final snapshot = await client.getConversation(requested);
+
+    expect(snapshot.detail.turns, hasLength(1));
+    expect(snapshot.detail.activeTurn?.status, TurnStatus.running);
+    expect(snapshot.detail.summary.turnSendSelection?.model?.toJson(), {
+      'kind': 'flat',
+      'modelId': 'model-a',
+    });
     await client.close();
   });
 
@@ -567,19 +760,21 @@ JsonMap _handshakeJson() {
         'route': {'deviceId': 'device-test', 'providerPluginId': 'dev.codepet.codex', 'providerInstanceId': 'codex-work'},
         'pluginId': 'dev.codepet.codex',
         'displayName': 'Codex',
+        'harness': {
+          'id': 'codex',
+          'displayName': 'Codex',
+          'version': '1.0.0',
+        },
         'status': 'ready',
         'capabilities': {
+          'revision': 'revision-1',
           'methods': [
             'conversation.list',
             'conversation.search',
             'conversation.get',
+            'turn.send',
           ],
-          'permissionLevels': ['read-only'],
-          'models': <String>[],
-          'reasoningEfforts': <String>[],
-          'quickReplies': <Object>[],
-          'canSteer': false,
-          'canInterrupt': false,
+          'turnSend': <String, dynamic>{},
         },
       },
     ],
@@ -595,6 +790,45 @@ JsonMap _conversationJson() {
     'permissionLevel': 'read-only',
     'createdAt': 1000,
     'updatedAt': 2000,
+  };
+}
+
+JsonMap _turnSendResult({required JsonMap selection}) {
+  final conversation = {
+    ..._route.toJson(),
+    'nativeResourceId': 'conversation-1',
+  };
+  final turn = {
+    ..._route.toJson(),
+    'nativeResourceId': 'turn-sent',
+  };
+  return {
+    'accepted': true,
+    'turn': {
+      'resource': turn,
+      'conversation': conversation,
+      'status': 'queued',
+      'updatedAt': 3000,
+    },
+    'userItem': {
+      'resource': {
+        ..._route.toJson(),
+        'nativeResourceId': 'item-user',
+      },
+      'turn': turn,
+      'conversation': conversation,
+      'kind': 'message',
+      'status': 'completed',
+      'role': 'user',
+      'contents': [
+        {
+          'contentId': 'item-user:text',
+          'kind': 'text',
+          'text': '  keep whitespace\n',
+        },
+      ],
+    },
+    'effectiveSelection': selection,
   };
 }
 

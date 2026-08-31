@@ -14,6 +14,7 @@ abstract interface class GatewayClient {
   Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50});
   Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50});
   Future<ConversationSnapshot> getConversation(ConversationSummary conversation);
+  Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection});
   Future<void> close();
 }
 
@@ -103,6 +104,7 @@ class ProtocolGatewayClient implements GatewayClient {
   String? _latestEventCursor;
   final _BoundedCursorSet _seenEventCursors = _BoundedCursorSet();
   Set<String> _providerRouteKeys = const {};
+  final Map<String, GatewayProvider> _providersByRoute = {};
 
   @override Stream<GatewayEvent> get events => _events.stream;
   @override String? get latestEventCursor => _latestEventCursor;
@@ -111,6 +113,7 @@ class ProtocolGatewayClient implements GatewayClient {
   @override
   Future<GatewayHandshake> connect() async {
     _providerRouteKeys = const {};
+    _providersByRoute.clear();
     _transportEvents ??= transport.events.listen((raw) {
       try {
         final event = _eventFromV1(
@@ -119,6 +122,9 @@ class ProtocolGatewayClient implements GatewayClient {
           expectedProviderRouteKeys: _providerRouteKeys,
         );
         if (!_seenEventCursors.add(event.eventCursor)) return;
+        if (event is GatewayProviderChangedEvent) {
+          _providersByRoute[event.provider.route.key] = event.provider;
+        }
         _latestEventCursor = event.eventCursor;
         _events.add(event);
       } catch (error, stack) {
@@ -151,6 +157,9 @@ class ProtocolGatewayClient implements GatewayClient {
       return provider;
     }).toList(growable: false);
     _providerRouteKeys = providers.map((provider) => provider.route.key).toSet();
+    _providersByRoute.addEntries(
+      providers.map((provider) => MapEntry(provider.route.key, provider)),
+    );
     await onValidatedHostDescriptor?.call(handshake.device.descriptor);
     _seenEventCursors.add(handshake.eventCursor);
     final subscription = await transport.request('event.subscribe', {'afterCursor': handshake.eventCursor});
@@ -273,6 +282,12 @@ class ProtocolGatewayClient implements GatewayClient {
     final resource = conversation.wireResource;
     if (resource == null) throw const FormatException('Conversation has no v1 routed identity');
     final result = await transport.request('conversation.get', {'conversation': resource});
+    const resultFields = {'conversation', 'items', 'snapshotCursor'};
+    final actualResultFields = result.keys.toSet();
+    if (actualResultFields.difference(resultFields).isNotEmpty ||
+        resultFields.difference(actualResultFields).isNotEmpty) {
+      throw const FormatException('Invalid conversation.get result fields');
+    }
     final raw = result['conversation'];
     final rawItems = result['items'];
     final cursor = result['snapshotCursor'];
@@ -281,6 +296,12 @@ class ProtocolGatewayClient implements GatewayClient {
     final requested = RoutedResourceId.fromJson(resource);
     if (wireConversation.resource.key != requested.key || wireConversation.resource.deviceId != expectedDeviceId) {
       throw const FormatException('conversation.get returned a different routed conversation');
+    }
+    final activeTurn = wireConversation.activeTurn;
+    if (activeTurn != null &&
+        (activeTurn.conversation.key != requested.key ||
+            !activeTurn.resource.hasRouteOf(requested))) {
+      throw const FormatException('Conversation active turn route mismatch');
     }
     final items = <V1ConversationItem>[];
     for (final rawItem in rawItems) {
@@ -306,6 +327,7 @@ class ProtocolGatewayClient implements GatewayClient {
           for (var index = 0; index < items.length; index++)
             items[index].toDomain(index),
         ],
+        turns: [if (activeTurn != null) activeTurn.toDomain()],
         lastEventCursor: cursor,
       ),
       snapshotCursor: cursor,
@@ -313,8 +335,85 @@ class ProtocolGatewayClient implements GatewayClient {
   }
 
   @override
+  Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) async {
+    if (clientRequestId.isEmpty) {
+      throw ArgumentError.value(
+        clientRequestId,
+        'clientRequestId',
+        'must not be empty',
+      );
+    }
+    if (capabilityRevision.isEmpty) {
+      throw ArgumentError.value(
+        capabilityRevision,
+        'capabilityRevision',
+        'must not be empty',
+      );
+    }
+    if (text.trim().isEmpty) {
+      throw ArgumentError.value(text, 'text', 'must not be blank');
+    }
+    _validateProviderRequest(route, cursor: null, limit: 1);
+    final provider = _providersByRoute[route.key];
+    if (provider == null ||
+        provider.status != ProviderStatus.ready ||
+        !provider.methods.contains('turn.send') ||
+        provider.capabilities.revision != capabilityRevision ||
+        provider.capabilities.turnSend == null) {
+      throw const FormatException(
+        'Provider turn.send capability is unavailable or stale',
+      );
+    }
+    if (!provider.capabilities.turnSend!.accepts(selection)) {
+      throw const FormatException('Turn selection is invalid or unavailable');
+    }
+    final resourceJson = conversation.wireResource;
+    if (resourceJson == null) {
+      throw const FormatException('Conversation has no v1 routed identity');
+    }
+    final resource = RoutedResourceId.fromJson(resourceJson);
+    if (resource.deviceId != route.deviceId ||
+        resource.providerPluginId != route.providerPluginId ||
+        resource.providerInstanceId != route.providerInstanceId) {
+      throw const FormatException(
+        'Conversation route does not match turn.send Provider route',
+      );
+    }
+    final result = await transport.request('turn.send', {
+      'route': route.toJson(),
+      'conversation': resourceJson,
+      'clientRequestId': clientRequestId,
+      'capabilityRevision': capabilityRevision,
+      'input': {'kind': 'text', 'text': text},
+      'selection': selection.toJson(),
+    });
+    final response = V1TurnSendResponse.fromJson(result);
+    if (!response.accepted ||
+        response.turn.conversation.key != resource.key ||
+        !response.turn.resource.hasRouteOf(resource) ||
+        response.userItem.conversation.key != resource.key ||
+        response.userItem.turn.key != response.turn.resource.key ||
+        !response.userItem.resource.hasRouteOf(resource) ||
+        response.userItem.role != 'user' ||
+        !provider.capabilities.turnSend!.accepts(
+          response.effectiveSelection,
+        )) {
+      throw const FormatException('Invalid routed turn.send response');
+    }
+    return TurnSendReceipt(
+      clientRequestId: clientRequestId,
+      turn: response.turn.toDomain(),
+      inputItem: response.userItem.toDomain(
+        DateTime.now().toUtc().millisecondsSinceEpoch,
+      ),
+      effectiveSelection: response.effectiveSelection,
+    );
+  }
+
+  @override
   Future<void> close() async {
     _providerRouteKeys = const {};
+    _providersByRoute.clear();
     await _transportEvents?.cancel();
     _transportEvents = null;
     await transport.close();
@@ -332,6 +431,30 @@ GatewayEvent _eventFromV1(
   final payload = json['payload'];
   if (cursor is! String || cursor.isEmpty || event is! String || payload is! Map) throw const FormatException('Invalid Gateway v1 event envelope');
   final data = Map<String, dynamic>.from(payload);
+  if (event == 'provider.statusChanged') {
+    const allowedFields = {'provider', 'previousStatus'};
+    final actualFields = data.keys.toSet();
+    if (actualFields.difference(allowedFields).isNotEmpty ||
+        !actualFields.contains('provider') ||
+        data['provider'] is! Map) {
+      throw const FormatException('Invalid provider.statusChanged payload');
+    }
+    final provider = GatewayProvider.fromJson(
+      Map<String, dynamic>.from(data['provider'] as Map),
+    );
+    if (provider.route.deviceId != expectedDeviceId ||
+        !expectedProviderRouteKeys.contains(provider.route.key)) {
+      throw const FormatException(
+        'Provider event route was not advertised by the connected Host',
+      );
+    }
+    final previousStatus = data['previousStatus'];
+    if (previousStatus != null) ProviderStatus.fromWire(previousStatus);
+    return GatewayProviderChangedEvent(
+      eventCursor: cursor,
+      provider: provider,
+    );
+  }
   if (event == 'conversation.upserted' && data['conversation'] is Map) {
     final conversation = V1Conversation.fromJson(Map<String, dynamic>.from(data['conversation'] as Map));
     if (!_isExpectedProviderRoute(
@@ -346,9 +469,11 @@ GatewayEvent _eventFromV1(
     return ConversationUpsertedEvent(eventCursor: cursor, conversation: conversation.toDomain());
   }
   if (event == 'turn.upserted' && data['turn'] is Map) {
-    final turn = Map<String, dynamic>.from(data['turn'] as Map);
-    final resource = RoutedResourceId.fromJson(Map<String, dynamic>.from(turn['resource'] as Map));
-    final conversation = RoutedResourceId.fromJson(Map<String, dynamic>.from(turn['conversation'] as Map));
+    final turn = V1TurnTask.fromJson(
+      Map<String, dynamic>.from(data['turn'] as Map),
+    );
+    final resource = turn.resource;
+    final conversation = turn.conversation;
     if (!resource.hasRouteOf(conversation) ||
         !_isExpectedProviderRoute(
           resource,
@@ -362,7 +487,10 @@ GatewayEvent _eventFromV1(
         )) {
       throw const FormatException('Invalid turn Provider route');
     }
-    return TurnUpsertedEvent(eventCursor: cursor, turn: TurnTask(id: resource.key, providerId: resource.providerInstanceId, conversationId: conversation.key, status: TurnStatus.fromWire(turn['status']), displaySummary: turn['displaySummary'] as String?, startedAt: _optionalV1Time(turn['startedAt']), updatedAt: _optionalV1Time(turn['updatedAt']) ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true), completedAt: _optionalV1Time(turn['completedAt']), wireResource: resource.toJson(), conversationWireResource: conversation.toJson()));
+    return TurnUpsertedEvent(
+      eventCursor: cursor,
+      turn: turn.toDomain(),
+    );
   }
   if (event == 'turn.outputDelta') {
     final turn = RoutedResourceId.fromJson(Map<String, dynamic>.from(data['turn'] as Map));
@@ -403,12 +531,6 @@ bool _isExpectedProviderRoute(
     providerInstanceId: resource.providerInstanceId,
   ).key;
   return expectedProviderRouteKeys.contains(routeKey);
-}
-
-DateTime? _optionalV1Time(Object? value) {
-  if (value == null) return null;
-  if (value is! int) throw const FormatException('Invalid Gateway timestamp');
-  return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
 }
 
 class _BoundedCursorSet {

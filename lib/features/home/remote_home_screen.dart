@@ -931,7 +931,7 @@ class _ProjectConversationsScreenState
 }
 
 void _openConversation(BuildContext context, DeviceSession session, ConversationSummary conversation) {
-  Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => ConversationDetailScreen(client: session.client, conversation: conversation)));
+  Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => ConversationDetailScreen(session: session, conversation: conversation)));
 }
 
 String _deviceStateLabel(DeviceConnectionState state) => switch (state) {

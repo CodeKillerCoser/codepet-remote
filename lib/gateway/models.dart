@@ -184,16 +184,533 @@ class GatewayProviderRoute {
       );
 }
 
+class HarnessDescriptor {
+  const HarnessDescriptor({
+    required this.id,
+    required this.displayName,
+    this.version,
+  });
+
+  factory HarnessDescriptor.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {'id', 'displayName'},
+      optional: const {'version'},
+      name: 'Harness descriptor',
+    );
+    return HarnessDescriptor(
+      id: _requiredString(json, 'id'),
+      displayName: _requiredString(json, 'displayName'),
+      version: _optionalString(json, 'version'),
+    );
+  }
+
+  final String id;
+  final String displayName;
+  final String? version;
+}
+
+class ProviderChoice {
+  const ProviderChoice({
+    required this.id,
+    required this.displayName,
+    this.description,
+    this.enabled = true,
+    this.disabledReason,
+  });
+
+  factory ProviderChoice.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {'id', 'displayName'},
+      optional: const {'description', 'enabled', 'disabledReason'},
+      name: 'Provider choice',
+    );
+    final enabled = json['enabled'];
+    if (enabled != null && enabled is! bool) {
+      throw const FormatException('Provider choice enabled must be a boolean');
+    }
+    return ProviderChoice(
+      id: _requiredString(json, 'id'),
+      displayName: _requiredString(json, 'displayName'),
+      description: _optionalString(json, 'description'),
+      enabled: enabled as bool? ?? true,
+      disabledReason: _optionalString(json, 'disabledReason'),
+    );
+  }
+
+  final String id;
+  final String displayName;
+  final String? description;
+  final bool enabled;
+  final String? disabledReason;
+}
+
+class ProviderChoiceSet {
+  const ProviderChoiceSet({required this.options, this.defaultId});
+
+  factory ProviderChoiceSet.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {'options'},
+      optional: const {'defaultId'},
+      name: 'Provider choice set',
+    );
+    final options = _mapList(json, 'options')
+        .map(ProviderChoice.fromJson)
+        .toList(growable: false);
+    if (options.isEmpty) {
+      throw const FormatException('Provider choice set must not be empty');
+    }
+    _requireUniqueIds(options.map((option) => option.id), 'choice option');
+    final defaultId = _optionalString(json, 'defaultId');
+    if (defaultId != null &&
+        !options.any((option) => option.id == defaultId && option.enabled)) {
+      throw const FormatException(
+        'Provider choice defaultId must reference an enabled option',
+      );
+    }
+    return ProviderChoiceSet(options: options, defaultId: defaultId);
+  }
+
+  final List<ProviderChoice> options;
+  final String? defaultId;
+
+  List<ProviderChoice> get availableOptions =>
+      options.where((option) => option.enabled).toList(growable: false);
+
+  ProviderChoice? option(String? id) {
+    if (id == null) return null;
+    for (final option in options) {
+      if (option.id == id) return option;
+    }
+    return null;
+  }
+
+  bool accepts(String? id) => option(id)?.enabled == true;
+}
+
+sealed class ModelSelection {
+  const ModelSelection();
+
+  factory ModelSelection.fromJson(JsonMap json) {
+    final kind = _requiredString(json, 'kind');
+    return switch (kind) {
+      'flat' => FlatModelSelection.fromJson(json),
+      'grouped' => GroupedModelSelection.fromJson(json),
+      _ => throw FormatException('Unknown model selection kind: $kind'),
+    };
+  }
+
+  JsonMap toJson();
+}
+
+class FlatModelSelection extends ModelSelection {
+  const FlatModelSelection({required this.modelId});
+
+  factory FlatModelSelection.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {'kind', 'modelId'},
+      name: 'Flat model selection',
+    );
+    if (_requiredString(json, 'kind') != 'flat') {
+      throw const FormatException('Flat model selection kind must be flat');
+    }
+    return FlatModelSelection(modelId: _requiredString(json, 'modelId'));
+  }
+
+  final String modelId;
+
+  @override
+  JsonMap toJson() => {'kind': 'flat', 'modelId': modelId};
+
+  @override
+  bool operator ==(Object other) =>
+      other is FlatModelSelection && other.modelId == modelId;
+
+  @override
+  int get hashCode => Object.hash('flat', modelId);
+}
+
+class GroupedModelSelection extends ModelSelection {
+  const GroupedModelSelection({
+    required this.providerId,
+    required this.modelId,
+  });
+
+  factory GroupedModelSelection.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {'kind', 'providerId', 'modelId'},
+      name: 'Grouped model selection',
+    );
+    if (_requiredString(json, 'kind') != 'grouped') {
+      throw const FormatException(
+        'Grouped model selection kind must be grouped',
+      );
+    }
+    return GroupedModelSelection(
+      providerId: _requiredString(json, 'providerId'),
+      modelId: _requiredString(json, 'modelId'),
+    );
+  }
+
+  final String providerId;
+  final String modelId;
+
+  @override
+  JsonMap toJson() => {
+        'kind': 'grouped',
+        'providerId': providerId,
+        'modelId': modelId,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      other is GroupedModelSelection &&
+      other.providerId == providerId &&
+      other.modelId == modelId;
+
+  @override
+  int get hashCode => Object.hash('grouped', providerId, modelId);
+}
+
+class ModelProviderGroup {
+  const ModelProviderGroup({
+    required this.id,
+    required this.displayName,
+    required this.models,
+    this.description,
+  });
+
+  factory ModelProviderGroup.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {'id', 'displayName', 'models'},
+      optional: const {'description'},
+      name: 'Model provider group',
+    );
+    final models = _mapList(json, 'models')
+        .map(ProviderChoice.fromJson)
+        .toList(growable: false);
+    if (models.isEmpty) {
+      throw const FormatException('Model provider group must not be empty');
+    }
+    _requireUniqueIds(models.map((model) => model.id), 'model');
+    return ModelProviderGroup(
+      id: _requiredString(json, 'id'),
+      displayName: _requiredString(json, 'displayName'),
+      description: _optionalString(json, 'description'),
+      models: models,
+    );
+  }
+
+  final String id;
+  final String displayName;
+  final String? description;
+  final List<ProviderChoice> models;
+}
+
+sealed class ModelCatalog {
+  const ModelCatalog({required this.defaultSelection});
+
+  factory ModelCatalog.fromJson(JsonMap json) {
+    final kind = _requiredString(json, 'kind');
+    return switch (kind) {
+      'flat' => FlatModelCatalog.fromJson(json),
+      'grouped' => GroupedModelCatalog.fromJson(json),
+      _ => throw FormatException('Unknown model catalog kind: $kind'),
+    };
+  }
+
+  final ModelSelection? defaultSelection;
+  Iterable<ModelSelection> get availableSelections;
+  bool accepts(ModelSelection? selection);
+  ProviderChoice? modelFor(ModelSelection? selection);
+}
+
+class FlatModelCatalog extends ModelCatalog {
+  const FlatModelCatalog({
+    required this.models,
+    FlatModelSelection? defaultSelection,
+  }) : super(defaultSelection: defaultSelection);
+
+  factory FlatModelCatalog.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {'kind', 'models'},
+      optional: const {'defaultSelection'},
+      name: 'Flat model catalog',
+    );
+    final models = _mapList(json, 'models')
+        .map(ProviderChoice.fromJson)
+        .toList(growable: false);
+    if (models.isEmpty) {
+      throw const FormatException('Flat model catalog must not be empty');
+    }
+    _requireUniqueIds(models.map((model) => model.id), 'model');
+    final rawDefault = json['defaultSelection'];
+    final defaultSelection = rawDefault == null
+        ? null
+        : ModelSelection.fromJson(_asMap(rawDefault, 'defaultSelection'));
+    if (defaultSelection != null && defaultSelection is! FlatModelSelection) {
+      throw const FormatException('Flat catalog default must be flat');
+    }
+    final catalog = FlatModelCatalog(
+      models: models,
+      defaultSelection: defaultSelection as FlatModelSelection?,
+    );
+    if (defaultSelection != null && !catalog.accepts(defaultSelection)) {
+      throw const FormatException(
+        'Flat catalog default must reference an enabled model',
+      );
+    }
+    return catalog;
+  }
+
+  final List<ProviderChoice> models;
+
+  @override
+  Iterable<ModelSelection> get availableSelections => models
+      .where((model) => model.enabled)
+      .map((model) => FlatModelSelection(modelId: model.id));
+
+  @override
+  bool accepts(ModelSelection? selection) =>
+      selection is FlatModelSelection &&
+      models.any((model) => model.id == selection.modelId && model.enabled);
+
+  @override
+  ProviderChoice? modelFor(ModelSelection? selection) {
+    if (selection is! FlatModelSelection) return null;
+    for (final model in models) {
+      if (model.id == selection.modelId) return model;
+    }
+    return null;
+  }
+}
+
+class GroupedModelCatalog extends ModelCatalog {
+  const GroupedModelCatalog({
+    required this.providers,
+    GroupedModelSelection? defaultSelection,
+  }) : super(defaultSelection: defaultSelection);
+
+  factory GroupedModelCatalog.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {'kind', 'providers'},
+      optional: const {'defaultSelection'},
+      name: 'Grouped model catalog',
+    );
+    final providers = _mapList(json, 'providers')
+        .map(ModelProviderGroup.fromJson)
+        .toList(growable: false);
+    if (providers.isEmpty) {
+      throw const FormatException('Grouped model catalog must not be empty');
+    }
+    _requireUniqueIds(providers.map((provider) => provider.id), 'model provider');
+    final rawDefault = json['defaultSelection'];
+    final defaultSelection = rawDefault == null
+        ? null
+        : ModelSelection.fromJson(_asMap(rawDefault, 'defaultSelection'));
+    if (defaultSelection != null && defaultSelection is! GroupedModelSelection) {
+      throw const FormatException('Grouped catalog default must be grouped');
+    }
+    final catalog = GroupedModelCatalog(
+      providers: providers,
+      defaultSelection: defaultSelection as GroupedModelSelection?,
+    );
+    if (defaultSelection != null && !catalog.accepts(defaultSelection)) {
+      throw const FormatException(
+        'Grouped catalog default must reference an enabled model',
+      );
+    }
+    return catalog;
+  }
+
+  final List<ModelProviderGroup> providers;
+
+  @override
+  Iterable<ModelSelection> get availableSelections sync* {
+    for (final provider in providers) {
+      for (final model in provider.models.where((model) => model.enabled)) {
+        yield GroupedModelSelection(
+          providerId: provider.id,
+          modelId: model.id,
+        );
+      }
+    }
+  }
+
+  @override
+  bool accepts(ModelSelection? selection) =>
+      selection is GroupedModelSelection &&
+      providers.any((provider) =>
+          provider.id == selection.providerId &&
+          provider.models.any((model) =>
+              model.id == selection.modelId && model.enabled));
+
+  @override
+  ProviderChoice? modelFor(ModelSelection? selection) {
+    if (selection is! GroupedModelSelection) return null;
+    for (final provider in providers) {
+      if (provider.id != selection.providerId) continue;
+      for (final model in provider.models) {
+        if (model.id == selection.modelId) return model;
+      }
+    }
+    return null;
+  }
+
+  ModelProviderGroup? providerFor(ModelSelection? selection) {
+    if (selection is! GroupedModelSelection) return null;
+    for (final provider in providers) {
+      if (provider.id == selection.providerId) return provider;
+    }
+    return null;
+  }
+}
+
+class TurnSendSelection {
+  const TurnSendSelection({
+    this.accessModeId,
+    this.reasoningEffortId,
+    this.model,
+  });
+
+  factory TurnSendSelection.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      optional: const {'accessModeId', 'reasoningEffortId', 'model'},
+      name: 'Turn send selection',
+    );
+    final model = json['model'];
+    return TurnSendSelection(
+      accessModeId: _optionalString(json, 'accessModeId'),
+      reasoningEffortId: _optionalString(json, 'reasoningEffortId'),
+      model: model == null
+          ? null
+          : ModelSelection.fromJson(_asMap(model, 'model')),
+    );
+  }
+
+  final String? accessModeId;
+  final String? reasoningEffortId;
+  final ModelSelection? model;
+
+  JsonMap toJson() => {
+        'accessModeId': ?accessModeId,
+        'reasoningEffortId': ?reasoningEffortId,
+        'model': ?model?.toJson(),
+      };
+}
+
+class TurnSendCapabilities {
+  const TurnSendCapabilities({
+    this.accessMode,
+    this.reasoningEffort,
+    this.modelCatalog,
+  });
+
+  factory TurnSendCapabilities.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      optional: const {'accessMode', 'reasoningEffort', 'modelCatalog'},
+      name: 'Turn send capabilities',
+    );
+    return TurnSendCapabilities(
+      accessMode: json['accessMode'] == null
+          ? null
+          : ProviderChoiceSet.fromJson(_requiredMap(json, 'accessMode')),
+      reasoningEffort: json['reasoningEffort'] == null
+          ? null
+          : ProviderChoiceSet.fromJson(
+              _requiredMap(json, 'reasoningEffort'),
+            ),
+      modelCatalog: json['modelCatalog'] == null
+          ? null
+          : ModelCatalog.fromJson(_requiredMap(json, 'modelCatalog')),
+    );
+  }
+
+  final ProviderChoiceSet? accessMode;
+  final ProviderChoiceSet? reasoningEffort;
+  final ModelCatalog? modelCatalog;
+
+  bool accepts(TurnSendSelection selection) =>
+      (accessMode == null
+          ? selection.accessModeId == null
+          : accessMode!.accepts(selection.accessModeId)) &&
+      (reasoningEffort == null
+          ? selection.reasoningEffortId == null
+          : reasoningEffort!.accepts(selection.reasoningEffortId)) &&
+      (modelCatalog == null
+          ? selection.model == null
+          : modelCatalog!.accepts(selection.model));
+}
+
+class GatewayCapabilities {
+  const GatewayCapabilities({
+    required this.revision,
+    required this.methods,
+    this.turnSend,
+  });
+
+  factory GatewayCapabilities.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {'revision', 'methods'},
+      optional: const {'turnSend'},
+      name: 'Gateway capabilities',
+    );
+    final methods = _stringList(json, 'methods');
+    _requireUniqueIds(methods, 'Gateway method');
+    return GatewayCapabilities(
+      revision: _requiredString(json, 'revision'),
+      methods: methods,
+      turnSend: json['turnSend'] == null
+          ? null
+          : TurnSendCapabilities.fromJson(_requiredMap(json, 'turnSend')),
+    );
+  }
+
+  final String revision;
+  final List<String> methods;
+  final TurnSendCapabilities? turnSend;
+}
+
 class GatewayProvider {
   const GatewayProvider({
     required this.route,
     required this.providerType,
     required this.displayName,
     required this.status,
-    required this.methods,
-  });
+    HarnessDescriptor? harness,
+    GatewayCapabilities? capabilities,
+    List<String>? methods,
+    this.version,
+  })  : assert(capabilities == null || methods == null),
+        // ignore: prefer_initializing_formals
+        _harness = harness,
+        _capabilities = capabilities,
+        _legacyMethods = methods;
 
   factory GatewayProvider.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {
+        'route',
+        'pluginId',
+        'displayName',
+        'harness',
+        'status',
+        'capabilities',
+      },
+      optional: const {'version'},
+      name: 'Gateway provider',
+    );
     final capabilities = _requiredMap(json, 'capabilities');
     final route = GatewayProviderRoute.fromJson(
       _requiredMap(json, 'route'),
@@ -206,8 +723,10 @@ class GatewayProvider {
       route: route,
       providerType: providerType,
       displayName: _requiredString(json, 'displayName'),
+      version: _optionalString(json, 'version'),
+      harness: HarnessDescriptor.fromJson(_requiredMap(json, 'harness')),
       status: ProviderStatus.fromWire(json['status']),
-      methods: _stringList(capabilities, 'methods'),
+      capabilities: GatewayCapabilities.fromJson(capabilities),
     );
   }
 
@@ -215,8 +734,19 @@ class GatewayProvider {
   String get id => route.providerInstanceId;
   final String providerType;
   final String displayName;
+  final String? version;
+  final HarnessDescriptor? _harness;
+  HarnessDescriptor get harness => _harness ??
+      HarnessDescriptor(id: providerType, displayName: displayName);
   final ProviderStatus status;
-  final List<String> methods;
+  final GatewayCapabilities? _capabilities;
+  final List<String>? _legacyMethods;
+  GatewayCapabilities get capabilities => _capabilities ??
+      GatewayCapabilities(
+        revision: 'legacy-constructor',
+        methods: _legacyMethods ?? const [],
+      );
+  List<String> get methods => capabilities.methods;
 }
 
 class GatewayHandshake {
@@ -251,6 +781,18 @@ class GatewayHandshake {
   final String? deviceId;
   final String? identityFingerprint;
   final DeviceDescriptor? deviceDescriptor;
+
+  GatewayHandshake withProviders(List<GatewayProvider> nextProviders) =>
+      GatewayHandshake(
+        protocolVersion: protocolVersion,
+        serverName: serverName,
+        serverVersion: serverVersion,
+        providers: nextProviders,
+        eventCursor: eventCursor,
+        deviceId: deviceId,
+        identityFingerprint: identityFingerprint,
+        deviceDescriptor: deviceDescriptor,
+      );
 }
 
 class TurnTask {
@@ -263,6 +805,7 @@ class TurnTask {
     this.displaySummary,
     this.startedAt,
     this.completedAt,
+    this.clientRequestId,
     this.wireResource,
     this.conversationWireResource,
   });
@@ -277,6 +820,7 @@ class TurnTask {
       startedAt: _optionalDateTime(json, 'startedAt'),
       updatedAt: _requiredDateTime(json, 'updatedAt'),
       completedAt: _optionalDateTime(json, 'completedAt'),
+      clientRequestId: _optionalString(json, 'clientRequestId'),
     );
   }
 
@@ -288,6 +832,7 @@ class TurnTask {
   final DateTime? startedAt;
   final DateTime updatedAt;
   final DateTime? completedAt;
+  final String? clientRequestId;
   final JsonMap? wireResource;
   final JsonMap? conversationWireResource;
 }
@@ -306,11 +851,13 @@ class ConversationSummary {
     this.reasoningEffort,
     this.workspaceRoot,
     this.activeTurn,
+    this.turnSendSelection,
     this.wireResource,
   });
 
   factory ConversationSummary.fromJson(JsonMap json) {
     final activeTurn = json['activeTurn'];
+    final turnSendSelection = json['turnSendSelection'];
     return ConversationSummary(
       id: _requiredString(json, 'id'),
       providerId: _requiredString(json, 'providerId'),
@@ -326,6 +873,11 @@ class ConversationSummary {
       activeTurn: activeTurn == null
           ? null
           : TurnTask.fromJson(_asMap(activeTurn, 'activeTurn')),
+      turnSendSelection: turnSendSelection == null
+          ? null
+          : TurnSendSelection.fromJson(
+              _asMap(turnSendSelection, 'turnSendSelection'),
+            ),
     );
   }
 
@@ -341,7 +893,22 @@ class ConversationSummary {
   final DateTime createdAt;
   final DateTime updatedAt;
   final TurnTask? activeTurn;
+  final TurnSendSelection? turnSendSelection;
   final JsonMap? wireResource;
+}
+
+class TurnSendReceipt {
+  const TurnSendReceipt({
+    required this.clientRequestId,
+    required this.turn,
+    required this.inputItem,
+    required this.effectiveSelection,
+  });
+
+  final String clientRequestId;
+  final TurnTask turn;
+  final GatewayMessage inputItem;
+  final TurnSendSelection effectiveSelection;
 }
 
 class GatewayMessage {
@@ -419,6 +986,21 @@ class ConversationDetail {
   final List<TurnTask> turns;
   final String? lastEventCursor;
 
+  TurnTask? get activeTurn {
+    final byId = <String, TurnTask>{};
+    final summaryTurn = summary.activeTurn;
+    if (summaryTurn != null) byId[summaryTurn.id] = summaryTurn;
+    for (final turn in turns) {
+      final current = byId[turn.id];
+      byId[turn.id] = current == null ? turn : _newerTurn(current, turn);
+    }
+    final active = byId.values
+        .where((turn) => !turn.status.isTerminal)
+        .toList(growable: false)
+      ..sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
+    return active.isEmpty ? null : active.first;
+  }
+
   ConversationDetail installCommittedSnapshot(
     ConversationDetail snapshot, {
     String? completedTurnId,
@@ -454,18 +1036,11 @@ class ConversationDetail {
     }
 
     if (event is TurnUpsertedEvent && event.turn.conversationId == summary.id) {
-      final nextTurns = [...turns];
-      final turnIndex = nextTurns.indexWhere((turn) => turn.id == event.turn.id);
-      if (turnIndex == -1) {
-        nextTurns.add(event.turn);
-      } else {
-        nextTurns[turnIndex] = event.turn;
-      }
       return ConversationDetail(
         summary: summary,
         committedMessages: committedMessages,
         liveOutputMessages: liveOutputMessages,
-        turns: nextTurns,
+        turns: _upsertTurn(turns, event.turn),
         lastEventCursor: event.eventCursor,
       );
     }
@@ -523,7 +1098,53 @@ class ConversationDetail {
 
     return this;
   }
+
+  ConversationDetail accept(TurnSendReceipt receipt) {
+    final nextMessages = [...committedMessages];
+    final messageIndex = nextMessages.indexWhere(
+      (message) => message.id == receipt.inputItem.id,
+    );
+    if (messageIndex == -1) {
+      nextMessages.add(receipt.inputItem);
+    } else {
+      nextMessages[messageIndex] = receipt.inputItem;
+    }
+    return ConversationDetail(
+      summary: summary,
+      committedMessages: nextMessages,
+      liveOutputMessages: liveOutputMessages,
+      turns: _upsertTurn(turns, receipt.turn),
+      lastEventCursor: lastEventCursor,
+    );
+  }
 }
+
+List<TurnTask> _upsertTurn(List<TurnTask> turns, TurnTask incoming) {
+  final next = [...turns];
+  final index = next.indexWhere((turn) => turn.id == incoming.id);
+  if (index == -1) {
+    next.add(incoming);
+  } else {
+    next[index] = _newerTurn(next[index], incoming);
+  }
+  return next;
+}
+
+TurnTask _newerTurn(TurnTask current, TurnTask incoming) {
+  final comparison = incoming.updatedAt.compareTo(current.updatedAt);
+  if (comparison > 0) return incoming;
+  if (comparison < 0) return current;
+  return _turnStatusRank(incoming.status) >= _turnStatusRank(current.status)
+      ? incoming
+      : current;
+}
+
+int _turnStatusRank(TurnStatus status) => switch (status) {
+      TurnStatus.queued => 0,
+      TurnStatus.running => 1,
+      TurnStatus.waitingApproval => 2,
+      TurnStatus.completed || TurnStatus.failed || TurnStatus.interrupted => 3,
+    };
 
 class ConversationPage {
   const ConversationPage({
@@ -555,6 +1176,12 @@ sealed class GatewayEvent {
     final eventName = _requiredString(json, 'event');
     final payload = _requiredMap(json, 'payload');
     return switch (eventName) {
+      'provider.statusChanged' => GatewayProviderChangedEvent(
+          eventCursor: eventCursor,
+          provider: GatewayProvider.fromJson(
+            _requiredMap(payload, 'provider'),
+          ),
+        ),
       'conversation.upserted' => ConversationUpsertedEvent(
           eventCursor: eventCursor,
           conversation: ConversationSummary.fromJson(
@@ -584,6 +1211,15 @@ sealed class GatewayEvent {
   }
 
   final String eventCursor;
+}
+
+class GatewayProviderChangedEvent extends GatewayEvent {
+  const GatewayProviderChangedEvent({
+    required super.eventCursor,
+    required this.provider,
+  });
+
+  final GatewayProvider provider;
 }
 
 class ConversationUpsertedEvent extends GatewayEvent {
@@ -711,4 +1347,26 @@ DateTime? _optionalDateTime(JsonMap json, String field) {
     throw FormatException('Expected integer for "$field"');
   }
   return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+}
+
+void _validateJsonFields(
+  JsonMap json, {
+  Set<String> required = const {},
+  Set<String> optional = const {},
+  required String name,
+}) {
+  final actual = json.keys.toSet();
+  if (required.difference(actual).isNotEmpty ||
+      actual.difference({...required, ...optional}).isNotEmpty) {
+    throw FormatException('$name fields do not match Gateway v1');
+  }
+}
+
+void _requireUniqueIds(Iterable<String> values, String name) {
+  final seen = <String>{};
+  for (final value in values) {
+    if (!seen.add(value)) {
+      throw FormatException('Duplicate $name id: $value');
+    }
+  }
 }

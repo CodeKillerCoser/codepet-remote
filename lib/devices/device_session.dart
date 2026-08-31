@@ -77,6 +77,27 @@ class DeviceSession extends ChangeNotifier {
           .where((provider) => provider.methods.contains('conversation.search'))
           .toList(growable: false) ??
       const [];
+  GatewayProvider? providerForConversation(ConversationSummary conversation) {
+    final resource = conversation.wireResource;
+    final deviceId = resource?['deviceId'];
+    final providerPluginId = resource?['providerPluginId'];
+    final providerInstanceId = resource?['providerInstanceId'];
+    if (deviceId is! String ||
+        providerPluginId is! String ||
+        providerInstanceId is! String) {
+      return null;
+    }
+    final providers = handshake?.providers ?? const <GatewayProvider>[];
+    for (final provider in providers) {
+      final route = provider.route;
+      if (route.deviceId == deviceId &&
+          route.providerPluginId == providerPluginId &&
+          route.providerInstanceId == providerInstanceId) {
+        return provider;
+      }
+    }
+    return null;
+  }
   bool get canLoadMoreConversations =>
       connectionState == DeviceConnectionState.online &&
       _conversationCursors.values.any((cursor) => cursor != null);
@@ -294,6 +315,19 @@ class DeviceSession extends ChangeNotifier {
   }
 
   void _applyEvent(GatewayEvent event) {
+    if (event is GatewayProviderChangedEvent) {
+      final currentHandshake = handshake;
+      if (currentHandshake == null) return;
+      final providers = [...currentHandshake.providers];
+      final index = providers.indexWhere(
+        (provider) => provider.route == event.provider.route,
+      );
+      if (index == -1) return;
+      providers[index] = event.provider;
+      handshake = currentHandshake.withProviders(providers);
+      notifyListeners();
+      return;
+    }
     if (event is! ConversationUpsertedEvent) return;
     conversations = mergeRoutedConversations(
       conversations,
