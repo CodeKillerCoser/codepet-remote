@@ -448,6 +448,32 @@ void main() {
     second.dispose();
   });
 
+  test('runtime leases expire when the session reconnects or disconnects', () async {
+    final firstClient = _FakeClient(const []);
+    final secondClient = _FakeClient(const []);
+    final clients = [firstClient, secondClient];
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('runtime-lease'),
+      clientFactory: () => clients[factoryCalls++],
+    );
+
+    await session.connect();
+    final firstLease = session.runtimeLease!;
+    expect(session.ownsRuntimeLease(firstLease), isTrue);
+
+    await session.connect();
+    final secondLease = session.runtimeLease!;
+    expect(session.ownsRuntimeLease(firstLease), isFalse);
+    expect(session.ownsRuntimeLease(secondLease), isTrue);
+    expect(identical(firstLease.client, secondLease.client), isFalse);
+
+    await session.disconnect();
+    expect(session.runtimeLease, isNull);
+    expect(session.ownsRuntimeLease(secondLease), isFalse);
+    session.dispose();
+  });
+
   test('failed connect discards client and retry creates a fresh client', () async {
     final failed = _FailingClient();
     final successful = _FakeClient([_conversation('recovered', '/repo', 1000)]);

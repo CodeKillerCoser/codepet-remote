@@ -280,6 +280,54 @@ void main() {
     await client.close();
   });
 
+  test('rejects same-device unadvertised Provider replay through event window', () async {
+    late _FakeTransport transport;
+    transport = _FakeTransport(
+      {
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      },
+      beforeResponse: (method) {
+        if (method != 'event.subscribe') return;
+        final conversation = _conversationJson();
+        conversation['resource'] = {
+          'deviceId': 'device-test',
+          'providerPluginId': 'dev.codepet.other',
+          'providerInstanceId': 'other-work',
+          'nativeResourceId': 'conversation-foreign',
+        };
+        transport.emit({
+          'protocolVersion': 1,
+          'eventCursor': 'opaque-foreign-provider',
+          'event': 'conversation.upserted',
+          'payload': {'conversation': conversation},
+        });
+      },
+    );
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    final window = client.openEventWindow();
+    final handshake = await client.connect();
+    final applied = <GatewayEvent>[];
+
+    expect(
+      () => window.install(
+        baselineCursor: handshake.eventCursor,
+        snapshotCursor: handshake.eventCursor,
+        onEvent: applied.add,
+      ),
+      throwsFormatException,
+    );
+    expect(applied, isEmpty);
+    await window.close();
+    await client.close();
+  });
+
   test('projects routed turn and output delta events', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _handshakeJson(),

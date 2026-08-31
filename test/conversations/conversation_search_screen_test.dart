@@ -129,6 +129,77 @@ void main() {
     session.dispose();
   });
 
+  testWidgets('disconnect and reconnect discard old results and late pages', (tester) async {
+    _useTallSurface(tester);
+    final latePage = Completer<ConversationPage>();
+    var oldSearches = 0;
+    final oldClient = _SearchClient(
+      providers: const [_primaryProvider],
+      onSearch: ({required GatewayProviderRoute route, required String searchTerm, required String? cursor, required int limit}) {
+        oldSearches++;
+        if (oldSearches == 1) {
+          return Future.value(ConversationPage(
+            conversations: [
+              _conversation(route, 'old-visible', '旧运行结果', 2000),
+            ],
+            snapshotCursor: 'handshake',
+          ));
+        }
+        return latePage.future;
+      },
+    );
+    final newClient = _SearchClient(
+      providers: const [_primaryProvider],
+      onSearch: _unusedSearch,
+    );
+    final clients = [oldClient, newClient];
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: const PairedDevice(
+        deviceId: 'host-one',
+        displayName: 'Host',
+        connectionKind: DeviceConnectionKind.demo,
+      ),
+      clientFactory: () => clients[factoryCalls++],
+    );
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: ConversationSearchScreen(session: session)),
+    );
+
+    await tester.enterText(find.byKey(const Key('search-input')), 'old');
+    await tester.tap(find.byKey(const Key('search-submit')));
+    await _pumpAsync(tester);
+    expect(find.text('旧运行结果'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('search-input')), 'late');
+    await tester.tap(find.byKey(const Key('search-submit')));
+    await tester.pump();
+    expect(oldSearches, 2);
+
+    unawaited(session.disconnect());
+    await tester.pump();
+    expect(find.byKey(const Key('search-offline')), findsOneWidget);
+    expect(find.text('旧运行结果'), findsNothing);
+
+    await session.connect();
+    await tester.pump();
+    latePage.complete(ConversationPage(
+      conversations: [
+        _conversation(_primaryRoute, 'late-old', '迟到的旧结果', 3000),
+      ],
+      snapshotCursor: 'handshake',
+    ));
+    await _pumpAsync(tester);
+
+    expect(factoryCalls, 2);
+    expect(find.text('旧运行结果'), findsNothing);
+    expect(find.text('迟到的旧结果'), findsNothing);
+    expect(find.byKey(const Key('search-results')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
   testWidgets('search explains unsupported Providers and rejects an empty term', (tester) async {
     final unsupportedClient = _SearchClient(
       providers: const [_listOnlyProvider],

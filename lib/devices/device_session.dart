@@ -9,6 +9,16 @@ import 'device_models.dart';
 
 enum DeviceConnectionState { offline, connecting, online, failed }
 
+class DeviceSessionRuntimeLease {
+  const DeviceSessionRuntimeLease._({
+    required this.generation,
+    required this.client,
+  });
+
+  final int generation;
+  final GatewayClient client;
+}
+
 class DeviceSession extends ChangeNotifier {
   DeviceSession({
     required this.device,
@@ -45,6 +55,20 @@ class DeviceSession extends ChangeNotifier {
   List<ConversationSummary> conversations = const [];
 
   GatewayClient get client => _client!;
+  DeviceSessionRuntimeLease? get runtimeLease {
+    final currentClient = _client;
+    if (connectionState != DeviceConnectionState.online ||
+        currentClient == null) {
+      return null;
+    }
+    return DeviceSessionRuntimeLease._(
+      generation: _runtimeGeneration,
+      client: currentClient,
+    );
+  }
+  bool ownsRuntimeLease(DeviceSessionRuntimeLease lease) =>
+      connectionState == DeviceConnectionState.online &&
+      _ownsRuntime(lease.generation, lease.client);
   List<GatewayProvider> get conversationListProviders => handshake?.providers
           .where((provider) => provider.methods.contains('conversation.list'))
           .toList(growable: false) ??

@@ -31,6 +31,9 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
   bool _hasSearched = false;
   bool _isLoading = false;
   int _visibleCount = _pageSize;
+  int _requestGeneration = 0;
+  DeviceSessionRuntimeLease? _observedLease;
+  DeviceSessionRuntimeLease? _resultsLease;
 
   List<GatewayProvider> get _providers =>
       widget.session.conversationSearchProviders;
@@ -39,12 +42,70 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
       _cursors.values.any((cursor) => cursor != null);
 
   @override
+  void initState() {
+    super.initState();
+    _observedLease = widget.session.runtimeLease;
+    widget.session.addListener(_sessionChanged);
+  }
+
+  @override
+  void didUpdateWidget(ConversationSearchScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session == widget.session) return;
+    oldWidget.session.removeListener(_sessionChanged);
+    widget.session.addListener(_sessionChanged);
+    _observedLease = widget.session.runtimeLease;
+    _requestGeneration++;
+    _clearRuntimeState();
+  }
+
+  @override
   void dispose() {
+    widget.session.removeListener(_sessionChanged);
+    _requestGeneration++;
     _searchController.dispose();
     _cursors.clear();
     _conversations = const [];
     super.dispose();
   }
+
+  void _sessionChanged() {
+    final nextLease = widget.session.runtimeLease;
+    if (_sameLease(_observedLease, nextLease)) return;
+    _observedLease = nextLease;
+    _requestGeneration++;
+    if (!mounted) return;
+    setState(_clearRuntimeState);
+  }
+
+  void _clearRuntimeState() {
+    _query = null;
+    _error = null;
+    _validationError = null;
+    _hasSearched = false;
+    _isLoading = false;
+    _visibleCount = _pageSize;
+    _resultsLease = null;
+    _conversations = const [];
+    _cursors.clear();
+  }
+
+  bool _sameLease(
+    DeviceSessionRuntimeLease? left,
+    DeviceSessionRuntimeLease? right,
+  ) =>
+      left?.generation == right?.generation &&
+      identical(left?.client, right?.client);
+
+  bool _acceptsResult(
+    int requestGeneration,
+    DeviceSessionRuntimeLease lease,
+    String query,
+  ) =>
+      mounted &&
+      requestGeneration == _requestGeneration &&
+      _query == query &&
+      widget.session.ownsRuntimeLease(lease);
 
   Future<void> _search() async {
     final query = _searchController.text.trim();
@@ -54,13 +115,15 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
       });
       return;
     }
-    if (widget.session.connectionState != DeviceConnectionState.online ||
+    final lease = widget.session.runtimeLease;
+    if (lease == null ||
         _providers.isEmpty ||
         _isLoading) {
       return;
     }
 
     final providers = _providers;
+    final requestGeneration = ++_requestGeneration;
     setState(() {
       _query = query;
       _validationError = null;
@@ -68,19 +131,20 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
       _hasSearched = true;
       _isLoading = true;
       _visibleCount = _pageSize;
+      _resultsLease = null;
       _conversations = const [];
       _cursors.clear();
     });
     try {
       final pages = await Future.wait([
         for (final provider in providers)
-          widget.session.client.searchConversations(
+          lease.client.searchConversations(
             route: provider.route,
             searchTerm: query,
             limit: _pageSize,
           ),
       ]);
-      if (!mounted || _query != query) return;
+      if (!_acceptsResult(requestGeneration, lease, query)) return;
       var conversations = const <ConversationSummary>[];
       final cursors = <GatewayProviderRoute, String?>{};
       for (var index = 0; index < pages.length; index++) {
@@ -91,19 +155,20 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
         cursors[providers[index].route] = pages[index].nextCursor;
       }
       setState(() {
+        _resultsLease = lease;
         _conversations = conversations;
         _cursors
           ..clear()
           ..addAll(cursors);
       });
     } catch (value) {
-      if (mounted && _query == query) {
+      if (_acceptsResult(requestGeneration, lease, query)) {
         setState(() {
           _error = value.toString();
         });
       }
     } finally {
-      if (mounted && _query == query) {
+      if (_acceptsResult(requestGeneration, lease, query)) {
         setState(() {
           _isLoading = false;
         });
@@ -113,6 +178,14 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
 
   Future<void> _loadMore() async {
     if (_isLoading) return;
+    final lease = widget.session.runtimeLease;
+    if (lease == null ||
+        _resultsLease == null ||
+        !_sameLease(lease, _resultsLease) ||
+        !widget.session.ownsRuntimeLease(lease)) {
+      setState(_clearRuntimeState);
+      return;
+    }
     final pendingRoutes = _cursors.entries
         .where((entry) => entry.value != null)
         .toList(growable: false);
@@ -127,6 +200,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     final query = _query;
     if (query == null) return;
 
+    final requestGeneration = ++_requestGeneration;
     setState(() {
       _isLoading = true;
       _error = null;
@@ -134,14 +208,14 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     try {
       final pages = await Future.wait([
         for (final entry in pendingRoutes)
-          widget.session.client.searchConversations(
+          lease.client.searchConversations(
             route: entry.key,
             searchTerm: query,
             cursor: entry.value,
             limit: _pageSize,
           ),
       ]);
-      if (!mounted || _query != query) return;
+      if (!_acceptsResult(requestGeneration, lease, query)) return;
       var conversations = _conversations;
       final cursors = Map<GatewayProviderRoute, String?>.from(_cursors);
       for (var index = 0; index < pages.length; index++) {
@@ -152,6 +226,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
         cursors[pendingRoutes[index].key] = pages[index].nextCursor;
       }
       setState(() {
+        _resultsLease = lease;
         _conversations = conversations;
         _cursors
           ..clear()
@@ -159,13 +234,13 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
         _visibleCount += _pageSize;
       });
     } catch (value) {
-      if (mounted && _query == query) {
+      if (_acceptsResult(requestGeneration, lease, query)) {
         setState(() {
           _error = value.toString();
         });
       }
     } finally {
-      if (mounted && _query == query) {
+      if (_acceptsResult(requestGeneration, lease, query)) {
         setState(() {
           _isLoading = false;
         });
@@ -174,16 +249,20 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
   }
 
   void _openConversation(ConversationSummary conversation) {
-    if (widget.session.connectionState != DeviceConnectionState.online) {
+    final lease = widget.session.runtimeLease;
+    if (lease == null ||
+        _resultsLease == null ||
+        !_sameLease(lease, _resultsLease) ||
+        !widget.session.ownsRuntimeLease(lease)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('设备已离线，无法打开会话')),
+        const SnackBar(content: Text('搜索结果已失效，请重新搜索')),
       );
       return;
     }
     Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => ConversationDetailScreen(
-          client: widget.session.client,
+          client: lease.client,
           conversation: conversation,
         ),
       ),

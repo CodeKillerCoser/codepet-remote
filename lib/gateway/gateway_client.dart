@@ -110,9 +110,14 @@ class ProtocolGatewayClient implements GatewayClient {
 
   @override
   Future<GatewayHandshake> connect() async {
+    _providerRouteKeys = const {};
     _transportEvents ??= transport.events.listen((raw) {
       try {
-        final event = _eventFromV1(raw, expectedDeviceId: expectedDeviceId);
+        final event = _eventFromV1(
+          raw,
+          expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: _providerRouteKeys,
+        );
         if (!_seenEventCursors.add(event.eventCursor)) return;
         _latestEventCursor = event.eventCursor;
         _events.add(event);
@@ -136,6 +141,16 @@ class ProtocolGatewayClient implements GatewayClient {
         retryable: false,
       );
     }
+    final providers = handshake.providers.map((json) {
+      final provider = GatewayProvider.fromJson(json);
+      if (provider.route.deviceId != expectedDeviceId) {
+        throw const FormatException(
+          'Provider route does not belong to the connected Host',
+        );
+      }
+      return provider;
+    }).toList(growable: false);
+    _providerRouteKeys = providers.map((provider) => provider.route.key).toSet();
     await onValidatedHostDescriptor?.call(handshake.device.descriptor);
     _seenEventCursors.add(handshake.eventCursor);
     final subscription = await transport.request('event.subscribe', {'afterCursor': handshake.eventCursor});
@@ -151,16 +166,6 @@ class ProtocolGatewayClient implements GatewayClient {
         ? (transport as EndpointAwareGatewayTransport).selectedGatewayUri
         : null;
     if (endpoint != null) await onValidatedEndpoint?.call(endpoint);
-    final providers = handshake.providers.map((json) {
-      final provider = GatewayProvider.fromJson(json);
-      if (provider.route.deviceId != expectedDeviceId) {
-        throw const FormatException(
-          'Provider route does not belong to the connected Host',
-        );
-      }
-      return provider;
-    }).toList(growable: false);
-    _providerRouteKeys = providers.map((provider) => provider.route.key).toSet();
     return GatewayHandshake(protocolVersion: 1, serverName: handshake.serverName, serverVersion: handshake.serverVersion, providers: providers, eventCursor: handshake.eventCursor, deviceId: handshake.device.deviceId, identityFingerprint: handshake.device.identityFingerprint, deviceDescriptor: handshake.device.descriptor);
   }
 
@@ -317,7 +322,11 @@ class ProtocolGatewayClient implements GatewayClient {
   }
 }
 
-GatewayEvent _eventFromV1(JsonMap json, {required String expectedDeviceId}) {
+GatewayEvent _eventFromV1(
+  JsonMap json, {
+  required String expectedDeviceId,
+  required Set<String> expectedProviderRouteKeys,
+}) {
   final cursor = json['eventCursor'];
   final event = json['event'];
   final payload = json['payload'];
@@ -325,20 +334,52 @@ GatewayEvent _eventFromV1(JsonMap json, {required String expectedDeviceId}) {
   final data = Map<String, dynamic>.from(payload);
   if (event == 'conversation.upserted' && data['conversation'] is Map) {
     final conversation = V1Conversation.fromJson(Map<String, dynamic>.from(data['conversation'] as Map));
-    if (conversation.resource.deviceId != expectedDeviceId) throw const FormatException('Conversation event route does not belong to the connected Host');
+    if (!_isExpectedProviderRoute(
+      conversation.resource,
+      expectedDeviceId: expectedDeviceId,
+      expectedProviderRouteKeys: expectedProviderRouteKeys,
+    )) {
+      throw const FormatException(
+        'Conversation event route was not advertised by the connected Host',
+      );
+    }
     return ConversationUpsertedEvent(eventCursor: cursor, conversation: conversation.toDomain());
   }
   if (event == 'turn.upserted' && data['turn'] is Map) {
     final turn = Map<String, dynamic>.from(data['turn'] as Map);
     final resource = RoutedResourceId.fromJson(Map<String, dynamic>.from(turn['resource'] as Map));
     final conversation = RoutedResourceId.fromJson(Map<String, dynamic>.from(turn['conversation'] as Map));
-    if (resource.deviceId != expectedDeviceId || conversation.deviceId != expectedDeviceId || !resource.hasRouteOf(conversation)) throw const FormatException('Invalid turn route');
+    if (!resource.hasRouteOf(conversation) ||
+        !_isExpectedProviderRoute(
+          resource,
+          expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: expectedProviderRouteKeys,
+        ) ||
+        !_isExpectedProviderRoute(
+          conversation,
+          expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: expectedProviderRouteKeys,
+        )) {
+      throw const FormatException('Invalid turn Provider route');
+    }
     return TurnUpsertedEvent(eventCursor: cursor, turn: TurnTask(id: resource.key, providerId: resource.providerInstanceId, conversationId: conversation.key, status: TurnStatus.fromWire(turn['status']), displaySummary: turn['displaySummary'] as String?, startedAt: _optionalV1Time(turn['startedAt']), updatedAt: _optionalV1Time(turn['updatedAt']) ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true), completedAt: _optionalV1Time(turn['completedAt']), wireResource: resource.toJson(), conversationWireResource: conversation.toJson()));
   }
   if (event == 'turn.outputDelta') {
     final turn = RoutedResourceId.fromJson(Map<String, dynamic>.from(data['turn'] as Map));
     final conversation = RoutedResourceId.fromJson(Map<String, dynamic>.from(data['conversation'] as Map));
-    if (turn.deviceId != expectedDeviceId || conversation.deviceId != expectedDeviceId || !turn.hasRouteOf(conversation)) throw const FormatException('Invalid output delta route');
+    if (!turn.hasRouteOf(conversation) ||
+        !_isExpectedProviderRoute(
+          turn,
+          expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: expectedProviderRouteKeys,
+        ) ||
+        !_isExpectedProviderRoute(
+          conversation,
+          expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: expectedProviderRouteKeys,
+        )) {
+      throw const FormatException('Invalid output delta Provider route');
+    }
     final itemId = data['itemId'];
     final contentId = data['contentId'];
     final kind = data['kind'];
@@ -348,6 +389,20 @@ GatewayEvent _eventFromV1(JsonMap json, {required String expectedDeviceId}) {
     return TurnOutputDeltaEvent(eventCursor: cursor, providerId: turn.providerInstanceId, conversationId: conversation.key, turnId: turn.key, itemId: itemId, contentId: contentId, kind: kind, delta: delta);
   }
   return UnknownGatewayEvent(eventCursor: cursor, name: event, payload: data);
+}
+
+bool _isExpectedProviderRoute(
+  RoutedResourceId resource, {
+  required String expectedDeviceId,
+  required Set<String> expectedProviderRouteKeys,
+}) {
+  if (resource.deviceId != expectedDeviceId) return false;
+  final routeKey = GatewayProviderRoute(
+    deviceId: resource.deviceId,
+    providerPluginId: resource.providerPluginId,
+    providerInstanceId: resource.providerInstanceId,
+  ).key;
+  return expectedProviderRouteKeys.contains(routeKey);
 }
 
 DateTime? _optionalV1Time(Object? value) {
