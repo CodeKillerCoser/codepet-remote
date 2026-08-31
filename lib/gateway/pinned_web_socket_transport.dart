@@ -59,6 +59,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
       throw GatewayConnectionException(
         '$method request timed out',
         retryable: true,
+        outcomeUnknown: true,
       );
     });
   }
@@ -95,6 +96,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     final error = GatewayConnectionException(
       'Gateway connection closed (code: ${closeCode ?? 'unknown'})',
       retryable: isRetryableWebSocketCloseCode(closeCode),
+      outcomeUnknown: true,
     );
     _fail(error);
     if (!_closing && !_events.isClosed) _events.addError(error);
@@ -107,6 +109,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     _fail(const GatewayConnectionException(
       'Gateway connection closed',
       retryable: false,
+      outcomeUnknown: true,
     ));
     await _socket?.close();
     _socket = null;

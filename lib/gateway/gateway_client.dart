@@ -388,13 +388,15 @@ class ProtocolGatewayClient implements GatewayClient {
       'selection': selection.toJson(),
     });
     final response = V1TurnSendResponse.fromJson(result);
+    final userItem = response.userItem;
     if (!response.accepted ||
         response.turn.conversation.key != resource.key ||
         !response.turn.resource.hasRouteOf(resource) ||
-        response.userItem.conversation.key != resource.key ||
-        response.userItem.turn.key != response.turn.resource.key ||
-        !response.userItem.resource.hasRouteOf(resource) ||
-        response.userItem.role != 'user' ||
+        (userItem != null &&
+            (userItem.conversation.key != resource.key ||
+                userItem.turn.key != response.turn.resource.key ||
+                !userItem.resource.hasRouteOf(resource) ||
+                userItem.role != 'user')) ||
         !provider.capabilities.turnSend!.accepts(
           response.effectiveSelection,
         )) {
@@ -403,7 +405,7 @@ class ProtocolGatewayClient implements GatewayClient {
     return TurnSendReceipt(
       clientRequestId: clientRequestId,
       turn: response.turn.toDomain(),
-      inputItem: response.userItem.toDomain(
+      inputItem: userItem?.toDomain(
         DateTime.now().toUtc().millisecondsSinceEpoch,
       ),
       effectiveSelection: response.effectiveSelection,

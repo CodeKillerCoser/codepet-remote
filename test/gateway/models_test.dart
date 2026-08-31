@@ -311,6 +311,29 @@ void main() {
       expect(detail.liveOutputMessages, isEmpty);
       expect(detail.lastEventCursor, 'event-after-snapshot');
     });
+
+    test('accepts a canonical turn without fabricating a user item', () {
+      final turn = TurnTask(
+        id: 'turn-accepted',
+        providerId: 'codex',
+        conversationId: summary.id,
+        status: TurnStatus.queued,
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(4000, isUtc: true),
+      );
+
+      final detail = ConversationDetail(summary: summary).accept(
+        TurnSendReceipt(
+          clientRequestId: 'request-without-item',
+          turn: turn,
+          inputItem: null,
+          effectiveSelection: const TurnSendSelection(),
+        ),
+      );
+
+      expect(detail.committedMessages, isEmpty);
+      expect(detail.turns, [turn]);
+      expect(detail.activeTurn, turn);
+    });
   });
 
 }

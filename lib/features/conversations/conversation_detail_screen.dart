@@ -10,6 +10,8 @@ import '../../gateway/transport.dart';
 
 const int _messagePageSize = 40;
 const double _nearBottomThreshold = 160;
+const String _unknownOutcomeMessage =
+    '上次发送结果未知。请先刷新会话核对；确认后再次发送会创建新请求，仍可能产生重复任务。';
 
 class ConversationDetailScreen extends StatefulWidget {
   const ConversationDetailScreen({
@@ -140,6 +142,13 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     final binding = lease == null || provider == null
         ? null
         : _CapabilityBinding.from(lease, provider);
+    final pendingSend = _pendingSend;
+    final sameConversation = pendingSend != null &&
+        conversationRoutingKey(pendingSend.conversation) ==
+            conversationRoutingKey(conversation);
+    final preserveUnknown = sameConversation &&
+        (_outcomeUnknown ||
+            (_sending && previousBinding != binding));
     if (mounted) {
       setState(() {
         _observedLease = lease;
@@ -147,14 +156,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         _provider = provider;
         _detail = null;
         _error = null;
-        _sendError = null;
+        _sendError = preserveUnknown ? _unknownOutcomeMessage : null;
         _accessModeId = null;
         _reasoningEffortId = null;
         _modelSelection = null;
         _sending = false;
-        if (previousBinding != binding) {
+        _outcomeUnknown = preserveUnknown;
+        if (!preserveUnknown) {
           _pendingSend = null;
-          _outcomeUnknown = false;
         }
         _staleCapabilities = false;
         _refreshingTerminal = false;
@@ -428,6 +437,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         provider.capabilities.turnSend != null &&
         !_staleCapabilities &&
         !_sending &&
+        !_outcomeUnknown &&
         !_refreshingTerminal &&
         !_conversationBlocksSend &&
         _selectionValid &&
@@ -452,18 +462,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     if (lease == null || provider == null || binding == null) return;
     final epoch = _runtimeEpoch;
     final currentConversation = _currentConversation;
-    final existing = _outcomeUnknown ? _pendingSend : null;
-    final attempt = existing != null && existing.binding == binding
-        ? existing
-        : _PendingTurnSend(
-            clientRequestId: _newClientRequestId(),
-            text: _draftController.text,
-            selection: _selection,
-            capabilityRevision: provider.capabilities.revision,
-            route: provider.route,
-            conversation: currentConversation,
-            binding: binding,
-          );
+    final attempt = _PendingTurnSend(
+      clientRequestId: _newClientRequestId(),
+      text: _draftController.text,
+      selection: _selection,
+      capabilityRevision: provider.capabilities.revision,
+      route: provider.route,
+      conversation: currentConversation,
+    );
     setState(() {
       _sending = true;
       _sendError = null;
@@ -504,11 +510,12 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
           _sendError = 'Provider 能力已更新，正在重新连接并刷新选项。';
         });
         unawaited(widget.session.connect());
-      } else if (isRetryableGatewayFailure(error)) {
+      } else if (isGatewayOutcomeUnknown(error)) {
         setState(() {
           _outcomeUnknown = true;
-          _sendError = '发送结果未知。重试会复用同一请求，不会创建重复任务。';
+          _sendError = _unknownOutcomeMessage;
         });
+        unawaited(_bindRuntime());
       } else {
         setState(() {
           _pendingSend = null;
@@ -521,6 +528,15 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         setState(() => _sending = false);
       }
     }
+  }
+
+  void _clearUnknownOutcome() {
+    if (!_outcomeUnknown) return;
+    setState(() {
+      _pendingSend = null;
+      _outcomeUnknown = false;
+      _sendError = null;
+    });
   }
 
   String _newClientRequestId() {
@@ -795,7 +811,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
 
   Widget _buildComposer() {
     final capabilities = _provider?.capabilities.turnSend;
-    final selectorEnabled = _composerEnabled && !_outcomeUnknown;
+    final selectorEnabled = _composerEnabled;
     return Material(
       key: const Key('conversation-composer'),
       elevation: 8,
@@ -830,6 +846,27 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                         color: Theme.of(context).colorScheme.error,
                       ),
                 ),
+                if (_outcomeUnknown)
+                  Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: 4,
+                    children: [
+                      TextButton.icon(
+                        key: const Key('turn-unknown-refresh'),
+                        onPressed: _binding == null
+                            ? null
+                            : () => unawaited(_bindRuntime()),
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('刷新会话核对'),
+                      ),
+                      TextButton(
+                        key: const Key('turn-unknown-dismiss'),
+                        onPressed:
+                            _detail == null ? null : _clearUnknownOutcome,
+                        child: const Text('已核对，继续编辑'),
+                      ),
+                    ],
+                  ),
               ],
               const SizedBox(height: 6),
               Row(
@@ -880,18 +917,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                   const SizedBox(width: 4),
                   IconButton.filled(
                     key: const Key('turn-send'),
-                    tooltip: _outcomeUnknown ? '重试发送' : '发送',
+                    tooltip: '发送',
                     onPressed: _canSend ? () => unawaited(_send()) : null,
                     icon: _sending
                         ? const SizedBox.square(
                             dimension: 18,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : Icon(
-                            _outcomeUnknown
-                                ? Icons.refresh
-                                : Icons.arrow_upward,
-                          ),
+                        : const Icon(Icons.arrow_upward),
                   ),
                 ],
               ),
@@ -906,7 +939,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     if (widget.session.runtimeLease == null) return '设备离线';
     if (_staleCapabilities) return 'Provider 能力已变化，正在刷新';
     if (_detail == null) return '正在加载会话';
-    if (_outcomeUnknown) return '发送结果未知，请重试同一请求';
+    if (_outcomeUnknown) return '发送结果未知，请先刷新会话核对';
     if (_refreshingTerminal) return '正在收敛本轮结果';
     final status = _detail!.summary.status;
     if (_detail!.activeTurn != null || status == ConversationStatus.running) {
@@ -1212,7 +1245,6 @@ class _PendingTurnSend {
     required this.capabilityRevision,
     required this.route,
     required this.conversation,
-    required this.binding,
   });
 
   final String clientRequestId;
@@ -1221,7 +1253,6 @@ class _PendingTurnSend {
   final String capabilityRevision;
   final GatewayProviderRoute route;
   final ConversationSummary conversation;
-  final _CapabilityBinding binding;
 }
 
 class _MessagesSectionHeader extends StatelessWidget {

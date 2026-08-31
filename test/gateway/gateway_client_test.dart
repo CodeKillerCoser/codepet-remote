@@ -109,8 +109,45 @@ void main() {
       },
     });
     expect(receipt.clientRequestId, 'request-1');
-    expect(receipt.inputItem.content, '  keep whitespace\n');
+    expect(receipt.inputItem!.content, '  keep whitespace\n');
     expect(receipt.turn.conversationId, conversation.id);
+    await client.close();
+  });
+
+  test('accepts a required null userItem without fabricating history', () async {
+    final response = _turnSendResult(selection: const {});
+    response['userItem'] = null;
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'turn.send': response,
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+    final conversation = V1Conversation.fromJson(_conversationJson()).toDomain();
+
+    final receipt = await client.sendTurn(
+      route: _route,
+      conversation: conversation,
+      clientRequestId: 'request-null-item',
+      capabilityRevision: 'revision-1',
+      text: 'accepted without an immediate item',
+      selection: const TurnSendSelection(),
+    );
+
+    expect(receipt.inputItem, isNull);
+    expect(receipt.turn.status, TurnStatus.queued);
+    final missingUserItem = {...response}..remove('userItem');
+    expect(
+      () => V1TurnSendResponse.fromJson(missingUserItem),
+      throwsFormatException,
+    );
     await client.close();
   });
 

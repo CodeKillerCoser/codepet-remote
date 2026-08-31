@@ -463,9 +463,9 @@ void main() {
       attempt++;
       if (attempt == 1) {
         return Future.error(const GatewayProtocolException(
-          code: 'invalid_input',
-          message: 'Rejected',
-          retryable: false,
+          code: 'provider_instance_unavailable',
+          message: 'Provider unavailable',
+          retryable: true,
         ));
       }
       return Future.value(_receipt(call));
@@ -477,10 +477,18 @@ void main() {
     await tester.tap(find.byKey(const Key('turn-send')));
     await tester.pump();
     final firstId = client.sendCalls.single.clientRequestId;
+    expect(find.byKey(const Key('turn-unknown-refresh')), findsNothing);
     await tester.tap(find.byKey(const Key('turn-send')));
     await tester.pump();
     expect(client.sendCalls, hasLength(2));
     expect(client.sendCalls.last.clientRequestId, isNot(firstId));
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('turn-input')))
+          .controller!
+          .text,
+      isEmpty,
+    );
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
@@ -492,7 +500,7 @@ void main() {
       committedMessages: committed,
       onSend: (call) {
         accepted = _receipt(call);
-        committed.add(accepted.inputItem);
+        committed.add(accepted.inputItem!);
         return Future.value(accepted);
       },
     );
@@ -605,17 +613,19 @@ void main() {
     await client.close();
   });
 
-  testWidgets('prevents duplicate taps and reuses the request id after an unknown result', (tester) async {
+  testWidgets('requires review before a new request after a transport unknown', (tester) async {
     var attempts = 0;
     final firstPending = Completer<TurnSendReceipt>();
-    late _SendCall secondCall;
     final client = _DetailClient(onSend: (call) {
       attempts++;
       if (attempts == 1) return firstPending.future;
-      secondCall = call;
       return Future.value(_receipt(call));
     });
-    await _pumpDetail(tester, client, conversation: _idleConversation());
+    final session = await _pumpDetail(
+      tester,
+      client,
+      conversation: _idleConversation(),
+    );
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('turn-input')), 'pending');
     await tester.pump();
@@ -624,17 +634,94 @@ void main() {
     await tester.tap(find.byKey(const Key('turn-send')));
     await tester.pump();
     expect(client.sendCalls, hasLength(1));
-    final firstId = client.sendCalls.single.clientRequestId;
+    final firstCall = client.sendCalls.single;
+    expect(firstCall.route, _detailRoute);
+    expect(
+      conversationRoutingKey(firstCall.conversation),
+      conversationRoutingKey(_idleConversation()),
+    );
+    expect(firstCall.capabilityRevision, 'revision-1');
+    expect(firstCall.text, 'pending');
+    expect(firstCall.selection.toJson(), isEmpty);
 
     firstPending.completeError(
-      const GatewayConnectionException('timeout', retryable: true),
+      const GatewayConnectionException(
+        'timeout',
+        retryable: true,
+        outcomeUnknown: true,
+      ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('turn-send-error')), findsOneWidget);
+    expect(find.textContaining('可能产生重复任务'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('turn-input')))
+          .controller!
+          .text,
+      'pending',
+    );
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('turn-send'))).onPressed,
+      isNull,
+    );
+    expect(client.sendCalls, hasLength(1));
+    expect(client.getCalls, 2);
+
+    client.emit(GatewayProviderChangedEvent(
+      eventCursor: 'provider-after-unknown',
+      provider: _providerWith(
+        revision: 'revision-after-unknown',
+        turnSend: const TurnSendCapabilities(),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(
+      session.handshake?.providers.single.capabilities.revision,
+      'revision-after-unknown',
+    );
+    expect(find.byKey(const Key('turn-send-error')), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('turn-input')))
+          .controller!
+          .text,
+      'pending',
+    );
+    expect(client.sendCalls, hasLength(1));
+
+    final getCallsBeforeRefresh = client.getCalls;
+    await tester.tap(find.byKey(const Key('turn-unknown-refresh')));
+    await tester.pumpAndSettle();
+    expect(client.getCalls, getCallsBeforeRefresh + 1);
+    expect(client.sendCalls, hasLength(1));
+
+    await tester.tap(find.byKey(const Key('turn-unknown-dismiss')));
+    await tester.pump();
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('turn-send'))).onPressed,
+      isNotNull,
+    );
     await tester.tap(find.byKey(const Key('turn-send')));
     await tester.pump();
     expect(client.sendCalls, hasLength(2));
-    expect(secondCall.clientRequestId, firstId);
+    final secondCall = client.sendCalls.last;
+    expect(secondCall.clientRequestId, isNot(firstCall.clientRequestId));
+    expect(secondCall.route, firstCall.route);
+    expect(
+      conversationRoutingKey(secondCall.conversation),
+      conversationRoutingKey(firstCall.conversation),
+    );
+    expect(secondCall.capabilityRevision, 'revision-after-unknown');
+    expect(secondCall.text, firstCall.text);
+    expect(secondCall.selection.toJson(), firstCall.selection.toJson());
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('turn-input')))
+          .controller!
+          .text,
+      isEmpty,
+    );
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
@@ -729,14 +816,34 @@ void main() {
     );
     expect(
       tester.widget<IconButton>(find.byKey(const Key('turn-send'))).onPressed,
-      isNotNull,
+      isNull,
     );
-    expect(find.text('keep this draft'), findsOneWidget);
+    expect(find.byKey(const Key('turn-send-error')), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('turn-input')))
+          .controller!
+          .text,
+      'keep this draft',
+    );
 
     pending.complete(_receipt(client.sendCalls.single));
     await tester.pump();
-    expect(find.text('keep this draft'), findsOneWidget);
+    expect(find.byKey(const Key('turn-send-error')), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('turn-input')))
+          .controller!
+          .text,
+      'keep this draft',
+    );
     expect(client.sendCalls, hasLength(1));
+    await tester.tap(find.byKey(const Key('turn-unknown-dismiss')));
+    await tester.pump();
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('turn-send'))).onPressed,
+      isNotNull,
+    );
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });

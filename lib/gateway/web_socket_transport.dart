@@ -72,7 +72,10 @@ class WebSocketGatewayTransport implements GatewayTransport {
     final timeout = Timer(requestTimeout, () {
       final pending = _pending.remove(requestId);
       pending?.completer.completeError(
-        GatewayConnectionException('$method 请求超时。'),
+        GatewayConnectionException(
+          '$method 请求超时。',
+          outcomeUnknown: true,
+        ),
       );
     });
     _pending[requestId] = _PendingRequest(
@@ -157,13 +160,19 @@ class WebSocketGatewayTransport implements GatewayTransport {
   }
 
   void _handleSocketError(Object error, StackTrace stackTrace) {
-    _failPending(GatewayConnectionException('Gateway 连接异常：$error'));
+    _failPending(GatewayConnectionException(
+      'Gateway 连接异常：$error',
+      outcomeUnknown: true,
+    ));
     _events.addError(error, stackTrace);
   }
 
   void _handleSocketDone() {
     _socket = null;
-    _failPending(const GatewayConnectionException('Gateway 连接已关闭。'));
+    _failPending(const GatewayConnectionException(
+      'Gateway 连接已关闭。',
+      outcomeUnknown: true,
+    ));
   }
 
   void _failPending(Object error) {
@@ -179,7 +188,10 @@ class WebSocketGatewayTransport implements GatewayTransport {
 
   @override
   Future<void> close() async {
-    _failPending(const GatewayConnectionException('Gateway 连接已关闭。'));
+    _failPending(const GatewayConnectionException(
+      'Gateway 连接已关闭。',
+      outcomeUnknown: true,
+    ));
     await _socketSubscription?.cancel();
     _socketSubscription = null;
     await _socket?.close();

@@ -907,7 +907,7 @@ class TurnSendReceipt {
 
   final String clientRequestId;
   final TurnTask turn;
-  final GatewayMessage inputItem;
+  final GatewayMessage? inputItem;
   final TurnSendSelection effectiveSelection;
 }
 
@@ -1101,13 +1101,16 @@ class ConversationDetail {
 
   ConversationDetail accept(TurnSendReceipt receipt) {
     final nextMessages = [...committedMessages];
-    final messageIndex = nextMessages.indexWhere(
-      (message) => message.id == receipt.inputItem.id,
-    );
-    if (messageIndex == -1) {
-      nextMessages.add(receipt.inputItem);
-    } else {
-      nextMessages[messageIndex] = receipt.inputItem;
+    final inputItem = receipt.inputItem;
+    if (inputItem != null) {
+      final messageIndex = nextMessages.indexWhere(
+        (message) => message.id == inputItem.id,
+      );
+      if (messageIndex == -1) {
+        nextMessages.add(inputItem);
+      } else {
+        nextMessages[messageIndex] = inputItem;
+      }
     }
     return ConversationDetail(
       summary: summary,

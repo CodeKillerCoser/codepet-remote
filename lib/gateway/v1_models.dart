@@ -510,7 +510,9 @@ class V1TurnSendResponse {
     return V1TurnSendResponse(
       accepted: accepted,
       turn: V1TurnTask.fromJson(_map(json, 'turn')),
-      userItem: V1ConversationItem.fromJson(_map(json, 'userItem')),
+      userItem: json['userItem'] == null
+          ? null
+          : V1ConversationItem.fromJson(_map(json, 'userItem')),
       effectiveSelection: TurnSendSelection.fromJson(
         _map(json, 'effectiveSelection'),
       ),
@@ -519,7 +521,7 @@ class V1TurnSendResponse {
 
   final bool accepted;
   final V1TurnTask turn;
-  final V1ConversationItem userItem;
+  final V1ConversationItem? userItem;
   final TurnSendSelection effectiveSelection;
 }
 

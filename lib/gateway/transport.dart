@@ -47,10 +47,12 @@ class GatewayConnectionException implements Exception {
   const GatewayConnectionException(
     this.message, {
     this.retryable = false,
+    this.outcomeUnknown = false,
   });
 
   final String message;
   final bool retryable;
+  final bool outcomeUnknown;
 
   @override
   String toString() => message;
@@ -66,3 +68,9 @@ bool isRetryableGatewayFailure(Object error) {
   }
   return false;
 }
+
+bool isGatewayOutcomeUnknown(Object error) =>
+    (error is GatewayConnectionException && error.outcomeUnknown) ||
+    error is TimeoutException ||
+    error is SocketException ||
+    error is WebSocketException;
