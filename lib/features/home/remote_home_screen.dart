@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import '../../devices/device_session.dart';
 import '../../gateway/models.dart';
 import '../conversations/conversation_detail_screen.dart';
+import '../conversations/conversation_search_screen.dart';
 
 const int _projectPageSize = 6;
 const int _conversationPageSize = 8;
+const int _recentPageSize = 20;
 
 class RemoteHomeScreen extends StatefulWidget {
   const RemoteHomeScreen({
@@ -68,15 +70,14 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     required VoidCallback advance,
   }) async {
     if (session.isLoadingMoreConversations) return;
-    if (hasLocalMore) {
-      setState(advance);
-      return;
-    }
-    if (!session.canLoadMoreConversations) return;
-    await session.loadMoreConversations();
-    if (!mounted ||
-        session.connectionState != DeviceConnectionState.online ||
-        session.loadMoreError != null) {
+    if (session.canLoadMoreConversations) {
+      await session.loadMoreConversations();
+      if (!mounted ||
+          session.connectionState != DeviceConnectionState.online ||
+          session.loadMoreError != null) {
+        return;
+      }
+    } else if (!hasLocalMore) {
       return;
     }
     setState(advance);
@@ -119,6 +120,19 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       appBar: AppBar(
         title: const Text('CodePet Remote'),
         actions: [
+          IconButton(
+            key: const Key('home-search'),
+            tooltip: '搜索会话',
+            onPressed: session == null
+                ? null
+                : () => Navigator.of(context).push<void>(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            ConversationSearchScreen(session: session),
+                      ),
+                    ),
+            icon: const Icon(Icons.search),
+          ),
           PopupMenuButton<String>(
             key: const Key('home-overflow-menu'),
             onSelected: (value) {
@@ -152,7 +166,8 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                   _SectionTitle(
                     key: Key('projects-section-${session.device.deviceId}'),
                     title: '项目',
-                    count: projects.length,
+                    countLabel:
+                        '${projects.length}${session.canLoadMoreConversations ? '+' : ''}',
                     expanded: viewState!.projectsExpanded,
                     onTap: () => setState(() {
                       viewState.projectsExpanded = !viewState.projectsExpanded;
@@ -166,7 +181,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                   _SectionTitle(
                     key: Key('recent-section-${session.device.deviceId}'),
                     title: '最近',
-                    count: recent.length,
+                    countLabel: session.conversationCountLabel,
                     expanded: viewState.recentExpanded,
                     onTap: () => setState(() {
                       viewState.recentExpanded = !viewState.recentExpanded;
@@ -346,7 +361,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
           ),
       ];
     }
-    final requestedCount = viewState.recentPages * _conversationPageSize;
+    final requestedCount = viewState.recentPages * _recentPageSize;
     final visibleCount = requestedCount < recent.length
         ? requestedCount
         : recent.length;
@@ -502,13 +517,13 @@ class _SectionTitle extends StatelessWidget {
   const _SectionTitle({
     super.key,
     required this.title,
-    required this.count,
+    required this.countLabel,
     required this.expanded,
     required this.onTap,
   });
 
   final String title;
-  final int count;
+  final String countLabel;
   final bool expanded;
   final VoidCallback onTap;
 
@@ -530,7 +545,7 @@ class _SectionTitle extends StatelessWidget {
                     ),
               ),
               const SizedBox(width: 8),
-              Text('$count', style: Theme.of(context).textTheme.bodySmall),
+              Text(countLabel, style: Theme.of(context).textTheme.bodySmall),
             ]),
           ),
           Icon(
@@ -593,7 +608,7 @@ class _ProjectCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
             subtitle: Text(
-              '${conversations.length} 个会话 · ${project.workspaceRoot}',
+              '${conversations.length}${canLoadMore ? '+' : ''} 个会话 · ${project.workspaceRoot}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -838,14 +853,15 @@ class _ProjectConversationsScreenState
 
   Future<void> _showMore({required bool hasLocalMore}) async {
     if (widget.session.isLoadingMoreConversations) return;
-    if (!hasLocalMore) {
-      if (!widget.session.canLoadMoreConversations) return;
+    if (widget.session.canLoadMoreConversations) {
       await widget.session.loadMoreConversations();
       if (!mounted ||
           widget.session.connectionState != DeviceConnectionState.online ||
           widget.session.loadMoreError != null) {
         return;
       }
+    } else if (!hasLocalMore) {
+      return;
     }
     setState(() {
       _pages++;

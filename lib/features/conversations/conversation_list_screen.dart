@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../devices/device_session.dart';
 import '../../gateway/gateway_client.dart';
 import '../../gateway/models.dart';
 import 'conversation_detail_screen.dart';
@@ -59,12 +60,20 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
       _error = null;
     });
     try {
-      final page = await widget.client.listConversations();
+      final providers = widget.handshake.providers
+          .where((provider) => provider.methods.contains('conversation.list'));
+      final pages = await Future.wait([
+        for (final provider in providers)
+          widget.client.listConversations(route: provider.route),
+      ]);
       if (!mounted) {
         return;
       }
       setState(() {
-        _conversations = _sorted(page.conversations);
+        _conversations = mergeRoutedConversations(
+          const [],
+          pages.expand((page) => page.conversations),
+        );
       });
     } catch (error) {
       if (mounted) {

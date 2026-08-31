@@ -26,12 +26,16 @@ void main() {
     final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
 
     final handshake = await client.connect();
-    final page = await client.listConversations(limit: 25);
+    final page = await client.listConversations(
+      route: handshake.providers.single.route,
+      limit: 25,
+    );
     final detail = await client.getConversation(page.conversations.single);
 
     expect(transport.connected, isTrue);
     expect(handshake.protocolVersion, gatewayProtocolVersion);
     expect(handshake.providers.single.id, 'codex-work');
+    expect(handshake.providers.single.route, _route);
     expect(transport.requests[0].method, 'protocol.handshake');
     expect(transport.requests[0].params['device'], _clientDevice.toJson());
     expect(transport.requests[0].params, isNot(contains('clientName')));
@@ -39,6 +43,7 @@ void main() {
     expect(transport.requests[1].method, 'event.subscribe');
     expect(transport.requests[1].params['afterCursor'], 'opaque-handshake');
     expect(transport.requests[2].method, 'conversation.list');
+    expect(transport.requests[2].params['route'], _route.toJson());
     expect(transport.requests[2].params['limit'], 25);
     expect(transport.requests[3].method, 'conversation.get');
     expect(detail.detail.summary.wireResource!['nativeResourceId'], 'conversation-1');
@@ -64,7 +69,9 @@ void main() {
     );
 
     final handshake = await client.connect();
-    final page = await client.listConversations();
+    final page = await client.listConversations(
+      route: handshake.providers.single.route,
+    );
     final snapshot = await client.getConversation(page.conversations.single);
     final history = snapshot.detail.committedMessages;
 
@@ -106,13 +113,111 @@ void main() {
       expectedDeviceId: 'device-test',
       expectedIdentityFingerprint: _fingerprint,
     );
-    await client.connect();
-    final page = await client.listConversations();
+    final handshake = await client.connect();
+    final page = await client.listConversations(
+      route: handshake.providers.single.route,
+    );
 
     expect(
       () => client.getConversation(page.conversations.single),
       throwsFormatException,
     );
+    await client.close();
+  });
+
+  test('sends route-scoped search pagination and validates its route', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'conversation.search': {
+        'conversations': [_conversationJson()],
+        'pageInfo': {'nextCursor': 'search-next'},
+        'snapshotCursor': 'opaque-search',
+      },
+      'conversation.get': {
+        'conversation': _conversationJson(),
+        'items': <Object>[],
+        'snapshotCursor': 'opaque-search',
+      },
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    final handshake = await client.connect();
+
+    final page = await client.searchConversations(
+      route: handshake.providers.single.route,
+      searchTerm: 'gateway protocol',
+      cursor: 'search-cursor',
+      limit: 20,
+    );
+
+    expect(page.conversations, hasLength(1));
+    expect(page.nextCursor, 'search-next');
+    expect(transport.requests.last.method, 'conversation.search');
+    expect(transport.requests.last.params, {
+      'route': _route.toJson(),
+      'searchTerm': 'gateway protocol',
+      'cursor': 'search-cursor',
+      'limit': 20,
+    });
+
+    await client.getConversation(page.conversations.single);
+    expect(transport.requests.last.method, 'conversation.get');
+    expect(
+      transport.requests.last.params['conversation'],
+      page.conversations.single.wireResource,
+    );
+
+    transport.responses['conversation.search'] = {
+      'conversations': [
+        _conversationJson()
+          ..['resource'] = {
+            'deviceId': 'device-test',
+            'providerPluginId': 'dev.codepet.other',
+            'providerInstanceId': 'other',
+            'nativeResourceId': 'conversation-1',
+          },
+      ],
+      'pageInfo': <String, dynamic>{},
+      'snapshotCursor': 'opaque-search',
+    };
+    await expectLater(
+      client.searchConversations(
+        route: handshake.providers.single.route,
+        searchTerm: 'gateway protocol',
+      ),
+      throwsFormatException,
+    );
+    await client.close();
+  });
+
+  test('rejects a mismatched Provider route in the handshake', () async {
+    final handshake = _handshakeJson();
+    final providers = handshake['providers'] as List;
+    final provider = Map<String, dynamic>.from(providers.single as Map);
+    provider['route'] = {
+      'deviceId': 'another-device',
+      'providerPluginId': 'dev.codepet.codex',
+      'providerInstanceId': 'codex-work',
+    };
+    handshake['providers'] = [provider];
+    final client = ProtocolGatewayClient(
+      transport: _FakeTransport({
+        'protocol.handshake': handshake,
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      }),
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+
+    await expectLater(client.connect(), throwsFormatException);
     await client.close();
   });
 
@@ -416,7 +521,11 @@ JsonMap _handshakeJson() {
         'displayName': 'Codex',
         'status': 'ready',
         'capabilities': {
-          'methods': ['conversation.list', 'conversation.get'],
+          'methods': [
+            'conversation.list',
+            'conversation.search',
+            'conversation.get',
+          ],
           'permissionLevels': ['read-only'],
           'models': <String>[],
           'reasoningEfforts': <String>[],
@@ -442,6 +551,12 @@ JsonMap _conversationJson() {
 }
 
 const _fingerprint = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+const _route = GatewayProviderRoute(
+  deviceId: 'device-test',
+  providerPluginId: 'dev.codepet.codex',
+  providerInstanceId: 'codex-work',
+);
 
 const _clientDevice = DeviceDescriptor(
   deviceName: 'Test Phone',

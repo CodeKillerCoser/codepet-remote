@@ -11,7 +11,8 @@ abstract interface class GatewayClient {
   String? get latestEventCursor;
   GatewayEventWindow openEventWindow();
   Future<GatewayHandshake> connect();
-  Future<ConversationPage> listConversations({String? providerId, String? cursor, int limit = 50});
+  Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50});
+  Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50});
   Future<ConversationSnapshot> getConversation(ConversationSummary conversation);
   Future<void> close();
 }
@@ -101,6 +102,7 @@ class ProtocolGatewayClient implements GatewayClient {
   StreamSubscription<JsonMap>? _transportEvents;
   String? _latestEventCursor;
   final _BoundedCursorSet _seenEventCursors = _BoundedCursorSet();
+  Set<String> _providerRouteKeys = const {};
 
   @override Stream<GatewayEvent> get events => _events.stream;
   @override String? get latestEventCursor => _latestEventCursor;
@@ -150,27 +152,115 @@ class ProtocolGatewayClient implements GatewayClient {
         : null;
     if (endpoint != null) await onValidatedEndpoint?.call(endpoint);
     final providers = handshake.providers.map((json) {
-      final route = Map<String, dynamic>.from(json['route'] as Map);
-      final capabilities = Map<String, dynamic>.from(json['capabilities'] as Map);
-      return GatewayProvider(id: route['providerInstanceId'] as String, providerType: json['pluginId'] as String, displayName: json['displayName'] as String, status: ProviderStatus.fromWire(json['status']), methods: (capabilities['methods'] as List).cast<String>());
+      final provider = GatewayProvider.fromJson(json);
+      if (provider.route.deviceId != expectedDeviceId) {
+        throw const FormatException(
+          'Provider route does not belong to the connected Host',
+        );
+      }
+      return provider;
     }).toList(growable: false);
+    _providerRouteKeys = providers.map((provider) => provider.route.key).toSet();
     return GatewayHandshake(protocolVersion: 1, serverName: handshake.serverName, serverVersion: handshake.serverVersion, providers: providers, eventCursor: handshake.eventCursor, deviceId: handshake.device.deviceId, identityFingerprint: handshake.device.identityFingerprint, deviceDescriptor: handshake.device.descriptor);
   }
 
   @override
-  Future<ConversationPage> listConversations({String? providerId, String? cursor, int limit = 50}) async {
-    final result = await transport.request('conversation.list', {'cursor': ?cursor, 'limit': limit});
+  Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) async {
+    _validateProviderRequest(route, cursor: cursor, limit: limit);
+    final result = await transport.request('conversation.list', {
+      'route': route.toJson(),
+      'cursor': ?cursor,
+      'limit': limit,
+    });
+    return _conversationPageFromResult(
+      result,
+      method: 'conversation.list',
+      route: route,
+    );
+  }
+
+  @override
+  Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) async {
+    if (searchTerm.trim().isEmpty) {
+      throw ArgumentError.value(searchTerm, 'searchTerm', 'must not be empty');
+    }
+    _validateProviderRequest(route, cursor: cursor, limit: limit);
+    final result = await transport.request('conversation.search', {
+      'route': route.toJson(),
+      'searchTerm': searchTerm,
+      'cursor': ?cursor,
+      'limit': limit,
+    });
+    return _conversationPageFromResult(
+      result,
+      method: 'conversation.search',
+      route: route,
+    );
+  }
+
+  void _validateProviderRequest(
+    GatewayProviderRoute route, {
+    required String? cursor,
+    required int limit,
+  }) {
+    if (route.deviceId != expectedDeviceId ||
+        !_providerRouteKeys.contains(route.key)) {
+      throw const FormatException(
+        'Provider route does not belong to the connected Host handshake',
+      );
+    }
+    if (cursor != null && cursor.isEmpty) {
+      throw const FormatException('Gateway cursor must not be empty');
+    }
+    if (limit < 1 || limit > 100) {
+      throw RangeError.range(limit, 1, 100, 'limit');
+    }
+  }
+
+  ConversationPage _conversationPageFromResult(
+    JsonMap result, {
+    required String method,
+    required GatewayProviderRoute route,
+  }) {
+    const resultFields = {'conversations', 'pageInfo', 'snapshotCursor'};
+    if (result.keys.toSet().difference(resultFields).isNotEmpty ||
+        resultFields.difference(result.keys.toSet()).isNotEmpty) {
+      throw FormatException('Invalid $method result fields');
+    }
     final raw = result['conversations'];
     final pageInfo = result['pageInfo'];
-    if (raw is! List || pageInfo is! Map || result['snapshotCursor'] is! String) throw const FormatException('Invalid conversation.list result');
+    final snapshotCursor = result['snapshotCursor'];
+    if (raw is! List ||
+        pageInfo is! Map ||
+        snapshotCursor is! String ||
+        snapshotCursor.isEmpty) {
+      throw FormatException('Invalid $method result');
+    }
+    final typedPageInfo = Map<String, dynamic>.from(pageInfo);
+    if (typedPageInfo.keys.any((key) => key != 'nextCursor')) {
+      throw FormatException('Invalid $method pageInfo fields');
+    }
     final conversations = raw.map((item) {
-      final conversation = V1Conversation.fromJson(Map<String, dynamic>.from(item as Map));
-      if (conversation.resource.deviceId != expectedDeviceId) throw const FormatException('Conversation route does not belong to the connected Host');
+      if (item is! Map) throw FormatException('Invalid $method conversation');
+      final conversation = V1Conversation.fromJson(
+        Map<String, dynamic>.from(item),
+      );
+      if (conversation.resource.deviceId != route.deviceId ||
+          conversation.resource.providerPluginId != route.providerPluginId ||
+          conversation.resource.providerInstanceId != route.providerInstanceId) {
+        throw FormatException('$method returned a different Provider route');
+      }
       return conversation.toDomain();
     }).toList(growable: false);
-    final nextCursor = pageInfo['nextCursor'];
-    if (nextCursor != null && nextCursor is! String) throw const FormatException('Invalid conversation.list next cursor');
-    return ConversationPage(conversations: conversations, nextCursor: nextCursor as String?, snapshotCursor: result['snapshotCursor'] as String);
+    final nextCursor = typedPageInfo['nextCursor'];
+    if (nextCursor != null && (nextCursor is! String || nextCursor.isEmpty)) {
+      throw FormatException('Invalid $method next cursor');
+    }
+    return ConversationPage(
+      conversations: conversations,
+      nextCursor: nextCursor as String?,
+      snapshotCursor: snapshotCursor,
+    );
   }
 
   @override
@@ -219,6 +309,7 @@ class ProtocolGatewayClient implements GatewayClient {
 
   @override
   Future<void> close() async {
+    _providerRouteKeys = const {};
     await _transportEvents?.cancel();
     _transportEvents = null;
     await transport.close();

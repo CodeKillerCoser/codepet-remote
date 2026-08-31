@@ -130,9 +130,63 @@ enum TurnStatus {
 
 enum MessageRole { user, assistant, system }
 
+class GatewayProviderRoute {
+  const GatewayProviderRoute({
+    required this.deviceId,
+    required this.providerPluginId,
+    required this.providerInstanceId,
+  });
+
+  factory GatewayProviderRoute.fromJson(JsonMap json) {
+    const fields = {
+      'deviceId',
+      'providerPluginId',
+      'providerInstanceId',
+    };
+    if (json.keys.toSet().difference(fields).isNotEmpty ||
+        fields.difference(json.keys.toSet()).isNotEmpty) {
+      throw const FormatException(
+        'Provider route fields do not match Gateway v1',
+      );
+    }
+    return GatewayProviderRoute(
+      deviceId: _requiredString(json, 'deviceId'),
+      providerPluginId: _requiredString(json, 'providerPluginId'),
+      providerInstanceId: _requiredString(json, 'providerInstanceId'),
+    );
+  }
+
+  final String deviceId;
+  final String providerPluginId;
+  final String providerInstanceId;
+
+  String get key =>
+      '$deviceId\u0000$providerPluginId\u0000$providerInstanceId';
+
+  JsonMap toJson() => {
+        'deviceId': deviceId,
+        'providerPluginId': providerPluginId,
+        'providerInstanceId': providerInstanceId,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      other is GatewayProviderRoute &&
+      other.deviceId == deviceId &&
+      other.providerPluginId == providerPluginId &&
+      other.providerInstanceId == providerInstanceId;
+
+  @override
+  int get hashCode => Object.hash(
+        deviceId,
+        providerPluginId,
+        providerInstanceId,
+      );
+}
+
 class GatewayProvider {
   const GatewayProvider({
-    required this.id,
+    required this.route,
     required this.providerType,
     required this.displayName,
     required this.status,
@@ -141,16 +195,24 @@ class GatewayProvider {
 
   factory GatewayProvider.fromJson(JsonMap json) {
     final capabilities = _requiredMap(json, 'capabilities');
+    final route = GatewayProviderRoute.fromJson(
+      _requiredMap(json, 'route'),
+    );
+    final providerType = _requiredString(json, 'pluginId');
+    if (route.providerPluginId != providerType) {
+      throw const FormatException('Provider plugin route mismatch');
+    }
     return GatewayProvider(
-      id: _requiredString(json, 'id'),
-      providerType: _requiredString(json, 'providerType'),
+      route: route,
+      providerType: providerType,
       displayName: _requiredString(json, 'displayName'),
       status: ProviderStatus.fromWire(json['status']),
       methods: _stringList(capabilities, 'methods'),
     );
   }
 
-  final String id;
+  final GatewayProviderRoute route;
+  String get id => route.providerInstanceId;
   final String providerType;
   final String displayName;
   final ProviderStatus status;

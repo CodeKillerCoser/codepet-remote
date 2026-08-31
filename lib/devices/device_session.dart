@@ -32,7 +32,7 @@ class DeviceSession extends ChangeNotifier {
   GatewayClient? _client;
   GatewayEventWindow? _eventWindow;
   Timer? _reconnectTimer;
-  String? _nextConversationCursor;
+  final Map<GatewayProviderRoute, String?> _conversationCursors = {};
   bool _isLoadingMoreConversations = false;
   String? _loadMoreError;
   int _runtimeGeneration = 0;
@@ -45,9 +45,19 @@ class DeviceSession extends ChangeNotifier {
   List<ConversationSummary> conversations = const [];
 
   GatewayClient get client => _client!;
+  List<GatewayProvider> get conversationListProviders => handshake?.providers
+          .where((provider) => provider.methods.contains('conversation.list'))
+          .toList(growable: false) ??
+      const [];
+  List<GatewayProvider> get conversationSearchProviders => handshake?.providers
+          .where((provider) => provider.methods.contains('conversation.search'))
+          .toList(growable: false) ??
+      const [];
   bool get canLoadMoreConversations =>
       connectionState == DeviceConnectionState.online &&
-      _nextConversationCursor != null;
+      _conversationCursors.values.any((cursor) => cursor != null);
+  String get conversationCountLabel =>
+      '${conversations.length}${canLoadMoreConversations ? '+' : ''}';
   bool get isLoadingMoreConversations => _isLoadingMoreConversations;
   String? get loadMoreError => _loadMoreError;
 
@@ -88,18 +98,27 @@ class DeviceSession extends ChangeNotifier {
       if (hostDescriptor != null) {
         device = device.withDescriptor(hostDescriptor);
       }
-      final page = await client.listConversations(
-        limit: conversationPageSize,
-      );
-      if (!_ownsRuntime(generation, client)) return;
-      conversations = mergeRoutedConversations(
-        const [],
-        page.conversations,
-      );
-      _nextConversationCursor = page.nextCursor;
+      var snapshotCursor = connectedHandshake.eventCursor;
+      var isFirstPage = true;
+      for (final provider in conversationListProviders) {
+        final page = await client.listConversations(
+          route: provider.route,
+          limit: conversationPageSize,
+        );
+        if (!_ownsRuntime(generation, client)) return;
+        if (isFirstPage) {
+          snapshotCursor = page.snapshotCursor;
+          isFirstPage = false;
+        }
+        conversations = mergeRoutedConversations(
+          conversations,
+          page.conversations,
+        );
+        _conversationCursors[provider.route] = page.nextCursor;
+      }
       window.install(
         baselineCursor: connectedHandshake.eventCursor,
-        snapshotCursor: page.snapshotCursor,
+        snapshotCursor: snapshotCursor,
         onEvent: (event) {
           if (_ownsRuntime(generation, client)) {
             _applyEvent(event);
@@ -169,10 +188,12 @@ class DeviceSession extends ChangeNotifier {
 
   Future<void> loadMoreConversations() async {
     final client = _client;
-    final cursor = _nextConversationCursor;
+    final pendingRoutes = _conversationCursors.entries
+        .where((entry) => entry.value != null)
+        .toList(growable: false);
     if (connectionState != DeviceConnectionState.online ||
         client == null ||
-        cursor == null ||
+        pendingRoutes.isEmpty ||
         _isLoadingMoreConversations) {
       return;
     }
@@ -182,16 +203,23 @@ class DeviceSession extends ChangeNotifier {
     _loadMoreError = null;
     notifyListeners();
     try {
-      final page = await client.listConversations(
-        cursor: cursor,
-        limit: conversationPageSize,
-      );
+      final pages = await Future.wait([
+        for (final entry in pendingRoutes)
+          client.listConversations(
+            route: entry.key,
+            cursor: entry.value,
+            limit: conversationPageSize,
+          ),
+      ]);
       if (!_ownsRuntime(generation, client)) return;
-      conversations = mergeRoutedConversations(
-        conversations,
-        page.conversations,
-      );
-      _nextConversationCursor = page.nextCursor;
+      for (var index = 0; index < pages.length; index++) {
+        final page = pages[index];
+        conversations = mergeRoutedConversations(
+          conversations,
+          page.conversations,
+        );
+        _conversationCursors[pendingRoutes[index].key] = page.nextCursor;
+      }
       _loadMoreError = null;
     } catch (value) {
       if (!_ownsRuntime(generation, client)) return;
@@ -209,7 +237,7 @@ class DeviceSession extends ChangeNotifier {
 
   void _resetConversationPagination() {
     conversations = const [];
-    _nextConversationCursor = null;
+    _conversationCursors.clear();
     _isLoadingMoreConversations = false;
     _loadMoreError = null;
   }

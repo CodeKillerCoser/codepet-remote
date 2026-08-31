@@ -176,13 +176,16 @@ class _GatewayClient implements GatewayClient {
 
   @override
   Future<ConversationPage> listConversations({
-    String? providerId,
+    required GatewayProviderRoute route,
     String? cursor,
     int limit = 50,
   }) async => const ConversationPage(
         conversations: [],
         snapshotCursor: 'handshake',
       );
+
+  @override
+  Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
 
   @override
   Future<ConversationSnapshot> getConversation(

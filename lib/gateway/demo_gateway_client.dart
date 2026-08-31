@@ -15,6 +15,11 @@ class DemoGatewayClient implements GatewayClient {
   final Set<String> _startedStreams = {};
   int _sequence = 12;
   String get _cursor => 'demo-$_sequence';
+  GatewayProviderRoute get _route => GatewayProviderRoute(
+        deviceId: 'demo-$profileId',
+        providerPluginId: 'dev.codepet.demo',
+        providerInstanceId: 'codex-demo',
+      );
 
   @override
   String? get latestEventCursor => _cursor;
@@ -92,14 +97,19 @@ class DemoGatewayClient implements GatewayClient {
       serverVersion: '0.1.0-demo',
       providers: [
         GatewayProvider(
-          id: 'codex-demo',
-          providerType: 'codex',
+          route: _route,
+          providerType: _route.providerPluginId,
           displayName: 'Codex Demo',
           status: ProviderStatus.ready,
-          methods: ['conversation.list', 'conversation.get'],
+          methods: [
+            'conversation.list',
+            'conversation.search',
+            'conversation.get',
+          ],
         ),
       ],
       eventCursor: _cursor,
+      deviceId: _route.deviceId,
       deviceDescriptor: DeviceDescriptor(
         deviceName: profileId == 'laptop' ? '演示随身电脑' : '演示工作室 Mac',
         operatingSystem: profileId == 'laptop' ? 'Android' : 'macOS',
@@ -110,17 +120,45 @@ class DemoGatewayClient implements GatewayClient {
 
   @override
   Future<ConversationPage> listConversations({
-    String? providerId,
+    required GatewayProviderRoute route,
     String? cursor,
     int limit = 50,
   }) async {
+    if (route != _route) {
+      throw const FormatException('Unknown demo Provider route');
+    }
     await Future<void>.delayed(const Duration(milliseconds: 180));
     final conversations = _conversations
-        .where((item) => providerId == null || item.providerId == providerId)
         .take(limit)
         .toList(growable: false);
     return ConversationPage(
       conversations: conversations,
+      snapshotCursor: _cursor,
+    );
+  }
+
+  @override
+  Future<ConversationPage> searchConversations({
+    required GatewayProviderRoute route,
+    required String searchTerm,
+    String? cursor,
+    int limit = 50,
+  }) async {
+    if (route != _route) {
+      throw const FormatException('Unknown demo Provider route');
+    }
+    final term = searchTerm.trim().toLowerCase();
+    if (term.isEmpty) {
+      throw ArgumentError.value(searchTerm, 'searchTerm', 'must not be empty');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    return ConversationPage(
+      conversations: _conversations
+          .where((conversation) =>
+              conversation.title.toLowerCase().contains(term) ||
+              (conversation.preview?.toLowerCase().contains(term) ?? false))
+          .take(limit)
+          .toList(growable: false),
       snapshotCursor: _cursor,
     );
   }

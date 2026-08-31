@@ -52,7 +52,7 @@ void main() {
     final conversations = <ConversationSummary>[
       for (var project = 0; project < 7; project++)
         for (var conversation = 0;
-            conversation < (project == 0 ? 9 : 1);
+            conversation < (project == 0 ? 21 : 1);
             conversation++)
           _conversation(
             'p$project-$conversation',
@@ -99,7 +99,7 @@ void main() {
     );
     expect(
       find.byKey(Key('show-more-project-conversations-$firstProjectKey')),
-      findsNothing,
+      findsOneWidget,
     );
 
     await tester.tap(find.byKey(const Key('open-project-$firstProjectKey')));
@@ -122,13 +122,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.byKey(const Key('recent-conversation-pages-test\u0000p0-8')),
+      find.byKey(const Key('recent-conversation-pages-test\u0000p0-20')),
       findsNothing,
     );
     await tester.tap(find.byKey(const Key('show-more-recent-pages')));
     await tester.pump();
     expect(
-      find.byKey(const Key('recent-conversation-pages-test\u0000p0-8')),
+      find.byKey(const Key('recent-conversation-pages-test\u0000p0-20')),
       findsOneWidget,
     );
 
@@ -768,7 +768,8 @@ class _EventClient implements GatewayClient {
   @override String? get latestEventCursor => 'handshake';
   @override GatewayEventWindow openEventWindow() => GatewayEventWindow.forStream('handshake', events);
   @override Future<GatewayHandshake> connect() async => const GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: [], eventCursor: 'handshake', deviceDescriptor: DeviceDescriptor(deviceName: 'Host Metadata', operatingSystem: 'TestOS', systemVersion: '9'));
-  @override Future<ConversationPage> listConversations({String? providerId, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
+  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
+  @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: 'handshake');
   @override Future<void> close() => controller.close();
 }
@@ -801,19 +802,22 @@ class _PagedClient implements GatewayClient {
         protocolVersion: 1,
         serverName: 'Test',
         serverVersion: '1',
-        providers: [],
+        providers: [_homeListProvider],
         eventCursor: 'handshake',
       );
 
   @override
   Future<ConversationPage> listConversations({
-    String? providerId,
+    required GatewayProviderRoute route,
     String? cursor,
     int limit = 50,
   }) {
     cursors.add(cursor);
     return pageHandler(cursor: cursor, limit: limit);
   }
+
+  @override
+  Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
 
   @override
   Future<ConversationSnapshot> getConversation(
@@ -826,3 +830,17 @@ class _PagedClient implements GatewayClient {
   @override
   Future<void> close() => controller.close();
 }
+
+const _homeRoute = GatewayProviderRoute(
+  deviceId: 'home-host',
+  providerPluginId: 'dev.codepet.codex',
+  providerInstanceId: 'codex-work',
+);
+
+const _homeListProvider = GatewayProvider(
+  route: _homeRoute,
+  providerType: 'dev.codepet.codex',
+  displayName: 'Codex Work',
+  status: ProviderStatus.ready,
+  methods: ['conversation.list', 'conversation.get'],
+);

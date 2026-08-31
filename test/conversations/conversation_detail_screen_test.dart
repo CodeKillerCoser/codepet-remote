@@ -399,6 +399,7 @@ class _DetailClient implements GatewayClient {
     return ConversationSnapshot(detail: ConversationDetail(summary: conversation, committedMessages: committedMessages), snapshotCursor: snapshotCursor);
   }
   @override Future<GatewayHandshake> connect() => throw UnimplementedError();
-  @override Future<ConversationPage> listConversations({String? providerId, String? cursor, int limit = 50}) => throw UnimplementedError();
+  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) => throw UnimplementedError();
+  @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<void> close() => eventsController.close();
 }
