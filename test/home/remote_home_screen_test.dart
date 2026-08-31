@@ -136,6 +136,375 @@ void main() {
     session.dispose();
   });
 
+  testWidgets('project pagination loads a Host page and refreshes recent data', (tester) async {
+    _useTallSurface(tester);
+    final client = _PagedClient(
+      ({required String? cursor, required int limit}) async {
+        if (cursor == null) {
+          return ConversationPage(
+            conversations: [
+              for (var index = 0; index < 6; index++)
+                _conversation(
+                  'project-$index',
+                  '项目 $index',
+                  workspaceRoot: '/project-$index',
+                  updatedMilliseconds: 1000 - index,
+                ),
+            ],
+            nextCursor: 'projects-2',
+            snapshotCursor: 'handshake',
+          );
+        }
+        expect(cursor, 'projects-2');
+        return ConversationPage(
+          conversations: [
+            _conversation(
+              'project-6',
+              '项目 6',
+              workspaceRoot: '/project-6',
+              updatedMilliseconds: 900,
+            ),
+          ],
+          snapshotCursor: 'handshake',
+        );
+      },
+    );
+    final session = _sessionForClient('network-projects', client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    expect(client.cursors, [null]);
+    expect(
+      find.byKey(const Key(
+        'project-card-network-projects\u0000/project-6',
+      )),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key(
+        'recent-conversation-network-projects-test\u0000project-6',
+      )),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.byKey(const Key('show-more-projects-network-projects')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(client.cursors, [null, 'projects-2']);
+    expect(
+      find.byKey(const Key(
+        'project-card-network-projects\u0000/project-6',
+      )),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key(
+        'recent-conversation-network-projects-test\u0000project-6',
+      )),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('recent pagination loads and deduplicates the shared projection', (tester) async {
+    _useTallSurface(tester);
+    final initial = [
+      for (var index = 0; index < 8; index++)
+        _conversation(
+          'shared-$index',
+          '共享会话 $index',
+          workspaceRoot: '/shared',
+          updatedMilliseconds: 2000 - index,
+        ),
+    ];
+    final client = _PagedClient(
+      ({required String? cursor, required int limit}) async {
+        if (cursor == null) {
+          return ConversationPage(
+            conversations: initial,
+            nextCursor: 'recent-2',
+            snapshotCursor: 'handshake',
+          );
+        }
+        return ConversationPage(
+          conversations: [
+            _conversation(
+              'shared-0',
+              '不应覆盖的新标题',
+              workspaceRoot: '/shared',
+              updatedMilliseconds: 100,
+            ),
+            _conversation(
+              'shared-8',
+              '共享会话 8',
+              workspaceRoot: '/shared',
+              updatedMilliseconds: 1900,
+            ),
+          ],
+          snapshotCursor: 'handshake',
+        );
+      },
+    );
+    final session = _sessionForClient('network-recent', client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    await tester.tap(
+      find.byKey(const Key('show-more-recent-network-recent')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(client.cursors, [null, 'recent-2']);
+    expect(session.conversations, hasLength(9));
+    expect(
+      session.conversations.where((item) => item.id == 'shared-0'),
+      hasLength(1),
+    );
+    expect(session.conversations.first.title, '共享会话 0');
+    expect(
+      find.byKey(const Key(
+        'recent-conversation-network-recent-test\u0000shared-8',
+      )),
+      findsOneWidget,
+    );
+    expect(find.text('9 个会话 · /shared'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('project conversation pagination crosses empty Host pages', (tester) async {
+    _useTallSurface(tester);
+    final client = _PagedClient(
+      ({required String? cursor, required int limit}) async {
+        if (cursor == null) {
+          return ConversationPage(
+            conversations: [
+              for (var index = 0; index < 8; index++)
+                _conversation(
+                  'target-$index',
+                  '目标会话 $index',
+                  workspaceRoot: '/target',
+                  updatedMilliseconds: 3000 - index,
+                ),
+            ],
+            nextCursor: 'target-2',
+            snapshotCursor: 'handshake',
+          );
+        }
+        if (cursor == 'target-2') {
+          return ConversationPage(
+            conversations: [
+              _conversation(
+                'other-only',
+                '其他项目会话',
+                workspaceRoot: '/other',
+                updatedMilliseconds: 2000,
+              ),
+            ],
+            nextCursor: 'target-3',
+            snapshotCursor: 'handshake',
+          );
+        }
+        expect(cursor, 'target-3');
+        return ConversationPage(
+          conversations: [
+            _conversation(
+              'target-8',
+              '目标会话 8',
+              workspaceRoot: '/target',
+              updatedMilliseconds: 1900,
+            ),
+          ],
+          snapshotCursor: 'handshake',
+        );
+      },
+    );
+    final session = _sessionForClient('empty-project-page', client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+    const projectKey = 'empty-project-page\u0000/target';
+    final showMore = find.byKey(
+      const Key('show-more-project-conversations-$projectKey'),
+    );
+
+    await tester.tap(find.byKey(const Key('project-$projectKey')));
+    await tester.pump();
+    await tester.tap(showMore);
+    await tester.pumpAndSettle();
+
+    expect(client.cursors, [null, 'target-2']);
+    expect(showMore, findsOneWidget);
+    expect(
+      find.byKey(const Key(
+        'project-conversation-$projectKey-test\u0000target-8',
+      )),
+      findsNothing,
+    );
+
+    await tester.tap(showMore);
+    await tester.pumpAndSettle();
+
+    expect(client.cursors, [null, 'target-2', 'target-3']);
+    expect(
+      find.byKey(const Key(
+        'project-conversation-$projectKey-test\u0000target-8',
+      )),
+      findsOneWidget,
+    );
+    expect(showMore, findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('project screen pagination uses the shared Host cursor', (tester) async {
+    _useTallSurface(tester);
+    final client = _PagedClient(
+      ({required String? cursor, required int limit}) async {
+        if (cursor == null) {
+          return ConversationPage(
+            conversations: [
+              for (var index = 0; index < 8; index++)
+                _conversation(
+                  'screen-$index',
+                  '项目页会话 $index',
+                  workspaceRoot: '/screen',
+                  updatedMilliseconds: 3000 - index,
+                ),
+            ],
+            nextCursor: 'screen-2',
+            snapshotCursor: 'handshake',
+          );
+        }
+        return ConversationPage(
+          conversations: [
+            _conversation(
+              'screen-8',
+              '项目页会话 8',
+              workspaceRoot: '/screen',
+              updatedMilliseconds: 1900,
+            ),
+          ],
+          snapshotCursor: 'handshake',
+        );
+      },
+    );
+    final session = _sessionForClient('project-screen-network', client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+    const projectKey = 'project-screen-network\u0000/screen';
+
+    await tester.tap(find.byKey(const Key('open-project-$projectKey')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('project-screen-conversation-test\u0000screen-8')),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.byKey(const Key('show-more-project-screen-conversations')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(client.cursors, [null, 'screen-2']);
+    expect(
+      find.byKey(const Key('project-screen-conversation-test\u0000screen-8')),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('load more disables duplicates and exposes retryable errors', (tester) async {
+    _useTallSurface(tester);
+    final failedPage = Completer<ConversationPage>();
+    var attempts = 0;
+    final client = _PagedClient(
+      ({required String? cursor, required int limit}) {
+        if (cursor == null) {
+          return Future.value(ConversationPage(
+            conversations: [
+              for (var index = 0; index < 8; index++)
+                _conversation(
+                  'retry-$index',
+                  '重试会话 $index',
+                  workspaceRoot: '/retry',
+                  updatedMilliseconds: 3000 - index,
+                ),
+            ],
+            nextCursor: 'retry-2',
+            snapshotCursor: 'handshake',
+          ));
+        }
+        attempts++;
+        if (attempts == 1) return failedPage.future;
+        return Future.value(ConversationPage(
+          conversations: [
+            _conversation(
+              'retry-8',
+              '重试成功会话',
+              workspaceRoot: '/retry',
+              updatedMilliseconds: 1900,
+            ),
+          ],
+          snapshotCursor: 'handshake',
+        ));
+      },
+    );
+    final session = _sessionForClient('loading-retry', client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+    final showMore = find.byKey(
+      const Key('show-more-recent-loading-retry'),
+    );
+
+    await tester.tap(showMore);
+    await tester.pump();
+
+    expect(client.cursors, [null, 'retry-2']);
+    expect(tester.widget<TextButton>(showMore).onPressed, isNull);
+    await tester.tap(showMore);
+    await tester.pump();
+    expect(client.cursors, [null, 'retry-2']);
+
+    failedPage.completeError(StateError('network page failed'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('network page failed'), findsWidgets);
+    expect(tester.widget<TextButton>(showMore).onPressed, isNotNull);
+
+    await tester.tap(showMore);
+    await tester.pumpAndSettle();
+
+    expect(client.cursors, [null, 'retry-2', 'retry-2']);
+    expect(find.textContaining('network page failed'), findsNothing);
+    expect(
+      find.byKey(const Key(
+        'recent-conversation-loading-retry-test\u0000retry-8',
+      )),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
   testWidgets('keeps collapse and pagination state isolated by device id', (tester) async {
     _useTallSurface(tester);
     final first = _loadedSession('first', _projectConversations('first'));
@@ -282,6 +651,16 @@ DeviceSession _loadedSession(
   return session;
 }
 
+DeviceSession _sessionForClient(String deviceId, GatewayClient client) =>
+    DeviceSession(
+      device: PairedDevice(
+        deviceId: deviceId,
+        displayName: deviceId,
+        connectionKind: DeviceConnectionKind.demo,
+      ),
+      clientFactory: () => client,
+    );
+
 List<ConversationSummary> _projectConversations(String prefix) => [
   for (var index = 0; index < 7; index++)
     _conversation(
@@ -392,4 +771,58 @@ class _EventClient implements GatewayClient {
   @override Future<ConversationPage> listConversations({String? providerId, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: 'handshake');
   @override Future<void> close() => controller.close();
+}
+
+typedef _PageHandler = Future<ConversationPage> Function({
+  required String? cursor,
+  required int limit,
+});
+
+class _PagedClient implements GatewayClient {
+  _PagedClient(this.pageHandler);
+
+  final _PageHandler pageHandler;
+  final List<String?> cursors = [];
+  final StreamController<GatewayEvent> controller =
+      StreamController<GatewayEvent>.broadcast();
+
+  @override
+  Stream<GatewayEvent> get events => controller.stream;
+
+  @override
+  String? get latestEventCursor => 'handshake';
+
+  @override
+  GatewayEventWindow openEventWindow() =>
+      GatewayEventWindow.forStream('handshake', events);
+
+  @override
+  Future<GatewayHandshake> connect() async => const GatewayHandshake(
+        protocolVersion: 1,
+        serverName: 'Test',
+        serverVersion: '1',
+        providers: [],
+        eventCursor: 'handshake',
+      );
+
+  @override
+  Future<ConversationPage> listConversations({
+    String? providerId,
+    String? cursor,
+    int limit = 50,
+  }) {
+    cursors.add(cursor);
+    return pageHandler(cursor: cursor, limit: limit);
+  }
+
+  @override
+  Future<ConversationSnapshot> getConversation(
+    ConversationSummary conversation,
+  ) async => ConversationSnapshot(
+        detail: ConversationDetail(summary: conversation),
+        snapshotCursor: 'handshake',
+      );
+
+  @override
+  Future<void> close() => controller.close();
 }

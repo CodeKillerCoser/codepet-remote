@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../devices/device_session.dart';
@@ -58,6 +60,26 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
 
   void _changed() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _advanceWindow({
+    required DeviceSession session,
+    required bool hasLocalMore,
+    required VoidCallback advance,
+  }) async {
+    if (session.isLoadingMoreConversations) return;
+    if (hasLocalMore) {
+      setState(advance);
+      return;
+    }
+    if (!session.canLoadMoreConversations) return;
+    await session.loadMoreConversations();
+    if (!mounted ||
+        session.connectionState != DeviceConnectionState.online ||
+        session.loadMoreError != null) {
+      return;
+    }
+    setState(advance);
   }
 
   @override
@@ -193,12 +215,29 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       ];
     }
     if (projects.isEmpty) {
-      return const [
-        _MessageCard(
+      return [
+        const _MessageCard(
           icon: Icons.folder_off_outlined,
           title: '没有可分组的项目',
           message: '当前会话没有 workspaceRoot；它们仍会显示在“最近”中。',
         ),
+        if (session.canLoadMoreConversations ||
+            session.isLoadingMoreConversations)
+          _PaginationControl(
+            buttonKey: Key(
+              'show-more-projects-${session.device.deviceId}',
+            ),
+            label: '显示更多项目',
+            loading: session.isLoadingMoreConversations,
+            error: session.loadMoreError,
+            onPressed: () {
+              unawaited(_advanceWindow(
+                session: session,
+                hasLocalMore: false,
+                advance: () => viewState.projectPages++,
+              ));
+            },
+          ),
       ];
     }
     final requestedCount = viewState.projectPages * _projectPageSize;
@@ -226,15 +265,25 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
           onToggle: () => setState(() {
             viewState.expandedProjects[project.key] = !expanded;
           }),
-          onShowMore: () => setState(() {
-            viewState.projectConversationPages[project.key] =
-                conversationPages + 1;
-          }),
+          canLoadMore: session.canLoadMoreConversations,
+          isLoadingMore: session.isLoadingMoreConversations,
+          loadMoreError: session.loadMoreError,
+          onShowMore: () {
+            unawaited(_advanceWindow(
+              session: session,
+              hasLocalMore: conversationPages * _conversationPageSize <
+                  project.conversations.length,
+              advance: () {
+                viewState.projectConversationPages[project.key] =
+                    (viewState.projectConversationPages[project.key] ?? 1) + 1;
+              },
+            ));
+          },
           onOpenProject: () => Navigator.of(context).push<void>(
             MaterialPageRoute(
               builder: (_) => _ProjectConversationsScreen(
                 projectName: name,
-                conversations: project.conversations,
+                workspaceRoot: project.workspaceRoot,
                 session: session,
               ),
             ),
@@ -244,18 +293,22 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
         ),
       );
     }));
-    if (visibleCount < projects.length) {
+    if (visibleCount < projects.length ||
+        session.canLoadMoreConversations ||
+        session.isLoadingMoreConversations) {
       widgets.add(
-        Align(
-          alignment: Alignment.center,
-          child: TextButton.icon(
-            key: Key('show-more-projects-${session.device.deviceId}'),
-            onPressed: () => setState(() {
-              viewState.projectPages++;
-            }),
-            icon: const Icon(Icons.expand_more),
-            label: const Text('显示更多项目'),
-          ),
+        _PaginationControl(
+          buttonKey: Key('show-more-projects-${session.device.deviceId}'),
+          label: '显示更多项目',
+          loading: session.isLoadingMoreConversations,
+          error: visibleCount < projects.length ? null : session.loadMoreError,
+          onPressed: () {
+            unawaited(_advanceWindow(
+              session: session,
+              hasLocalMore: visibleCount < projects.length,
+              advance: () => viewState.projectPages++,
+            ));
+          },
         ),
       );
     }
@@ -270,12 +323,27 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
   ) {
     if (session.connectionState != DeviceConnectionState.online) return const [];
     if (recent.isEmpty) {
-      return const [
-        _MessageCard(
+      return [
+        const _MessageCard(
           icon: Icons.forum_outlined,
           title: '还没有会话',
           message: '此设备当前没有可展示的会话。',
         ),
+        if (session.canLoadMoreConversations ||
+            session.isLoadingMoreConversations)
+          _PaginationControl(
+            buttonKey: Key('show-more-recent-${session.device.deviceId}'),
+            label: '显示更多对话',
+            loading: session.isLoadingMoreConversations,
+            error: session.loadMoreError,
+            onPressed: () {
+              unawaited(_advanceWindow(
+                session: session,
+                hasLocalMore: false,
+                advance: () => viewState.recentPages++,
+              ));
+            },
+          ),
       ];
     }
     final requestedCount = viewState.recentPages * _conversationPageSize;
@@ -293,18 +361,22 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
             onTap: () => _openConversation(context, session, conversation),
           ),
         )));
-    if (visibleCount < recent.length) {
+    if (visibleCount < recent.length ||
+        session.canLoadMoreConversations ||
+        session.isLoadingMoreConversations) {
       widgets.add(
-        Align(
-          alignment: Alignment.center,
-          child: TextButton.icon(
-            key: Key('show-more-recent-${session.device.deviceId}'),
-            onPressed: () => setState(() {
-              viewState.recentPages++;
-            }),
-            icon: const Icon(Icons.expand_more),
-            label: const Text('显示更多对话'),
-          ),
+        _PaginationControl(
+          buttonKey: Key('show-more-recent-${session.device.deviceId}'),
+          label: '显示更多对话',
+          loading: session.isLoadingMoreConversations,
+          error: visibleCount < recent.length ? null : session.loadMoreError,
+          onPressed: () {
+            unawaited(_advanceWindow(
+              session: session,
+              hasLocalMore: visibleCount < recent.length,
+              advance: () => viewState.recentPages++,
+            ));
+          },
         ),
       );
     }
@@ -478,6 +550,9 @@ class _ProjectCard extends StatelessWidget {
     required this.projectName,
     required this.expanded,
     required this.conversationPages,
+    required this.canLoadMore,
+    required this.isLoadingMore,
+    required this.loadMoreError,
     required this.onToggle,
     required this.onShowMore,
     required this.onOpenProject,
@@ -488,6 +563,9 @@ class _ProjectCard extends StatelessWidget {
   final String projectName;
   final bool expanded;
   final int conversationPages;
+  final bool canLoadMore;
+  final bool isLoadingMore;
+  final String? loadMoreError;
   final VoidCallback onToggle;
   final VoidCallback onShowMore;
   final VoidCallback onOpenProject;
@@ -546,14 +624,21 @@ class _ProjectCard extends StatelessWidget {
               if (index != visibleCount - 1)
                 const Divider(height: 1, indent: 56),
             ],
-            if (visibleCount < conversations.length)
+            if (visibleCount < conversations.length ||
+                canLoadMore ||
+                isLoadingMore)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
-                child: TextButton.icon(
-                  key: Key('show-more-project-conversations-${project.key}'),
+                child: _PaginationControl(
+                  buttonKey: Key(
+                    'show-more-project-conversations-${project.key}',
+                  ),
+                  label: '显示更多对话',
+                  loading: isLoadingMore,
+                  error: visibleCount < conversations.length
+                      ? null
+                      : loadMoreError,
                   onPressed: onShowMore,
-                  icon: const Icon(Icons.expand_more),
-                  label: const Text('显示更多对话'),
                 ),
               ),
           ],
@@ -561,6 +646,51 @@ class _ProjectCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PaginationControl extends StatelessWidget {
+  const _PaginationControl({
+    required this.buttonKey,
+    required this.label,
+    required this.loading,
+    required this.error,
+    required this.onPressed,
+  });
+
+  final Key buttonKey;
+  final String label;
+  final bool loading;
+  final String? error;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Align(
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (error != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                '加载失败：$error',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            TextButton.icon(
+              key: buttonKey,
+              onPressed: loading ? null : onPressed,
+              icon: loading
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.expand_more),
+              label: Text(loading ? '加载中…' : label),
+            ),
+          ],
+        ),
+      );
 }
 
 class _MessageCard extends StatelessWidget {
@@ -665,12 +795,12 @@ class _EmptyDevices extends StatelessWidget {
 class _ProjectConversationsScreen extends StatefulWidget {
   const _ProjectConversationsScreen({
     required this.projectName,
-    required this.conversations,
+    required this.workspaceRoot,
     required this.session,
   });
 
   final String projectName;
-  final List<ConversationSummary> conversations;
+  final String workspaceRoot;
   final DeviceSession session;
 
   @override
@@ -683,13 +813,66 @@ class _ProjectConversationsScreenState
   int _pages = 1;
 
   @override
+  void initState() {
+    super.initState();
+    widget.session.addListener(_changed);
+  }
+
+  @override
+  void didUpdateWidget(_ProjectConversationsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session == widget.session) return;
+    oldWidget.session.removeListener(_changed);
+    widget.session.addListener(_changed);
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.session.removeListener(_changed);
+    super.dispose();
+  }
+
+  Future<void> _showMore({required bool hasLocalMore}) async {
+    if (widget.session.isLoadingMoreConversations) return;
+    if (!hasLocalMore) {
+      if (!widget.session.canLoadMoreConversations) return;
+      await widget.session.loadMoreConversations();
+      if (!mounted ||
+          widget.session.connectionState != DeviceConnectionState.online ||
+          widget.session.loadMoreError != null) {
+        return;
+      }
+    }
+    setState(() {
+      _pages++;
+    });
+  }
+
+  List<ConversationSummary> _projectConversations() =>
+      sortRecentConversations(
+        deduplicateRoutedConversations(
+          widget.session.conversations.where(
+            (conversation) =>
+                conversation.workspaceRoot == widget.workspaceRoot,
+          ),
+        ),
+      );
+
+  @override
   Widget build(BuildContext context) {
-    final conversations = sortRecentConversations(widget.conversations);
+    final conversations = _projectConversations();
     final requestedCount = _pages * _conversationPageSize;
     final visibleCount = requestedCount < conversations.length
         ? requestedCount
         : conversations.length;
-    final hasMore = visibleCount < conversations.length;
+    final hasLocalMore = visibleCount < conversations.length;
+    final hasMore = hasLocalMore ||
+        widget.session.canLoadMoreConversations ||
+        widget.session.isLoadingMoreConversations;
     return Scaffold(
       appBar: AppBar(title: Text(widget.projectName)),
       body: ListView.separated(
@@ -700,13 +883,16 @@ class _ProjectConversationsScreenState
         itemBuilder: (_, index) {
           if (index == visibleCount) {
             return Center(
-              child: TextButton.icon(
-                key: const Key('show-more-project-screen-conversations'),
-                onPressed: () => setState(() {
-                  _pages++;
-                }),
-                icon: const Icon(Icons.expand_more),
-                label: const Text('显示更多对话'),
+              child: _PaginationControl(
+                buttonKey: const Key(
+                  'show-more-project-screen-conversations',
+                ),
+                label: '显示更多对话',
+                loading: widget.session.isLoadingMoreConversations,
+                error: hasLocalMore ? null : widget.session.loadMoreError,
+                onPressed: () {
+                  unawaited(_showMore(hasLocalMore: hasLocalMore));
+                },
               ),
             );
           }
