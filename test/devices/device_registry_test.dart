@@ -10,12 +10,19 @@ void main() {
     final metadata = _Metadata();
     final credentials = _Credentials();
     final registry = DeviceRegistry(metadata: metadata, credentials: credentials);
-    const device = PairedDevice(deviceId: 'host-1', displayName: 'Host', descriptor: DeviceDescriptor(deviceName: 'Host', operatingSystem: 'macOS', systemVersion: '15.6'), tlsFingerprint: 'fingerprint', credentialKeyRef: 'secure:key', clientId: 'client', preferredEndpoint: 'wss://host/remote/v1/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
+    const device = PairedDevice(deviceId: 'host-1', displayName: 'Host', alias: 'Office Host', descriptor: DeviceDescriptor(deviceName: 'Host', operatingSystem: 'macOS', systemVersion: '15.6'), tlsFingerprint: 'fingerprint', endpointHints: ['https://host:443'], credentialKeyRef: 'secure:key', clientId: 'client', preferredEndpoint: 'wss://host/remote/v1/gateway', autoConnect: true, connectionKind: DeviceConnectionKind.pairedGateway);
     await registry.register(device, 'secret-credential');
     final reloaded = await DeviceRegistry(metadata: metadata, credentials: credentials).load();
     expect(reloaded.single.deviceId, 'host-1');
+    expect(reloaded.single.alias, 'Office Host');
     expect(reloaded.single.descriptor?.systemVersion, '15.6');
+    expect(reloaded.single.endpointHints, ['https://host:443']);
+    expect(reloaded.single.credentialKeyRef, 'secure:key');
+    expect(reloaded.single.autoConnect, isTrue);
     expect(jsonEncode(metadata.values), isNot(contains('secret-credential')));
+    expect(jsonEncode(metadata.values), isNot(contains('conversation')));
+    expect(jsonEncode(metadata.values), isNot(contains('message')));
+    expect(jsonEncode(metadata.values), isNot(contains('eventCursor')));
     expect(await credentials.read('secure:key'), 'secret-credential');
   });
 

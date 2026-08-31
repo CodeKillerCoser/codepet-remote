@@ -39,6 +39,15 @@ void main() {
     expect(device.descriptor?.deviceName, 'MacBook');
     expect(device.clientId, clientId);
     expect(await credentials.read(device.credentialKeyRef!), 'opaque-credential');
+    final persisted = (await registry.load()).single;
+    expect(persisted.deviceId, 'device-host');
+    expect(persisted.displayName, 'MacBook');
+    expect(persisted.descriptor?.deviceName, 'MacBook');
+    expect(persisted.credentialKeyRef, device.credentialKeyRef);
+    expect(persisted.preferredEndpoint,
+        'wss://192.168.1.10:49152/remote/v1/gateway');
+    expect(persisted.autoConnect, isTrue);
+    expect(metadata.values.toString(), isNot(contains('opaque-credential')));
   });
 }
 

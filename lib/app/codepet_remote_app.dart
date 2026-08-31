@@ -12,18 +12,36 @@ import '../features/home/remote_home_screen.dart';
 import '../discovery/resolving_gateway_transport.dart';
 import '../gateway/demo_gateway_client.dart';
 import '../gateway/gateway_client.dart';
+import '../gateway/models.dart';
 import '../pairing/pairing_service.dart';
 
+typedef RestoredGatewayClientBuilder = GatewayClient Function({
+  required PairedDevice device,
+  required String credential,
+  required DeviceDescriptor clientDevice,
+});
+
 class CodePetRemoteApp extends StatefulWidget {
-  const CodePetRemoteApp({super.key, this.includeDemoDevices = false});
+  const CodePetRemoteApp({
+    super.key,
+    this.includeDemoDevices = false,
+    this.registry,
+    this.descriptorProvider,
+    this.gatewayClientBuilder,
+  });
+
   final bool includeDemoDevices;
+  final DeviceRegistry? registry;
+  final DeviceDescriptorProvider? descriptorProvider;
+  final RestoredGatewayClientBuilder? gatewayClientBuilder;
+
   @override State<CodePetRemoteApp> createState() => _CodePetRemoteAppState();
 }
 
 class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
-  final DeviceRegistry _registry = DeviceRegistry(metadata: PreferencesMetadataStore(), credentials: const SecureCredentialStore());
-  final LocalDeviceDescriptorProvider _descriptorProvider = LocalDeviceDescriptorProvider();
+  late final DeviceRegistry _registry;
+  late final DeviceDescriptorProvider _descriptorProvider;
   final List<DeviceSession> _sessions = [];
   int _selectedIndex = 0;
   bool _loading = true;
@@ -31,6 +49,12 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   @override
   void initState() {
     super.initState();
+    _registry = widget.registry ?? DeviceRegistry(
+      metadata: PreferencesMetadataStore(),
+      credentials: const SecureCredentialStore(),
+    );
+    _descriptorProvider =
+        widget.descriptorProvider ?? LocalDeviceDescriptorProvider();
     unawaited(_loadDevices());
   }
 
@@ -47,13 +71,13 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
           await payloadFile.delete();
           final device = await GatewayV1PairingService(registry: _registry, descriptorProvider: _descriptorProvider).pair(payload);
           final session = await _sessionFor(device);
-          if (session != null) _sessions.add(session);
+          _sessions.add(session);
         }
       }
       for (final device in await _registry.load()) {
         if (_sessions.any((session) => session.device.deviceId == device.deviceId)) continue;
         final session = await _sessionFor(device);
-        if (session != null) _sessions.add(session);
+        _sessions.add(session);
       }
     }
     if (mounted) setState(() => _loading = false);
@@ -69,17 +93,45 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     ));
   }
 
-  Future<DeviceSession?> _sessionFor(PairedDevice device) async {
+  Future<DeviceSession> _sessionFor(PairedDevice device) async {
     final key = device.credentialKeyRef;
-    final credential = key == null ? null : await _registry.credentials.read(key);
+    String? credential;
+    var credentialReadFailed = false;
+    if (key != null) {
+      try {
+        credential = await _registry.credentials.read(key);
+      } catch (_) {
+        credentialReadFailed = true;
+      }
+    }
     final gateway = Uri.tryParse(device.preferredEndpoint ?? '');
-    if (credential == null || gateway == null || device.tlsFingerprint == null || device.clientId == null) return null;
+    final registrationError = credentialReadFailed
+        ? '安全凭据读取失败，请忘记设备后重新配对。'
+        : credential == null
+            ? '安全凭据不存在，请忘记设备后重新配对。'
+            : gateway == null ||
+                    device.tlsFingerprint == null ||
+                    device.clientId == null
+                ? '设备注册信息不完整，请忘记设备后重新配对。'
+                : null;
+    if (registrationError != null) {
+      return DeviceSession(
+        device: device,
+        clientFactory: () => throw StateError(registrationError),
+      );
+    }
+    final restoredCredential = credential!;
+    final restoredGateway = gateway!;
     final clientDevice = await _descriptorProvider.load();
-    var preferredGateway = gateway;
+    var preferredGateway = restoredGateway;
     return DeviceSession(
       device: device,
-      clientFactory: () => ProtocolGatewayClient(
-        transport: ResolvingPinnedGatewayTransport(deviceId: device.deviceId, preferredGatewayUri: preferredGateway, credential: credential, certSha256: device.tlsFingerprint!),
+      clientFactory: () => widget.gatewayClientBuilder?.call(
+        device: device,
+        credential: restoredCredential,
+        clientDevice: clientDevice,
+      ) ?? ProtocolGatewayClient(
+        transport: ResolvingPinnedGatewayTransport(deviceId: device.deviceId, preferredGatewayUri: preferredGateway, credential: restoredCredential, certSha256: device.tlsFingerprint!),
         clientId: device.clientId!, clientDevice: clientDevice, expectedDeviceId: device.deviceId, expectedIdentityFingerprint: device.tlsFingerprint!,
         onValidatedHostDescriptor: (descriptor) => _registry.updateHostDescriptor(
           deviceId: device.deviceId,
@@ -103,7 +155,6 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
       pairingService: GatewayV1PairingService(registry: _registry, descriptorProvider: _descriptorProvider),
       onPaired: (device) async {
         final session = await _sessionFor(device);
-        if (session == null) throw StateError('Credential was not stored securely');
         final index = await replaceDeviceSession(_sessions, session);
         if (!mounted) return;
         setState(() => _selectedIndex = index);
