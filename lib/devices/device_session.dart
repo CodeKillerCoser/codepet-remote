@@ -11,85 +11,199 @@ enum DeviceConnectionState { offline, connecting, online, failed }
 class DeviceSession extends ChangeNotifier {
   DeviceSession({required this.device, required this.clientFactory});
 
+  static const int conversationPageSize = 20;
+
   PairedDevice device;
   final GatewayClient Function() clientFactory;
   GatewayClient? _client;
   GatewayEventWindow? _eventWindow;
+  String? _nextConversationCursor;
+  bool _isLoadingMoreConversations = false;
+  String? _loadMoreError;
+  int _runtimeGeneration = 0;
   DeviceConnectionState connectionState = DeviceConnectionState.offline;
   GatewayHandshake? handshake;
   String? error;
   List<ConversationSummary> conversations = const [];
 
   GatewayClient get client => _client!;
+  bool get canLoadMoreConversations =>
+      connectionState == DeviceConnectionState.online &&
+      _nextConversationCursor != null;
+  bool get isLoadingMoreConversations => _isLoadingMoreConversations;
+  String? get loadMoreError => _loadMoreError;
 
   Future<void> connect() async {
     if (connectionState == DeviceConnectionState.connecting) return;
     final oldWindow = _eventWindow;
     final oldClient = _client;
+    final generation = ++_runtimeGeneration;
     _eventWindow = null;
     _client = null;
+    handshake = null;
+    _resetConversationPagination();
+    connectionState = DeviceConnectionState.connecting;
+    error = null;
+    notifyListeners();
     try {
       await oldWindow?.close();
     } catch (_) {}
     try {
       await oldClient?.close();
     } catch (_) {}
-    handshake = null;
-    conversations = const [];
-    connectionState = DeviceConnectionState.connecting;
-    error = null;
-    notifyListeners();
+    if (generation != _runtimeGeneration) return;
     try {
-      final client = _client ??= clientFactory();
+      final client = clientFactory();
+      _client = client;
       final window = client.openEventWindow();
       _eventWindow = window;
-      handshake = await client.connect();
-      final hostDescriptor = handshake!.deviceDescriptor;
+      final connectedHandshake = await client.connect();
+      if (!_ownsRuntime(generation, client)) return;
+      handshake = connectedHandshake;
+      final hostDescriptor = connectedHandshake.deviceDescriptor;
       if (hostDescriptor != null) {
         device = device.withDescriptor(hostDescriptor);
       }
-      final page = await client.listConversations();
-      conversations = sortRecentConversations(
-        deduplicateRoutedConversations(page.conversations),
+      final page = await client.listConversations(
+        limit: conversationPageSize,
       );
+      if (!_ownsRuntime(generation, client)) return;
+      conversations = mergeRoutedConversations(
+        const [],
+        page.conversations,
+      );
+      _nextConversationCursor = page.nextCursor;
       window.install(
-        baselineCursor: handshake!.eventCursor,
+        baselineCursor: connectedHandshake.eventCursor,
         snapshotCursor: page.snapshotCursor,
-        onEvent: _applyEvent,
+        onEvent: (event) {
+          if (_ownsRuntime(generation, client)) {
+            _applyEvent(event);
+          }
+        },
         onError: (Object value, StackTrace _) {
-          unawaited(_failRuntime('事件流异常：$value'));
+          unawaited(
+            _failRuntime(
+              '事件流异常：$value',
+              generation: generation,
+              client: client,
+            ),
+          );
         },
       );
       connectionState = DeviceConnectionState.online;
+      notifyListeners();
     } catch (value) {
+      if (generation != _runtimeGeneration) return;
       final connectionError = value.toString();
       final window = _eventWindow;
       final client = _client;
+      _runtimeGeneration++;
       _eventWindow = null;
       _client = null;
+      handshake = null;
+      _resetConversationPagination();
+      error = connectionError;
+      connectionState = DeviceConnectionState.failed;
+      notifyListeners();
       try {
         await window?.close();
       } catch (_) {}
       try {
         await client?.close();
       } catch (_) {}
-      handshake = null;
-      error = connectionError;
-      connectionState = DeviceConnectionState.failed;
-      conversations = const [];
     }
-    notifyListeners();
   }
 
-  Future<void> _failRuntime(String message) async {
-    final window = _eventWindow;
+  Future<void> loadMoreConversations() async {
     final client = _client;
+    final cursor = _nextConversationCursor;
+    if (connectionState != DeviceConnectionState.online ||
+        client == null ||
+        cursor == null ||
+        _isLoadingMoreConversations) {
+      return;
+    }
+
+    final generation = _runtimeGeneration;
+    _isLoadingMoreConversations = true;
+    _loadMoreError = null;
+    notifyListeners();
+    try {
+      final page = await client.listConversations(
+        cursor: cursor,
+        limit: conversationPageSize,
+      );
+      if (!_ownsRuntime(generation, client)) return;
+      conversations = mergeRoutedConversations(
+        conversations,
+        page.conversations,
+      );
+      _nextConversationCursor = page.nextCursor;
+      _loadMoreError = null;
+    } catch (value) {
+      if (!_ownsRuntime(generation, client)) return;
+      _loadMoreError = value.toString();
+    } finally {
+      if (_ownsRuntime(generation, client)) {
+        _isLoadingMoreConversations = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  bool _ownsRuntime(int generation, GatewayClient client) =>
+      generation == _runtimeGeneration && identical(_client, client);
+
+  void _resetConversationPagination() {
+    conversations = const [];
+    _nextConversationCursor = null;
+    _isLoadingMoreConversations = false;
+    _loadMoreError = null;
+  }
+
+  Future<void> _failRuntime(
+    String message, {
+    required int generation,
+    required GatewayClient client,
+  }) async {
+    if (!_ownsRuntime(generation, client)) return;
+    final window = _eventWindow;
+    _runtimeGeneration++;
     _eventWindow = null;
     _client = null;
     handshake = null;
-    conversations = const [];
+    _resetConversationPagination();
     error = message;
     connectionState = DeviceConnectionState.failed;
+    notifyListeners();
+    try {
+      await window?.close();
+    } catch (_) {}
+    try {
+      await client.close();
+    } catch (_) {}
+  }
+
+  void _applyEvent(GatewayEvent event) {
+    if (event is! ConversationUpsertedEvent) return;
+    conversations = mergeRoutedConversations(
+      conversations,
+      [event.conversation],
+    );
+    notifyListeners();
+  }
+
+  Future<void> disconnect() async {
+    final window = _eventWindow;
+    final client = _client;
+    _runtimeGeneration++;
+    _eventWindow = null;
+    _client = null;
+    handshake = null;
+    error = null;
+    _resetConversationPagination();
+    connectionState = DeviceConnectionState.offline;
     notifyListeners();
     try {
       await window?.close();
@@ -99,38 +213,14 @@ class DeviceSession extends ChangeNotifier {
     } catch (_) {}
   }
 
-  void _applyEvent(GatewayEvent event) {
-    if (event is! ConversationUpsertedEvent) return;
-    final next = [...conversations];
-    final eventKey = conversationRoutingKey(event.conversation);
-    final index = next.indexWhere(
-      (item) => conversationRoutingKey(item) == eventKey,
-    );
-    if (index == -1) {
-      next.add(event.conversation);
-    } else {
-      next[index] = event.conversation;
-    }
-    conversations = sortRecentConversations(next);
-    notifyListeners();
-  }
-
-  Future<void> disconnect() async {
-    await _eventWindow?.close();
-    _eventWindow = null;
-    await _client?.close();
-    _client = null;
-    handshake = null;
-    error = null;
-    conversations = const [];
-    connectionState = DeviceConnectionState.offline;
-    notifyListeners();
-  }
-
   @override
   void dispose() {
-    unawaited(_eventWindow?.close());
+    _runtimeGeneration++;
+    final window = _eventWindow;
     final client = _client;
+    _eventWindow = null;
+    _client = null;
+    unawaited(window?.close());
     if (client != null) unawaited(client.close());
     super.dispose();
   }
@@ -140,8 +230,24 @@ List<ConversationSummary> sortRecentConversations(
   Iterable<ConversationSummary> values,
 ) {
   return values.toList(growable: false)
-    ..sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
+    ..sort(_compareRecentConversations);
 }
+
+int _compareRecentConversations(
+  ConversationSummary left,
+  ConversationSummary right,
+) {
+  final updatedAt = right.updatedAt.compareTo(left.updatedAt);
+  if (updatedAt != 0) return updatedAt;
+  return conversationRoutingKey(left).compareTo(conversationRoutingKey(right));
+}
+
+List<ConversationSummary> mergeRoutedConversations(
+  Iterable<ConversationSummary> existing,
+  Iterable<ConversationSummary> incoming,
+) => sortRecentConversations(
+  deduplicateRoutedConversations([...existing, ...incoming]),
+);
 
 Map<String, List<ConversationSummary>> groupConversationsByWorkspace(
   Iterable<ConversationSummary> values,
@@ -153,7 +259,7 @@ Map<String, List<ConversationSummary>> groupConversationsByWorkspace(
     groups.putIfAbsent(root, () => []).add(conversation);
   }
   for (final conversations in groups.values) {
-    conversations.sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
+    conversations.sort(_compareRecentConversations);
   }
   return Map.fromEntries(
     groups.entries.toList()
@@ -208,10 +314,20 @@ Iterable<ConversationSummary> deduplicateRoutedConversations(
   return conversations.values;
 }
 
-String conversationRoutingKey(ConversationSummary conversation) =>
-    conversation.wireResource == null
-        ? '${conversation.providerId}\u0000${conversation.id}'
-        : conversation.id;
+String conversationRoutingKey(ConversationSummary conversation) {
+  final resource = conversation.wireResource;
+  final deviceId = resource?['deviceId'];
+  final providerPluginId = resource?['providerPluginId'];
+  final providerInstanceId = resource?['providerInstanceId'];
+  final nativeResourceId = resource?['nativeResourceId'];
+  if (deviceId is String &&
+      providerPluginId is String &&
+      providerInstanceId is String &&
+      nativeResourceId is String) {
+    return '$deviceId\u0000$providerPluginId\u0000$providerInstanceId\u0000$nativeResourceId';
+  }
+  return '${conversation.providerId}\u0000${conversation.id}';
+}
 
 Future<int> replaceDeviceSession(
   List<DeviceSession> sessions,
