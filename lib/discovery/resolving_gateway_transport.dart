@@ -11,6 +11,8 @@ abstract interface class EndpointAwareGatewayTransport {
 
 class ResolvingPinnedGatewayTransport
     implements GatewayTransport, EndpointAwareGatewayTransport {
+  static const stableGatewayPort = 47622;
+
   ResolvingPinnedGatewayTransport({
     required this.deviceId,
     required this.preferredGatewayUri,
@@ -39,6 +41,7 @@ class ResolvingPinnedGatewayTransport
 
   @override
   Future<void> connect() async {
+    final attempted = <Uri>{preferredGatewayUri};
     Object? preferredError;
     try {
       await _tryCandidate(preferredGatewayUri);
@@ -46,11 +49,24 @@ class ResolvingPinnedGatewayTransport
     } catch (error) {
       preferredError = error;
     }
+    Object? stableError;
+    final stableCandidate = preferredGatewayUri.replace(
+      port: stableGatewayPort,
+    );
+    if (attempted.add(stableCandidate)) {
+      try {
+        await _tryCandidate(stableCandidate);
+        return;
+      } catch (error) {
+        stableError = error;
+      }
+    }
     Object? discoveryError;
     try {
       await for (final host in discovery.discover()) {
         if (!isTrustedDiscoveryCandidate(host, deviceId)) continue;
         final candidate = preferredGatewayUri.replace(host: host.host, port: host.port);
+        if (!attempted.add(candidate)) continue;
         try {
           await _tryCandidate(candidate);
           return;
@@ -62,9 +78,10 @@ class ResolvingPinnedGatewayTransport
       discoveryError = error;
     }
     throw GatewayConnectionException(
-      'Preferred endpoint failed and no trusted mDNS candidate connected. '
-      'Preferred: $preferredError; discovery: $discoveryError',
-      retryable: [preferredError, discoveryError]
+      'Preferred endpoint, stable port, and trusted mDNS candidates failed. '
+      'Preferred: $preferredError; stable: $stableError; '
+      'discovery: $discoveryError',
+      retryable: [preferredError, stableError, discoveryError]
           .whereType<Object>()
           .every(isRetryableGatewayFailure),
     );

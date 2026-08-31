@@ -367,6 +367,36 @@ void main() {
     session.dispose();
   });
 
+  test('late failed cleanup cannot schedule over a manual healthy connection', () async {
+    final failed = _DelayedCleanupFailingClient();
+    final healthy = _FakeClient([
+      _conversation('manual-recovery', '/repo', 1000),
+    ]);
+    final clients = <GatewayClient>[failed, healthy];
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('late-failure-manual-recovery'),
+      clientFactory: () => clients[factoryCalls++],
+      reconnectDelays: const [Duration.zero],
+    );
+
+    final failedAttempt = session.connect();
+    await failed.closeStarted.future;
+    await session.connect();
+
+    expect(session.connectionState, DeviceConnectionState.online);
+    expect(session.conversations.single.id, 'manual-recovery');
+
+    failed.finishClose();
+    await failedAttempt;
+    await pumpEventQueue();
+
+    expect(factoryCalls, 2);
+    expect(healthy.closed, isFalse);
+    expect(session.connectionState, DeviceConnectionState.online);
+    session.dispose();
+  });
+
   test('explicit disconnect cancels a scheduled automatic retry', () async {
     var factoryCalls = 0;
     final session = DeviceSession(
@@ -385,6 +415,52 @@ void main() {
     expect(factoryCalls, 1);
     expect(session.connectionState, DeviceConnectionState.offline);
     session.dispose();
+  });
+
+  test('disconnect fences a retryable failure still cleaning up', () async {
+    final failed = _DelayedCleanupFailingClient();
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('disconnect-during-cleanup'),
+      clientFactory: () {
+        factoryCalls++;
+        return failed;
+      },
+      reconnectDelays: const [Duration.zero],
+    );
+
+    final failedAttempt = session.connect();
+    await failed.closeStarted.future;
+    await session.disconnect();
+    failed.finishClose();
+    await failedAttempt;
+    await pumpEventQueue();
+
+    expect(factoryCalls, 1);
+    expect(session.connectionState, DeviceConnectionState.offline);
+    session.dispose();
+  });
+
+  test('dispose fences a retryable failure still cleaning up', () async {
+    final failed = _DelayedCleanupFailingClient();
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('dispose-during-cleanup'),
+      clientFactory: () {
+        factoryCalls++;
+        return failed;
+      },
+      reconnectDelays: const [Duration.zero],
+    );
+
+    final failedAttempt = session.connect();
+    await failed.closeStarted.future;
+    session.dispose();
+    failed.finishClose();
+    await failedAttempt;
+    await pumpEventQueue();
+
+    expect(factoryCalls, 1);
   });
 
   test('non-retryable connection failure does not loop in the background', () async {
@@ -681,4 +757,20 @@ class _NonRetryableClient extends _FailingClient {
   Future<GatewayHandshake> connect() => Future.error(
     const GatewayConnectionException('credential rejected'),
   );
+}
+
+class _DelayedCleanupFailingClient extends _FailingClient {
+  final Completer<void> closeStarted = Completer<void>();
+  final Completer<void> _finishClose = Completer<void>();
+
+  void finishClose() {
+    if (!_finishClose.isCompleted) _finishClose.complete();
+  }
+
+  @override
+  Future<void> close() async {
+    closeCalled = true;
+    if (!closeStarted.isCompleted) closeStarted.complete();
+    await _finishClose.future;
+  }
 }

@@ -124,7 +124,7 @@ class DeviceSession extends ChangeNotifier {
       final connectionError = value.toString();
       final window = _eventWindow;
       final client = _client;
-      _runtimeGeneration++;
+      final failureGeneration = ++_runtimeGeneration;
       _eventWindow = null;
       _client = null;
       handshake = null;
@@ -138,20 +138,28 @@ class DeviceSession extends ChangeNotifier {
       try {
         await client?.close();
       } catch (_) {}
-      if (isRetryableGatewayFailure(value)) _scheduleReconnect();
+      if (isRetryableGatewayFailure(value)) {
+        _scheduleReconnect(failureGeneration);
+      }
     }
   }
 
-  void _scheduleReconnect() {
-    if (!_reconnectEnabled || _disposed || _reconnectTimer != null) return;
+  void _scheduleReconnect(int generation) {
+    if (!_canReconnect(generation) || _reconnectTimer != null) return;
     final delayIndex = _reconnectAttempt.clamp(0, reconnectDelays.length - 1);
     final delay = reconnectDelays[delayIndex];
     _reconnectAttempt++;
     _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;
-      if (_reconnectEnabled && !_disposed) unawaited(_connect());
+      if (_canReconnect(generation)) unawaited(_connect());
     });
   }
+
+  bool _canReconnect(int generation) =>
+      generation == _runtimeGeneration &&
+      connectionState == DeviceConnectionState.failed &&
+      _reconnectEnabled &&
+      !_disposed;
 
   void _cancelReconnect({bool resetAttempt = false}) {
     _reconnectTimer?.cancel();
@@ -214,7 +222,7 @@ class DeviceSession extends ChangeNotifier {
   }) async {
     if (!_ownsRuntime(generation, client)) return;
     final window = _eventWindow;
-    _runtimeGeneration++;
+    final failureGeneration = ++_runtimeGeneration;
     _eventWindow = null;
     _client = null;
     handshake = null;
@@ -228,7 +236,9 @@ class DeviceSession extends ChangeNotifier {
     try {
       await client.close();
     } catch (_) {}
-    if (isRetryableGatewayFailure(cause)) _scheduleReconnect();
+    if (isRetryableGatewayFailure(cause)) {
+      _scheduleReconnect(failureGeneration);
+    }
   }
 
   void _applyEvent(GatewayEvent event) {

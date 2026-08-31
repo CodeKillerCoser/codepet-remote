@@ -43,4 +43,28 @@ void main() {
       isTrue,
     );
   });
+
+  test('retries only an abnormal network close code', () {
+    expect(
+      isRetryableWebSocketCloseCode(WebSocketStatus.abnormalClosure),
+      isTrue,
+    );
+    expect(
+      isRetryableWebSocketCloseCode(WebSocketStatus.normalClosure),
+      isFalse,
+    );
+    expect(
+      isRetryableWebSocketCloseCode(WebSocketStatus.protocolError),
+      isFalse,
+    );
+    expect(
+      isRetryableWebSocketCloseCode(WebSocketStatus.policyViolation),
+      isFalse,
+    );
+    expect(
+      isRetryableWebSocketCloseCode(WebSocketStatus.internalServerError),
+      isFalse,
+    );
+    expect(isRetryableWebSocketCloseCode(null), isFalse);
+  });
 }

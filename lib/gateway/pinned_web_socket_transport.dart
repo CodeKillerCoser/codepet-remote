@@ -90,10 +90,11 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
 
   void _handleError(Object error, StackTrace stack) { _fail(error); _events.addError(error, stack); }
   void _handleDone() {
+    final closeCode = _socket?.closeCode;
     _socket = null;
-    const error = GatewayConnectionException(
-      'Gateway connection closed',
-      retryable: true,
+    final error = GatewayConnectionException(
+      'Gateway connection closed (code: ${closeCode ?? 'unknown'})',
+      retryable: isRetryableWebSocketCloseCode(closeCode),
     );
     _fail(error);
     if (!_closing && !_events.isClosed) _events.addError(error);
@@ -105,7 +106,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     _closing = true;
     _fail(const GatewayConnectionException(
       'Gateway connection closed',
-      retryable: true,
+      retryable: false,
     ));
     await _socket?.close();
     _socket = null;
@@ -114,3 +115,6 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     await _events.close();
   }
 }
+
+bool isRetryableWebSocketCloseCode(int? closeCode) =>
+    closeCode == WebSocketStatus.abnormalClosure;
