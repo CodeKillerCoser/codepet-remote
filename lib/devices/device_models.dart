@@ -101,26 +101,6 @@ String? _migrateGatewayEndpoint(String? endpoint) {
   return uri.replace(path: '/remote/v2/gateway').toString();
 }
 
-abstract interface class PairingService {
-  Future<PairedDevice> pairFromQr(String qrPayload);
-}
-
-class PairingUnavailableException implements Exception {
-  const PairingUnavailableException();
-
-  @override
-  String toString() => 'LAN 配对服务当前不可用。';
-}
-
-class UnavailablePairingService implements PairingService {
-  const UnavailablePairingService();
-
-  @override
-  Future<PairedDevice> pairFromQr(String qrPayload) {
-    throw const PairingUnavailableException();
-  }
-}
-
 class DevelopmentConnection {
   const DevelopmentConnection({required this.device, required this.connection});
 

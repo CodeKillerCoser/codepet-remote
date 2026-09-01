@@ -84,6 +84,3 @@ class LanAdmissionService {
     return device;
   }
 }
-
-@Deprecated('Use LanAdmissionService; pairing belongs to LAN admission, not Gateway v1')
-typedef GatewayV1PairingService = LanAdmissionService;

@@ -21,7 +21,7 @@ void main() {
       operatingSystem: 'Android',
       systemVersion: '16',
     );
-    final service = GatewayV1PairingService(
+    final service = LanAdmissionService(
       registry: registry,
       descriptorProvider: const _DescriptorProvider(descriptor),
       exchangeClient: exchange,
