@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/foundation.dart';
 
 import '../gateway/models.dart';
 
@@ -8,20 +9,64 @@ abstract interface class DeviceDescriptorProvider {
   Future<DeviceDescriptor> load();
 }
 
-class LocalDeviceDescriptorProvider implements DeviceDescriptorProvider {
+abstract interface class DebugAndroidEmulatorProvider {
+  Future<bool> isDebugAndroidEmulator();
+}
+
+enum CodePetBuildMode { debug, profile, release }
+
+bool shouldUseAndroidEmulatorHostAlias({
+  required CodePetBuildMode buildMode,
+  required bool isAndroid,
+  required bool isPhysicalDevice,
+}) =>
+    buildMode == CodePetBuildMode.debug &&
+    isAndroid &&
+    !isPhysicalDevice;
+
+CodePetBuildMode get currentCodePetBuildMode {
+  if (kDebugMode) return CodePetBuildMode.debug;
+  if (kProfileMode) return CodePetBuildMode.profile;
+  return CodePetBuildMode.release;
+}
+
+class LocalDeviceDescriptorProvider
+    implements DeviceDescriptorProvider, DebugAndroidEmulatorProvider {
   LocalDeviceDescriptorProvider({DeviceInfoPlugin? deviceInfo})
       : _deviceInfo = deviceInfo ?? DeviceInfoPlugin();
 
   final DeviceInfoPlugin _deviceInfo;
   Future<DeviceDescriptor>? _cached;
+  Future<AndroidDeviceInfo>? _cachedAndroidInfo;
 
   @override
   Future<DeviceDescriptor> load() => _cached ??= _load();
 
+  @override
+  Future<bool> isDebugAndroidEmulator() async {
+    if (currentCodePetBuildMode != CodePetBuildMode.debug ||
+        !Platform.isAndroid) {
+      return false;
+    }
+    try {
+      final info = await _loadAndroidInfo();
+      return shouldUseAndroidEmulatorHostAlias(
+        buildMode: currentCodePetBuildMode,
+        isAndroid: true,
+        isPhysicalDevice: info.isPhysicalDevice,
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<AndroidDeviceInfo> _loadAndroidInfo() =>
+      _cachedAndroidInfo ??= _deviceInfo.androidInfo;
+
   Future<DeviceDescriptor> _load() async {
     try {
       if (Platform.isAndroid) {
-        final info = await _deviceInfo.androidInfo;
+        final info = await _loadAndroidInfo();
         final manufacturer = _value(info.manufacturer);
         final model = _value(info.model);
         final modelName = [

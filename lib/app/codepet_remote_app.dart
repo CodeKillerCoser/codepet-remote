@@ -19,6 +19,7 @@ typedef RestoredGatewayClientBuilder = GatewayClient Function({
   required PairedDevice device,
   required String credential,
   required DeviceDescriptor clientDevice,
+  required Uri? debugAndroidEmulatorGatewayUri,
 });
 
 class CodePetRemoteApp extends StatefulWidget {
@@ -124,30 +125,57 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     final restoredCredential = credential!;
     final restoredGateway = gateway!;
     final clientDevice = await _descriptorProvider.load();
+    final descriptorProvider = _descriptorProvider;
+    var useDebugAndroidEmulatorAlias = false;
+    if (descriptorProvider is DebugAndroidEmulatorProvider) {
+      try {
+        useDebugAndroidEmulatorAlias =
+            await (descriptorProvider as DebugAndroidEmulatorProvider)
+                .isDebugAndroidEmulator();
+      } catch (_) {}
+    }
     var preferredGateway = restoredGateway;
     return DeviceSession(
       device: device,
-      clientFactory: () => widget.gatewayClientBuilder?.call(
-        device: device,
-        credential: restoredCredential,
-        clientDevice: clientDevice,
-      ) ?? ProtocolGatewayClient(
-        transport: ResolvingPinnedGatewayTransport(deviceId: device.deviceId, preferredGatewayUri: preferredGateway, credential: restoredCredential, certSha256: device.tlsFingerprint!),
-        clientId: device.clientId!, clientDevice: clientDevice, expectedDeviceId: device.deviceId, expectedIdentityFingerprint: device.tlsFingerprint!,
-        onValidatedHostDescriptor: (descriptor) => _registry.updateHostDescriptor(
-          deviceId: device.deviceId,
-          clientId: device.clientId!,
-          tlsFingerprint: device.tlsFingerprint!,
-          descriptor: descriptor,
-        ),
-        onValidatedEndpoint: (endpoint) async {
-          if (endpoint == preferredGateway) return;
-          preferredGateway = endpoint;
-          try {
-            await _registry.updatePreferredEndpoint(device.deviceId, endpoint.toString());
-          } catch (_) {}
-        },
-      ),
+      clientFactory: () {
+        final debugAndroidEmulatorGatewayUri = useDebugAndroidEmulatorAlias
+            ? debugAndroidEmulatorGatewayCandidate(preferredGateway)
+            : null;
+        final builder = widget.gatewayClientBuilder;
+        if (builder != null) {
+          return builder(
+            device: device,
+            credential: restoredCredential,
+            clientDevice: clientDevice,
+            debugAndroidEmulatorGatewayUri:
+                debugAndroidEmulatorGatewayUri,
+          );
+        }
+        return ProtocolGatewayClient(
+          transport: ResolvingPinnedGatewayTransport(
+            deviceId: device.deviceId,
+            preferredGatewayUri: preferredGateway,
+            debugAndroidEmulatorGatewayUri:
+                debugAndroidEmulatorGatewayUri,
+            credential: restoredCredential,
+            certSha256: device.tlsFingerprint!,
+          ),
+          clientId: device.clientId!, clientDevice: clientDevice, expectedDeviceId: device.deviceId, expectedIdentityFingerprint: device.tlsFingerprint!,
+          onValidatedHostDescriptor: (descriptor) => _registry.updateHostDescriptor(
+            deviceId: device.deviceId,
+            clientId: device.clientId!,
+            tlsFingerprint: device.tlsFingerprint!,
+            descriptor: descriptor,
+          ),
+          onValidatedEndpoint: (endpoint) async {
+            if (endpoint == preferredGateway) return;
+            preferredGateway = endpoint;
+            try {
+              await _registry.updatePreferredEndpoint(device.deviceId, endpoint.toString());
+            } catch (_) {}
+          },
+        );
+      },
     );
   }
 

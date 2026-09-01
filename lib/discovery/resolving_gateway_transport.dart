@@ -9,14 +9,31 @@ abstract interface class EndpointAwareGatewayTransport {
   Uri? get selectedGatewayUri;
 }
 
+abstract interface class EndpointPersistenceAwareGatewayTransport {
+  bool get shouldPersistSelectedGatewayUri;
+}
+
+Uri? debugAndroidEmulatorGatewayCandidate(Uri preferredGatewayUri) {
+  if (!preferredGatewayUri.hasScheme || preferredGatewayUri.host.isEmpty) {
+    return null;
+  }
+  try {
+    return preferredGatewayUri.replace(host: '10.0.2.2');
+  } on FormatException {
+    return null;
+  }
+}
+
 class ResolvingPinnedGatewayTransport
-    implements GatewayTransport, EndpointAwareGatewayTransport {
+    implements GatewayTransport, EndpointAwareGatewayTransport,
+        EndpointPersistenceAwareGatewayTransport {
   static const stableGatewayPort = 47622;
   static const defaultConnectTimeout = Duration(seconds: 8);
 
   ResolvingPinnedGatewayTransport({
     required this.deviceId,
     required this.preferredGatewayUri,
+    this.debugAndroidEmulatorGatewayUri,
     required this.credential,
     required this.certSha256,
     this.connectTimeout = defaultConnectTimeout,
@@ -33,6 +50,7 @@ class ResolvingPinnedGatewayTransport
 
   final String deviceId;
   final Uri preferredGatewayUri;
+  final Uri? debugAndroidEmulatorGatewayUri;
   final String credential;
   final String certSha256;
   final Duration connectTimeout;
@@ -47,6 +65,8 @@ class ResolvingPinnedGatewayTransport
 
   @override
   Uri? selectedGatewayUri;
+  @override
+  bool shouldPersistSelectedGatewayUri = false;
 
   @override
   Stream<JsonMap> get events => _events.stream;
@@ -54,13 +74,30 @@ class ResolvingPinnedGatewayTransport
   @override
   Future<void> connect() async {
     _throwIfClosed();
-    final attempted = <Uri>{preferredGatewayUri};
+    final attempted = <Uri>{};
+    Object? debugAndroidEmulatorError;
+    final debugAndroidEmulatorCandidate = debugAndroidEmulatorGatewayUri;
+    if (debugAndroidEmulatorCandidate != null &&
+        attempted.add(debugAndroidEmulatorCandidate)) {
+      try {
+        await _tryCandidate(
+          debugAndroidEmulatorCandidate,
+          persistAfterValidation: false,
+        );
+        return;
+      } catch (error) {
+        debugAndroidEmulatorError = error;
+      }
+    }
+    _throwIfClosed();
     Object? preferredError;
-    try {
-      await _tryCandidate(preferredGatewayUri);
-      return;
-    } catch (error) {
-      preferredError = error;
+    if (attempted.add(preferredGatewayUri)) {
+      try {
+        await _tryCandidate(preferredGatewayUri);
+        return;
+      } catch (error) {
+        preferredError = error;
+      }
     }
     _throwIfClosed();
     Object? stableError;
@@ -94,17 +131,29 @@ class ResolvingPinnedGatewayTransport
       if (_closed) rethrow;
       discoveryError = error;
     }
+    final debugAndroidEmulatorSummary = debugAndroidEmulatorCandidate == null
+        ? ''
+        : 'Android emulator alias: $debugAndroidEmulatorError; ';
     throw GatewayConnectionException(
-      'Preferred endpoint, stable port, and trusted mDNS candidates failed. '
+      '${debugAndroidEmulatorSummary}Preferred endpoint, stable port, and '
+      'trusted mDNS candidates failed. '
       'Preferred: $preferredError; stable: $stableError; '
       'discovery: $discoveryError',
-      retryable: [preferredError, stableError, discoveryError]
+      retryable: [
+        debugAndroidEmulatorError,
+        preferredError,
+        stableError,
+        discoveryError,
+      ]
           .whereType<Object>()
           .every(isRetryableGatewayFailure),
     );
   }
 
-  Future<void> _tryCandidate(Uri gatewayUri) async {
+  Future<void> _tryCandidate(
+    Uri gatewayUri, {
+    bool persistAfterValidation = true,
+  }) async {
     _throwIfClosed();
     if (gatewayUri.scheme != 'wss') {
       throw const GatewayConnectionException('Resolved Gateway URI must use wss');
@@ -134,6 +183,7 @@ class ResolvingPinnedGatewayTransport
       _active = transport;
       _activeEvents = subscription;
       selectedGatewayUri = gatewayUri;
+      shouldPersistSelectedGatewayUri = persistAfterValidation;
     } on TimeoutException {
       if (identical(_connectingCandidate, transport)) {
         _connectingCandidate = null;

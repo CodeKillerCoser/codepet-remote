@@ -4,6 +4,7 @@ import 'package:codepet_remote/gateway/models.dart';
 import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'dart:async';
+import 'dart:io';
 
 void main() {
   const trustedId = 'trusted-device';
@@ -21,6 +22,97 @@ void main() {
   test('rejects missing or additional TXT keys', () {
     expect(isTrustedDiscoveryCandidate(host({...valid}..remove('pair')), trustedId), isFalse);
     expect(isTrustedDiscoveryCandidate(host({...valid, 'pin': 'untrusted'}), trustedId), isFalse);
+  });
+
+  test('builds the emulator alias from the complete paired endpoint shape', () {
+    final preferred = Uri.parse(
+      'wss://192.168.0.105:43210/remote/v1/gateway?mode=paired',
+    );
+
+    expect(
+      debugAndroidEmulatorGatewayCandidate(preferred),
+      Uri.parse(
+        'wss://10.0.2.2:43210/remote/v1/gateway?mode=paired',
+      ),
+    );
+    expect(
+      debugAndroidEmulatorGatewayCandidate(Uri.parse('not-an-endpoint')),
+      isNull,
+    );
+  });
+
+  test('tries the debug emulator alias first and marks it ephemeral', () async {
+    final preferred = Uri.parse(
+      'wss://192.168.0.105:43210/remote/v1/gateway?mode=paired',
+    );
+    final alias = debugAndroidEmulatorGatewayCandidate(preferred)!;
+    final attempted = <Uri>[];
+    final credentials = <String>[];
+    final pins = <String>[];
+    final resolver = ResolvingPinnedGatewayTransport(
+      deviceId: trustedId,
+      preferredGatewayUri: preferred,
+      debugAndroidEmulatorGatewayUri: alias,
+      credential: 'same-opaque-credential',
+      certSha256: 'a' * 64,
+      discovery: _FakeDiscovery(const []),
+      transportFactory: (uri, credential, certSha256) {
+        attempted.add(uri);
+        credentials.add(credential);
+        pins.add(certSha256);
+        return _FakeCandidateTransport(succeeds: uri == alias);
+      },
+    );
+
+    await resolver.connect();
+
+    expect(attempted, [alias]);
+    expect(credentials, ['same-opaque-credential']);
+    expect(pins, ['a' * 64]);
+    expect(resolver.selectedGatewayUri, alias);
+    expect(resolver.shouldPersistSelectedGatewayUri, isFalse);
+    await resolver.close();
+  });
+
+  test('continues through formal candidates and mDNS after alias failure', () async {
+    final preferred = Uri.parse(
+      'wss://192.168.0.105:43210/remote/v1/gateway',
+    );
+    final alias = debugAndroidEmulatorGatewayCandidate(preferred)!;
+    final matching = host(valid);
+    final attempted = <Uri>[];
+    final resolver = ResolvingPinnedGatewayTransport(
+      deviceId: trustedId,
+      preferredGatewayUri: preferred,
+      debugAndroidEmulatorGatewayUri: alias,
+      credential: 'opaque',
+      certSha256: '0' * 64,
+      discovery: _FakeDiscovery([matching]),
+      transportFactory: (uri, credential, certSha256) {
+        attempted.add(uri);
+        if (uri == alias) {
+          return _FakeCandidateTransport(
+            succeeds: false,
+            error: const HandshakeException('certificate pin mismatch'),
+          );
+        }
+        return _FakeCandidateTransport(succeeds: uri.host == matching.host);
+      },
+    );
+
+    await resolver.connect();
+
+    expect(attempted, [
+      alias,
+      preferred,
+      preferred.replace(
+        port: ResolvingPinnedGatewayTransport.stableGatewayPort,
+      ),
+      preferred.replace(host: matching.host, port: matching.port),
+    ]);
+    expect(resolver.selectedGatewayUri?.host, matching.host);
+    expect(resolver.shouldPersistSelectedGatewayUri, isTrue);
+    await resolver.close();
   });
 
   test('falls back from the preferred endpoint to only a trusted discovery candidate', () async {

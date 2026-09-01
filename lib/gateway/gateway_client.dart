@@ -174,7 +174,13 @@ class ProtocolGatewayClient implements GatewayClient {
     final endpoint = transport is EndpointAwareGatewayTransport
         ? (transport as EndpointAwareGatewayTransport).selectedGatewayUri
         : null;
-    if (endpoint != null) await onValidatedEndpoint?.call(endpoint);
+    final shouldPersistEndpoint = transport is EndpointPersistenceAwareGatewayTransport
+        ? (transport as EndpointPersistenceAwareGatewayTransport)
+            .shouldPersistSelectedGatewayUri
+        : true;
+    if (endpoint != null && shouldPersistEndpoint) {
+      await onValidatedEndpoint?.call(endpoint);
+    }
     return GatewayHandshake(protocolVersion: 1, serverName: handshake.serverName, serverVersion: handshake.serverVersion, providers: providers, eventCursor: handshake.eventCursor, deviceId: handshake.device.deviceId, identityFingerprint: handshake.device.identityFingerprint, deviceDescriptor: handshake.device.descriptor);
   }
 

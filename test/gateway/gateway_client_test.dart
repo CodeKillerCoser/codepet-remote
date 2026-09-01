@@ -577,6 +577,72 @@ void main() {
     await acceptedClient.close();
   });
 
+  test('does not persist an ephemeral endpoint after handshake and subscribe', () async {
+    final endpoint = Uri.parse('wss://10.0.2.2:47622/remote/v1/gateway');
+    final endpointRefreshes = <Uri>[];
+    final transport = _FakeTransport(
+      {
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      },
+      selectedGatewayUri: endpoint,
+      shouldPersistSelectedGatewayUri: false,
+    );
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+      onValidatedEndpoint: endpointRefreshes.add,
+    );
+
+    await client.connect();
+
+    expect(
+      transport.requests.map((request) => request.method),
+      ['protocol.handshake', 'event.subscribe'],
+    );
+    expect(endpointRefreshes, isEmpty);
+    await client.close();
+  });
+
+  test('ephemeral alias cannot cross paired Host device IDs', () async {
+    final endpoint = Uri.parse('wss://10.0.2.2:47622/remote/v1/gateway');
+    final handshake = _handshakeJson();
+    final device = Map<String, dynamic>.from(handshake['device'] as Map);
+    handshake['device'] = {
+      ...device,
+      'deviceId': 'host-one',
+      'identityFingerprint': '1' * 64,
+    };
+    final transport = _FakeTransport(
+      {'protocol.handshake': handshake},
+      selectedGatewayUri: endpoint,
+      shouldPersistSelectedGatewayUri: false,
+    );
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-for-host-two',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'host-two',
+      expectedIdentityFingerprint: '1' * 64,
+    );
+
+    await expectLater(
+      client.connect(),
+      throwsA(
+        isA<GatewayConnectionException>().having(
+          (error) => error.retryable,
+          'retryable',
+          isFalse,
+        ),
+      ),
+    );
+    expect(transport.closed, isTrue);
+    await client.close();
+  });
+
   test('projects transport events into Gateway events', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _handshakeJson(),
@@ -819,11 +885,13 @@ JsonMap _turnEvent(String name, String cursor) {
 }
 
 class _FakeTransport
-    implements GatewayTransport, EndpointAwareGatewayTransport {
+    implements GatewayTransport, EndpointAwareGatewayTransport,
+        EndpointPersistenceAwareGatewayTransport {
   _FakeTransport(
     this.responses, {
     this.beforeResponse,
     this.selectedGatewayUri,
+    this.shouldPersistSelectedGatewayUri = true,
     this.connectError,
   });
 
@@ -831,6 +899,8 @@ class _FakeTransport
   final void Function(String method)? beforeResponse;
   @override
   final Uri? selectedGatewayUri;
+  @override
+  final bool shouldPersistSelectedGatewayUri;
   final Object? connectError;
   final StreamController<JsonMap> _events =
       StreamController<JsonMap>.broadcast(sync: true);
