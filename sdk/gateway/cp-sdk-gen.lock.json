@@ -1,0 +1,9 @@
+{
+  "generator": "cp-sdk-gen",
+  "generatorVersion": "0.1.0",
+  "package": "gateway",
+  "role": "client",
+  "protocolVersion": 2,
+  "protocolDigest": "sha256:278a73717579091dac8946a22dd44d34b76ce2b2b8263a03ea3f3db6d0e8094c",
+  "language": "dart"
+}

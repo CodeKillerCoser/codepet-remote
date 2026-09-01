@@ -49,6 +49,27 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.2.1"
+  codepet_core_sdk:
+    dependency: "direct main"
+    description:
+      path: "sdk/gateway/codepet-core-sdk"
+      relative: true
+    source: path
+    version: "0.1.0"
+  codepet_gateway_sdk:
+    dependency: "direct main"
+    description:
+      path: "sdk/gateway/codepet-gateway-sdk"
+      relative: true
+    source: path
+    version: "0.1.0"
+  codepet_lan_channel_sdk:
+    dependency: "direct main"
+    description:
+      path: "sdk/lan/codepet-lan-channel-sdk"
+      relative: true
+    source: path
+    version: "0.1.0"
   collection:
     dependency: transitive
     description:

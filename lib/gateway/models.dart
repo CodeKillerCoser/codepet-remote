@@ -1,6 +1,6 @@
 typedef JsonMap = Map<String, dynamic>;
 
-const gatewayProtocolVersion = 1;
+const gatewayProtocolVersion = 2;
 
 class DeviceConnection {
   const DeviceConnection({

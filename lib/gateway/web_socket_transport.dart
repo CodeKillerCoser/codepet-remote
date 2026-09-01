@@ -21,7 +21,6 @@ class WebSocketGatewayTransport implements GatewayTransport {
   final Map<String, _PendingRequest> _pending = {};
   WebSocket? _socket;
   StreamSubscription<dynamic>? _socketSubscription;
-  int _nextRequestId = 1;
 
   @override
   Stream<JsonMap> get events => _events.stream;
@@ -33,7 +32,7 @@ class WebSocketGatewayTransport implements GatewayTransport {
     }
     if (connection.gatewayUri.scheme != 'wss') {
       throw const GatewayConnectionException(
-        'v1 仅允许使用 wss:// 安全连接。',
+        'Gateway channel 仅允许使用 wss:// 安全连接。',
       );
     }
 
@@ -61,13 +60,17 @@ class WebSocketGatewayTransport implements GatewayTransport {
   }
 
   @override
-  Future<JsonMap> request(String method, JsonMap params) {
+  Future<Object?> request(Map<String, Object?> request) {
     final socket = _socket;
     if (socket == null) {
       throw const GatewayConnectionException('尚未连接 Gateway。');
     }
 
-    final requestId = 'remote-${_nextRequestId++}';
+    final requestId = request['id'];
+    final method = request['method'];
+    if (requestId is! String || requestId.isEmpty || method is! String) {
+      throw const FormatException('Generated Gateway request envelope is invalid');
+    }
     final completer = Completer<JsonMap>();
     final timeout = Timer(requestTimeout, () {
       final pending = _pending.remove(requestId);
@@ -83,14 +86,7 @@ class WebSocketGatewayTransport implements GatewayTransport {
       timeout: timeout,
     );
 
-    socket.add(
-      jsonEncode({
-        'protocolVersion': gatewayProtocolVersion,
-        'id': requestId,
-        'method': method,
-        'params': params,
-      }),
-    );
+    socket.add(jsonEncode(request));
     return completer.future;
   }
 
@@ -111,7 +107,9 @@ class WebSocketGatewayTransport implements GatewayTransport {
       }
       final message = Map<String, dynamic>.from(decoded);
 
-      if (message['event'] is String && message['eventSequence'] is int) {
+      if (message['jsonrpc'] == '2.0' &&
+          message['method'] is String &&
+          !message.containsKey('id')) {
         _events.add(message);
         return;
       }
@@ -126,34 +124,7 @@ class WebSocketGatewayTransport implements GatewayTransport {
       }
       pending.timeout.cancel();
 
-      final responseValue = message['response'];
-      if (responseValue is! Map) {
-        pending.completer.completeError(
-          const GatewayConnectionException('Gateway 响应格式无效。'),
-        );
-        return;
-      }
-      final response = Map<String, dynamic>.from(responseValue);
-      if (response['status'] == 'ok') {
-        final result = response['result'];
-        if (result is Map) {
-          pending.completer.complete(Map<String, dynamic>.from(result));
-        } else {
-          pending.completer.completeError(
-            const GatewayConnectionException('Gateway 响应缺少 result。'),
-          );
-        }
-        return;
-      }
-
-      final error = response['error'];
-      pending.completer.completeError(
-        error is Map
-            ? GatewayProtocolException.fromJson(
-                Map<String, dynamic>.from(error),
-              )
-            : const GatewayConnectionException('Gateway 请求失败。'),
-      );
+      pending.completer.complete(message);
     } catch (error, stackTrace) {
       _events.addError(error, stackTrace);
     }
@@ -206,6 +177,6 @@ class _PendingRequest {
     required this.timeout,
   });
 
-  final Completer<JsonMap> completer;
+  final Completer<Object?> completer;
   final Timer timeout;
 }

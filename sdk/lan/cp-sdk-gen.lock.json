@@ -1,0 +1,9 @@
+{
+  "generator": "cp-sdk-gen",
+  "generatorVersion": "0.1.0",
+  "package": "lan-channel",
+  "role": "models",
+  "protocolVersion": 1,
+  "protocolDigest": "sha256:d02d10142b2159e9d1e195e7c1490c720ac1b5595713deb8ca28ebacbe97367a",
+  "language": "dart"
+}

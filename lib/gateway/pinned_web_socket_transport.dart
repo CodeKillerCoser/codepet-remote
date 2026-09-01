@@ -18,10 +18,9 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   final String certSha256;
   final Duration connectTimeout;
   final StreamController<JsonMap> _events = StreamController<JsonMap>.broadcast();
-  final Map<String, Completer<JsonMap>> _pending = {};
+  final Map<String, Completer<Object?>> _pending = {};
   WebSocket? _socket;
   HttpClient? _httpClient;
-  int _nextId = 1;
   bool _closing = false;
   Future<void>? _closeFuture;
 
@@ -109,7 +108,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   }
 
   @override
-  Future<JsonMap> request(String method, JsonMap params) {
+  Future<Object?> request(Map<String, Object?> request) {
     final socket = _socket;
     if (socket == null) {
       throw const GatewayConnectionException(
@@ -117,10 +116,14 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
         retryable: true,
       );
     }
-    final id = 'remote-${_nextId++}';
-    final completer = Completer<JsonMap>();
+    final id = request['id'];
+    final method = request['method'];
+    if (id is! String || id.isEmpty || method is! String || method.isEmpty) {
+      throw const FormatException('Generated Gateway request envelope is invalid');
+    }
+    final completer = Completer<Object?>();
     _pending[id] = completer;
-    socket.add(jsonEncode({'protocolVersion': 1, 'id': id, 'method': method, 'params': params}));
+    socket.add(jsonEncode(request));
     return completer.future.timeout(const Duration(seconds: 15), onTimeout: () {
       _pending.remove(id);
       throw GatewayConnectionException(
@@ -137,22 +140,13 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
       final decoded = jsonDecode(frame);
       if (decoded is! Map) throw const FormatException('Gateway envelope must be an object');
       final json = Map<String, dynamic>.from(decoded);
-      if (json['protocolVersion'] != 1) throw const FormatException('Unexpected Gateway protocol version');
-      if (json['event'] is String) { _events.add(json); return; }
+      if (json['jsonrpc'] != '2.0') throw const FormatException('Unexpected JSON-RPC version');
+      if (json['method'] is String && !json.containsKey('id')) { _events.add(json); return; }
       final id = json['id'];
-      final method = json['method'];
-      if (id is! String || method is! String) throw const FormatException('Invalid Gateway response envelope');
+      if (id is! String) throw const FormatException('Invalid Gateway response envelope');
       final pending = _pending.remove(id);
       if (pending == null) return;
-      final response = json['response'];
-      if (response is! Map) { pending.completeError(const FormatException('Missing Gateway response')); return; }
-      final responseMap = Map<String, dynamic>.from(response);
-      if (responseMap['status'] == 'ok' && responseMap['result'] is Map) {
-        pending.complete(Map<String, dynamic>.from(responseMap['result'] as Map));
-      } else {
-        final error = responseMap['error'];
-        pending.completeError(error is Map ? GatewayProtocolException.fromJson(Map<String, dynamic>.from(error)) : const GatewayConnectionException('Gateway request failed'));
-      }
+      pending.complete(json);
     } catch (error, stack) {
       if (!_events.isClosed) _events.addError(error, stack);
     }

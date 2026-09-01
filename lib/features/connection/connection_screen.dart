@@ -127,7 +127,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '这是 Gateway v1 / QR 配对落地前的开发入口。请只连接你信任的 Host；令牌仅用于本次运行时连接。',
+                      '这是 Gateway v2 的手动通道入口。请只连接你信任的 Host；令牌仅用于本次运行时连接。',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: colorScheme.onSurfaceVariant,
                             height: 1.45,

@@ -28,7 +28,7 @@ void main() {
     await tester.tap(find.text('连接设备'));
     await tester.pumpAndSettle();
     expect(find.text('配对 CodePet Host'), findsOneWidget);
-    expect(find.text('扫描 Host 显示的 Gateway v1 配对二维码'), findsOneWidget);
+    expect(find.text('扫描 Host 显示的 LAN 配对二维码'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('开发诊断：粘贴 QR JSON'), 300);
     expect(find.text('开发诊断：粘贴 QR JSON'), findsOneWidget);
   });

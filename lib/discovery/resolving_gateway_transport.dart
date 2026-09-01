@@ -219,7 +219,7 @@ class ResolvingPinnedGatewayTransport
   }
 
   @override
-  Future<JsonMap> request(String method, JsonMap params) {
+  Future<Object?> request(Map<String, Object?> request) {
     final active = _active;
     if (active == null) {
       throw const GatewayConnectionException(
@@ -227,7 +227,7 @@ class ResolvingPinnedGatewayTransport
         retryable: true,
       );
     }
-    return active.request(method, params);
+    return active.request(request);
   }
 
   @override

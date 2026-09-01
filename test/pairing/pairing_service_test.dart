@@ -45,7 +45,7 @@ void main() {
     expect(persisted.descriptor?.deviceName, 'MacBook');
     expect(persisted.credentialKeyRef, device.credentialKeyRef);
     expect(persisted.preferredEndpoint,
-        'wss://192.168.1.10:49152/remote/v1/gateway');
+        'wss://192.168.1.10:49152/remote/v2/gateway');
     expect(persisted.autoConnect, isTrue);
     expect(metadata.values.toString(), isNot(contains('opaque-credential')));
   });
@@ -96,7 +96,7 @@ class _ExchangeClient implements PairingExchangeClient {
         },
         'identityFingerprint': 'a' * 64,
       },
-      'gatewayUrl': 'wss://192.168.1.10:49152/remote/v1/gateway',
+      'gatewayUrl': 'wss://192.168.1.10:49152/remote/v2/gateway',
       'credential': 'opaque-credential',
     };
   }

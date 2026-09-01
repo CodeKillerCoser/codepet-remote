@@ -28,6 +28,12 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  codepet_core_sdk:
+    path: sdk/gateway/codepet-core-sdk
+  codepet_gateway_sdk:
+    path: sdk/gateway/codepet-gateway-sdk
+  codepet_lan_channel_sdk:
+    path: sdk/lan/codepet-lan-channel-sdk
   crypto: ^3.0.7
   device_info_plus: ^13.2.0
   flutter:
@@ -36,6 +42,10 @@ dependencies:
   mobile_scanner: ^7.4.0
   multicast_dns: ^0.3.3+1
   shared_preferences: ^2.5.5
+
+dependency_overrides:
+  codepet_core_sdk:
+    path: sdk/gateway/codepet-core-sdk
 
 dev_dependencies:
   flutter_test:

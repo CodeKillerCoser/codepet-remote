@@ -86,12 +86,19 @@ class PairedDevice {
       endpointHints: (json['endpointHints'] as List? ?? const []).cast<String>(),
       credentialKeyRef: json['credentialKeyRef'] as String?,
       clientId: json['clientId'] as String?,
-      preferredEndpoint: json['preferredEndpoint'] as String?,
+      preferredEndpoint: _migrateGatewayEndpoint(json['preferredEndpoint'] as String?),
       autoConnect: json['autoConnect'] == true,
       connectionKind:
           DeviceConnectionKind.values.byName(json['connectionKind'] as String),
     );
   }
+}
+
+String? _migrateGatewayEndpoint(String? endpoint) {
+  if (endpoint == null) return null;
+  final uri = Uri.tryParse(endpoint);
+  if (uri == null || uri.path != '/remote/v1/gateway') return endpoint;
+  return uri.replace(path: '/remote/v2/gateway').toString();
 }
 
 abstract interface class PairingService {
@@ -102,7 +109,7 @@ class PairingUnavailableException implements Exception {
   const PairingUnavailableException();
 
   @override
-  String toString() => '正式 Gateway v1 与 QR 配对尚未落地。';
+  String toString() => 'LAN 配对服务当前不可用。';
 }
 
 class UnavailablePairingService implements PairingService {

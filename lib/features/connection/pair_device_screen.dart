@@ -6,7 +6,7 @@ import '../../pairing/pairing_service.dart';
 
 class PairDeviceScreen extends StatefulWidget {
   const PairDeviceScreen({super.key, required this.pairingService, required this.onPaired, this.onAddDemo});
-  final GatewayV1PairingService pairingService;
+  final LanAdmissionService pairingService;
   final Future<void> Function(PairedDevice device) onPaired;
   final Future<void> Function()? onAddDemo;
   @override State<PairDeviceScreen> createState() => _PairDeviceScreenState();
@@ -37,7 +37,7 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('配对 CodePet Host')),
     body: ListView(padding: const EdgeInsets.all(16), children: [
-      Text('扫描 Host 显示的 Gateway v1 配对二维码', style: Theme.of(context).textTheme.titleMedium),
+      Text('扫描 Host 显示的 LAN 配对二维码', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 12),
       AspectRatio(
         aspectRatio: 1.35,

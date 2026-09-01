@@ -41,7 +41,7 @@ void main() {
     expect(transport.requests[0].method, 'protocol.handshake');
     expect(transport.requests[0].params['device'], _clientDevice.toJson());
     expect(transport.requests[0].params, isNot(contains('clientName')));
-    expect(transport.requests[0].params['supportedVersions'], {'minVersion': 1, 'maxVersion': 1});
+    expect(transport.requests[0].params['supportedVersions'], {'minVersion': 2, 'maxVersion': 2});
     expect(transport.requests[1].method, 'event.subscribe');
     expect(transport.requests[1].params['afterCursor'], 'opaque-handshake');
     expect(transport.requests[2].method, 'conversation.list');
@@ -100,7 +100,6 @@ void main() {
 
     expect(transport.requests.last.method, 'turn.send');
     expect(transport.requests.last.params, {
-      'route': _route.toJson(),
       'conversation': conversation.wireResource,
       'clientRequestId': 'request-1',
       'capabilityRevision': 'revision-1',
@@ -457,7 +456,7 @@ void main() {
     final device = Map<String, dynamic>.from(handshake['device'] as Map);
     handshake['device'] = {
       ...device,
-      'identityFingerprint': 'f' * 64,
+      'deviceId': 'untrusted-device',
     };
     final endpoint = Uri.parse('wss://untrusted.test/remote/v1/gateway');
     final transport = _FakeTransport(
@@ -919,18 +918,38 @@ class _FakeTransport
   }
 
   @override
-  Future<JsonMap> request(String method, JsonMap params) async {
+  Future<Object?> request(Map<String, Object?> request) async {
+    final method = request['method'] as String;
+    final params = Map<String, dynamic>.from(request['params'] as Map);
     requests.add(_RequestRecord(method, params));
     beforeResponse?.call(method);
-    final response = responses[method];
+    var response = responses[method];
     if (response == null) {
       throw StateError('No response for $method');
     }
-    return response;
+    if (method == 'protocol.handshake') {
+      response = Map<String, dynamic>.from(response);
+      response['selectedVersion'] = 2;
+      final device = Map<String, dynamic>.from(response['device'] as Map);
+      device.remove('identityFingerprint');
+      response['device'] = device;
+    }
+    return {
+      'jsonrpc': '2.0',
+      'id': request['id'],
+      'result': response,
+    };
   }
 
   void emit(JsonMap event) {
-    _events.add(event);
+    _events.add({
+      'jsonrpc': '2.0',
+      'method': event['event'],
+      'params': {
+        'eventCursor': event['eventCursor'],
+        'payload': event['payload'],
+      },
+    });
   }
 
   @override
@@ -949,7 +968,7 @@ class _RequestRecord {
 
 JsonMap _handshakeJson() {
   return {
-    'selectedVersion': 1,
+    'selectedVersion': 2,
     'serverName': 'CodePet Host',
     'serverVersion': '0.1.0',
     'device': {
@@ -959,7 +978,6 @@ JsonMap _handshakeJson() {
         'operatingSystem': 'TestOS',
         'systemVersion': '1.0',
       },
-      'identityFingerprint': _fingerprint,
     },
     'devices': <Object>[],
     'providers': [

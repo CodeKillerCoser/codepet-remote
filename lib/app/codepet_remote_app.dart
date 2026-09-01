@@ -70,7 +70,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         if (await payloadFile.exists()) {
           final payload = await payloadFile.readAsString();
           await payloadFile.delete();
-          final device = await GatewayV1PairingService(registry: _registry, descriptorProvider: _descriptorProvider).pair(payload);
+          final device = await LanAdmissionService(registry: _registry, descriptorProvider: _descriptorProvider).pair(payload);
           final session = await _sessionFor(device);
           _sessions.add(session);
         }
@@ -181,7 +181,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
 
   void _openAddDevice() {
     _navigatorKey.currentState!.push<void>(MaterialPageRoute(builder: (_) => PairDeviceScreen(
-      pairingService: GatewayV1PairingService(registry: _registry, descriptorProvider: _descriptorProvider),
+      pairingService: LanAdmissionService(registry: _registry, descriptorProvider: _descriptorProvider),
       onPaired: (device) async {
         final session = await _sessionFor(device);
         final index = await replaceDeviceSession(_sessions, session);
@@ -198,7 +198,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     _navigatorKey.currentState!.push<void>(MaterialPageRoute(builder: (_) => Scaffold(
       appBar: AppBar(title: const Text('App 设置')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        const ListTile(leading: Icon(Icons.security), title: Text('Gateway v1'), subtitle: Text('设备凭据保存在 Android Keystore 支持的安全存储中；会话和事件游标不落盘。')),
+        const ListTile(leading: Icon(Icons.security), title: Text('Gateway v2'), subtitle: Text('设备凭据保存在 Android Keystore 支持的安全存储中；会话和事件游标不落盘。')),
         for (final session in _sessions.where((item) => item.device.connectionKind == DeviceConnectionKind.pairedGateway))
           ListTile(
             title: Text(session.device.effectiveName), subtitle: Text(session.device.deviceId),

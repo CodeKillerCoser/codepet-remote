@@ -4,6 +4,7 @@ import '../devices/local_device_descriptor.dart';
 import '../gateway/models.dart';
 import '../security/pinned_tls.dart';
 import 'pairing_models.dart';
+import 'package:codepet_lan_channel_sdk/codepet_lan_channel_sdk.dart' as sdk;
 
 abstract interface class PairingExchangeClient {
   Future<JsonMap> exchange({
@@ -29,8 +30,8 @@ class PinnedPairingExchangeClient implements PairingExchangeClient {
       );
 }
 
-class GatewayV1PairingService {
-  GatewayV1PairingService({
+class LanAdmissionService {
+  LanAdmissionService({
     required this.registry,
     DeviceDescriptorProvider? descriptorProvider,
     this.exchangeClient = const PinnedPairingExchangeClient(),
@@ -48,11 +49,11 @@ class GatewayV1PairingService {
     final json = await exchangeClient.exchange(
       expectedFingerprint: qr.certSha256,
       uri: qr.exchangeUrl,
-      body: {
+      body: sdk.PairingExchangeRequest.fromJson({
         'pairingSecret': qr.pairingSecret,
         'clientId': clientId,
         'device': descriptor.toJson(),
-      },
+      }).toJson(),
     );
     final response = PairingExchangeResponse.fromJson(json);
     if (response.device.deviceId != qr.hostDeviceId ||
@@ -62,7 +63,7 @@ class GatewayV1PairingService {
         ) ||
         response.gatewayUrl.host != qr.httpsBaseUrl.host ||
         response.gatewayUrl.port != qr.httpsBaseUrl.port ||
-        response.gatewayUrl.path != '/remote/v1/gateway') {
+        response.gatewayUrl.path != '/remote/v2/gateway') {
       throw const FormatException('Pairing identity or endpoint mismatch');
     }
     final credentialKey =
@@ -83,3 +84,6 @@ class GatewayV1PairingService {
     return device;
   }
 }
+
+@Deprecated('Use LanAdmissionService; pairing belongs to LAN admission, not Gateway v1')
+typedef GatewayV1PairingService = LanAdmissionService;

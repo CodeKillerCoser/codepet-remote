@@ -1,14 +1,21 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
+
 import 'models.dart';
 
-abstract interface class GatewayTransport {
+/// Channel-only contract used by the generated Gateway client.
+///
+/// Implementations move JSON-RPC envelopes and surface server notifications;
+/// they do not know Gateway methods or business DTOs.
+abstract interface class GatewayTransport implements sdk.ProtocolTransport {
   Stream<JsonMap> get events;
 
   Future<void> connect();
 
-  Future<JsonMap> request(String method, JsonMap params);
+  @override
+  Future<Object?> request(Map<String, Object?> request);
 
   Future<void> close();
 }

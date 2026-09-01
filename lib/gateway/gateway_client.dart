@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
+
 import '../discovery/resolving_gateway_transport.dart';
 import 'models.dart';
 import 'transport.dart';
@@ -90,7 +92,12 @@ class GatewayEventWindow {
 }
 
 class ProtocolGatewayClient implements GatewayClient {
-  ProtocolGatewayClient({required this.transport, required this.clientId, required this.clientDevice, required this.expectedDeviceId, required this.expectedIdentityFingerprint, this.clientVersion = '0.1.0', this.onValidatedEndpoint, this.onValidatedHostDescriptor});
+  ProtocolGatewayClient({required this.transport, required this.clientId, required this.clientDevice, required this.expectedDeviceId, required this.expectedIdentityFingerprint, this.clientVersion = '0.1.0', this.onValidatedEndpoint, this.onValidatedHostDescriptor}) {
+    _protocol = sdk.ProtocolClient(
+      transport,
+      requestIdFactory: () => 'remote-${_nextRequestId++}',
+    );
+  }
   final GatewayTransport transport;
   final String clientId;
   final DeviceDescriptor clientDevice;
@@ -99,6 +106,8 @@ class ProtocolGatewayClient implements GatewayClient {
   final String clientVersion;
   final FutureOr<void> Function(Uri endpoint)? onValidatedEndpoint;
   final FutureOr<void> Function(DeviceDescriptor descriptor)? onValidatedHostDescriptor;
+  late final sdk.ProtocolClient _protocol;
+  int _nextRequestId = 1;
   final StreamController<GatewayEvent> _events = StreamController<GatewayEvent>.broadcast(sync: true);
   StreamSubscription<JsonMap>? _transportEvents;
   String? _latestEventCursor;
@@ -116,8 +125,15 @@ class ProtocolGatewayClient implements GatewayClient {
     _providersByRoute.clear();
     _transportEvents ??= transport.events.listen((raw) {
       try {
-        final event = _eventFromV1(
-          raw,
+        final envelope = sdk.ProtocolEventEnvelope.fromJson(raw);
+        final event = _eventFromGateway(
+          {
+            'eventCursor': envelope.eventCursor,
+            'event': envelope.event.wireName,
+            'payload': Map<String, dynamic>.from(
+              (raw['params'] as Map)['payload'] as Map,
+            ),
+          },
           expectedDeviceId: expectedDeviceId,
           expectedProviderRouteKeys: _providerRouteKeys,
         );
@@ -130,17 +146,29 @@ class ProtocolGatewayClient implements GatewayClient {
       } catch (error, stack) {
         final protocolError = error is FormatException
             ? error
-            : FormatException('Invalid Gateway v1 event: $error');
+            : FormatException('Invalid Gateway v2 event: $error');
         _events.addError(protocolError, stack);
       }
     }, onError: _events.addError);
     await transport.connect();
-    final raw = await transport.request('protocol.handshake', {
-      'clientId': clientId, 'device': clientDevice.toJson(), 'clientVersion': clientVersion,
-      'supportedVersions': {'minVersion': 1, 'maxVersion': 1},
-    });
-    final handshake = V1Handshake.fromJson(raw);
-    if (handshake.selectedVersion != 1 || handshake.device.deviceId != expectedDeviceId || handshake.device.identityFingerprint != expectedIdentityFingerprint) {
+    final generatedHandshake = await _call(() => _protocol.protocolHandshake(
+      sdk.HandshakeRequest.fromJson({
+        'clientId': clientId,
+        'device': clientDevice.toJson(),
+        'clientVersion': clientVersion,
+        'supportedVersions': {
+          'minVersion': sdk.protocolVersion,
+          'maxVersion': sdk.protocolVersion,
+        },
+      }),
+    ));
+    final handshakeJson = Map<String, dynamic>.from(generatedHandshake.toJson());
+    handshakeJson['device'] = {
+      ...Map<String, dynamic>.from(handshakeJson['device'] as Map),
+      'identityFingerprint': expectedIdentityFingerprint,
+    };
+    final handshake = V1Handshake.fromJson(handshakeJson);
+    if (handshake.selectedVersion != sdk.protocolVersion || handshake.device.deviceId != expectedDeviceId) {
       await transport.close();
       throw const GatewayConnectionException(
         'Gateway identity mismatch',
@@ -162,8 +190,10 @@ class ProtocolGatewayClient implements GatewayClient {
     );
     await onValidatedHostDescriptor?.call(handshake.device.descriptor);
     _seenEventCursors.add(handshake.eventCursor);
-    final subscription = await transport.request('event.subscribe', {'afterCursor': handshake.eventCursor});
-    if (subscription['subscribedAfterCursor'] != handshake.eventCursor) {
+    final subscription = await _call(() => _protocol.eventSubscribe(
+      sdk.EventSubscribeRequest(afterCursor: handshake.eventCursor),
+    ));
+    if (subscription.subscribedAfterCursor != handshake.eventCursor) {
       await transport.close();
       throw const GatewayConnectionException(
         'Gateway subscription cursor mismatch',
@@ -181,17 +211,20 @@ class ProtocolGatewayClient implements GatewayClient {
     if (endpoint != null && shouldPersistEndpoint) {
       await onValidatedEndpoint?.call(endpoint);
     }
-    return GatewayHandshake(protocolVersion: 1, serverName: handshake.serverName, serverVersion: handshake.serverVersion, providers: providers, eventCursor: handshake.eventCursor, deviceId: handshake.device.deviceId, identityFingerprint: handshake.device.identityFingerprint, deviceDescriptor: handshake.device.descriptor);
+    return GatewayHandshake(protocolVersion: sdk.protocolVersion, serverName: handshake.serverName, serverVersion: handshake.serverVersion, providers: providers, eventCursor: handshake.eventCursor, deviceId: handshake.device.deviceId, identityFingerprint: expectedIdentityFingerprint, deviceDescriptor: handshake.device.descriptor);
   }
 
   @override
   Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) async {
     _validateProviderRequest(route, cursor: cursor, limit: limit);
-    final result = await transport.request('conversation.list', {
-      'route': route.toJson(),
-      'cursor': ?cursor,
-      'limit': limit,
-    });
+    final generated = await _call(() => _protocol.conversationList(
+      sdk.ConversationListRequest.fromJson({
+        'route': route.toJson(),
+        'cursor': ?cursor,
+        'limit': limit,
+      }),
+    ));
+    final result = Map<String, dynamic>.from(generated.toJson());
     return _conversationPageFromResult(
       result,
       method: 'conversation.list',
@@ -205,12 +238,15 @@ class ProtocolGatewayClient implements GatewayClient {
       throw ArgumentError.value(searchTerm, 'searchTerm', 'must not be empty');
     }
     _validateProviderRequest(route, cursor: cursor, limit: limit);
-    final result = await transport.request('conversation.search', {
-      'route': route.toJson(),
-      'searchTerm': searchTerm,
-      'cursor': ?cursor,
-      'limit': limit,
-    });
+    final generated = await _call(() => _protocol.conversationSearch(
+      sdk.ConversationSearchRequest.fromJson({
+        'route': route.toJson(),
+        'searchTerm': searchTerm,
+        'cursor': ?cursor,
+        'limit': limit,
+      }),
+    ));
+    final result = Map<String, dynamic>.from(generated.toJson());
     return _conversationPageFromResult(
       result,
       method: 'conversation.search',
@@ -287,7 +323,10 @@ class ProtocolGatewayClient implements GatewayClient {
   Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async {
     final resource = conversation.wireResource;
     if (resource == null) throw const FormatException('Conversation has no v1 routed identity');
-    final result = await transport.request('conversation.get', {'conversation': resource});
+    final generated = await _call(() => _protocol.conversationGet(
+      sdk.ConversationGetRequest.fromJson({'conversation': resource}),
+    ));
+    final result = Map<String, dynamic>.from(generated.toJson());
     const resultFields = {'conversation', 'items', 'snapshotCursor'};
     final actualResultFields = result.keys.toSet();
     if (actualResultFields.difference(resultFields).isNotEmpty ||
@@ -385,14 +424,16 @@ class ProtocolGatewayClient implements GatewayClient {
         'Conversation route does not match turn.send Provider route',
       );
     }
-    final result = await transport.request('turn.send', {
-      'route': route.toJson(),
+    final generated = await _call(() => _protocol.turnSend(
+      sdk.TurnSendRequest.fromJson({
       'conversation': resourceJson,
       'clientRequestId': clientRequestId,
       'capabilityRevision': capabilityRevision,
       'input': {'kind': 'text', 'text': text},
       'selection': selection.toJson(),
-    });
+      }),
+    ));
+    final result = Map<String, dynamic>.from(generated.toJson());
     final response = V1TurnSendResponse.fromJson(result);
     final userItem = response.userItem;
     if (!response.accepted ||
@@ -427,9 +468,27 @@ class ProtocolGatewayClient implements GatewayClient {
     await transport.close();
     await _events.close();
   }
+
+  Future<T> _call<T>(Future<T> Function() operation) async {
+    try {
+      return await operation();
+    } on sdk.ProtocolRemoteException catch (error) {
+      final data = error.error.data;
+      throw GatewayProtocolException(
+        code: data?['code'] is String
+            ? data!['code'] as String
+            : 'gateway_rpc_${error.error.code}',
+        message: error.error.message,
+        retryable: data?['retryable'] == true,
+        details: data,
+      );
+    } on sdk.ProtocolCodecException catch (error) {
+      throw FormatException(error.toString());
+    }
+  }
 }
 
-GatewayEvent _eventFromV1(
+GatewayEvent _eventFromGateway(
   JsonMap json, {
   required String expectedDeviceId,
   required Set<String> expectedProviderRouteKeys,
@@ -437,7 +496,7 @@ GatewayEvent _eventFromV1(
   final cursor = json['eventCursor'];
   final event = json['event'];
   final payload = json['payload'];
-  if (cursor is! String || cursor.isEmpty || event is! String || payload is! Map) throw const FormatException('Invalid Gateway v1 event envelope');
+  if (cursor is! String || cursor.isEmpty || event is! String || payload is! Map) throw const FormatException('Invalid Gateway v2 event envelope');
   final data = Map<String, dynamic>.from(payload);
   if (event == 'provider.statusChanged') {
     const allowedFields = {'provider', 'previousStatus'};
