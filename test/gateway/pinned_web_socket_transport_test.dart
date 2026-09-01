@@ -11,6 +11,7 @@ void main() {
       credential: 'opaque',
       certSha256: '0' * 64,
     );
+    expect(transport.connectTimeout, const Duration(seconds: 8));
 
     await expectLater(
       transport.connect(),

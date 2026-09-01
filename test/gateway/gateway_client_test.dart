@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:codepet_remote/discovery/resolving_gateway_transport.dart';
 import 'package:codepet_remote/gateway/gateway_client.dart';
 import 'package:codepet_remote/gateway/models.dart';
 import 'package:codepet_remote/gateway/transport.dart';
@@ -458,10 +459,13 @@ void main() {
       ...device,
       'identityFingerprint': 'f' * 64,
     };
-    final transport = _FakeTransport({
-      'protocol.handshake': handshake,
-    });
+    final endpoint = Uri.parse('wss://untrusted.test/remote/v1/gateway');
+    final transport = _FakeTransport(
+      {'protocol.handshake': handshake},
+      selectedGatewayUri: endpoint,
+    );
     var descriptorRefreshes = 0;
+    final endpointRefreshes = <Uri>[];
     final client = ProtocolGatewayClient(
       transport: transport,
       clientId: 'client-test',
@@ -471,6 +475,7 @@ void main() {
       onValidatedHostDescriptor: (_) {
         descriptorRefreshes++;
       },
+      onValidatedEndpoint: endpointRefreshes.add,
     );
 
     await expectLater(
@@ -484,8 +489,92 @@ void main() {
       ),
     );
     expect(descriptorRefreshes, 0);
+    expect(endpointRefreshes, isEmpty);
     expect(transport.closed, isTrue);
     await client.close();
+  });
+
+  test('does not persist an endpoint after certificate rejection', () async {
+    final endpointRefreshes = <Uri>[];
+    final transport = _FakeTransport(
+      const {},
+      selectedGatewayUri: Uri.parse(
+        'wss://wrong-certificate.test/remote/v1/gateway',
+      ),
+      connectError: const HandshakeException('certificate pin mismatch'),
+    );
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+      onValidatedEndpoint: endpointRefreshes.add,
+    );
+
+    await expectLater(client.connect(), throwsA(isA<HandshakeException>()));
+
+    expect(endpointRefreshes, isEmpty);
+    await client.close();
+  });
+
+  test('persists an endpoint only after handshake and subscribe succeed', () async {
+    final endpoint = Uri.parse('wss://validated.test/remote/v1/gateway');
+    final rejectedRefreshes = <Uri>[];
+    final rejectedTransport = _FakeTransport(
+      {
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'wrong-cursor'},
+      },
+      selectedGatewayUri: endpoint,
+    );
+    final rejectedClient = ProtocolGatewayClient(
+      transport: rejectedTransport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+      onValidatedEndpoint: rejectedRefreshes.add,
+    );
+
+    await expectLater(
+      rejectedClient.connect(),
+      throwsA(isA<GatewayConnectionException>()),
+    );
+    expect(rejectedRefreshes, isEmpty);
+    await rejectedClient.close();
+
+    late _FakeTransport acceptedTransport;
+    final requestsAtRefresh = <List<String>>[];
+    acceptedTransport = _FakeTransport(
+      {
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      },
+      selectedGatewayUri: endpoint,
+    );
+    final acceptedClient = ProtocolGatewayClient(
+      transport: acceptedTransport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+      onValidatedEndpoint: (validated) {
+        expect(validated, endpoint);
+        requestsAtRefresh.add(
+          acceptedTransport.requests
+              .map((request) => request.method)
+              .toList(growable: false),
+        );
+      },
+    );
+
+    await acceptedClient.connect();
+
+    expect(requestsAtRefresh, [
+      ['protocol.handshake', 'event.subscribe'],
+    ]);
+    await acceptedClient.close();
   });
 
   test('projects transport events into Gateway events', () async {
@@ -729,11 +818,20 @@ JsonMap _turnEvent(String name, String cursor) {
   };
 }
 
-class _FakeTransport implements GatewayTransport {
-  _FakeTransport(this.responses, {this.beforeResponse});
+class _FakeTransport
+    implements GatewayTransport, EndpointAwareGatewayTransport {
+  _FakeTransport(
+    this.responses, {
+    this.beforeResponse,
+    this.selectedGatewayUri,
+    this.connectError,
+  });
 
   final Map<String, JsonMap> responses;
   final void Function(String method)? beforeResponse;
+  @override
+  final Uri? selectedGatewayUri;
+  final Object? connectError;
   final StreamController<JsonMap> _events =
       StreamController<JsonMap>.broadcast(sync: true);
   final List<_RequestRecord> requests = [];
@@ -745,6 +843,8 @@ class _FakeTransport implements GatewayTransport {
 
   @override
   Future<void> connect() async {
+    final error = connectError;
+    if (error != null) throw error;
     connected = true;
   }
 

@@ -46,7 +46,7 @@ void main() {
   test('serializes endpoint updates across devices and skips no-op writes', () async {
     final metadata = _Metadata();
     final registry = DeviceRegistry(metadata: metadata, credentials: _Credentials());
-    const first = PairedDevice(deviceId: 'one', displayName: 'One', preferredEndpoint: 'wss://old-one/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
+    const first = PairedDevice(deviceId: 'one', displayName: 'One', tlsFingerprint: 'pin-one', endpointHints: ['https://old-one:443'], credentialKeyRef: 'secure:one', clientId: 'client-one', preferredEndpoint: 'wss://old-one/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
     const second = PairedDevice(deviceId: 'two', displayName: 'Two', preferredEndpoint: 'wss://old-two/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
     await registry.save([first, second]);
     await Future.wait([
@@ -55,6 +55,10 @@ void main() {
     ]);
     final devices = await registry.load();
     expect(devices.map((device) => device.preferredEndpoint), ['wss://new-one/gateway', 'wss://new-two/gateway']);
+    expect(devices.first.endpointHints, ['https://old-one:443']);
+    expect(devices.first.tlsFingerprint, 'pin-one');
+    expect(devices.first.credentialKeyRef, 'secure:one');
+    expect(devices.first.clientId, 'client-one');
     final writes = metadata.writeCount;
     await registry.updatePreferredEndpoint('one', 'wss://new-one/gateway');
     expect(metadata.writeCount, writes);

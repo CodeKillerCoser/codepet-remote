@@ -12,26 +12,38 @@ abstract interface class EndpointAwareGatewayTransport {
 class ResolvingPinnedGatewayTransport
     implements GatewayTransport, EndpointAwareGatewayTransport {
   static const stableGatewayPort = 47622;
+  static const defaultConnectTimeout = Duration(seconds: 8);
 
   ResolvingPinnedGatewayTransport({
     required this.deviceId,
     required this.preferredGatewayUri,
     required this.credential,
     required this.certSha256,
+    this.connectTimeout = defaultConnectTimeout,
     CodePetDiscovery? discovery,
     GatewayTransport Function(Uri gatewayUri, String credential, String certSha256)? transportFactory,
   })  : discovery = discovery ?? CodePetDiscovery(),
-        transportFactory = transportFactory ?? _pinnedTransport;
+        transportFactory = transportFactory ??
+            ((gatewayUri, credential, certSha256) => _pinnedTransport(
+                  gatewayUri,
+                  credential,
+                  certSha256,
+                  connectTimeout,
+                ));
 
   final String deviceId;
   final Uri preferredGatewayUri;
   final String credential;
   final String certSha256;
+  final Duration connectTimeout;
   final CodePetDiscovery discovery;
   final GatewayTransport Function(Uri gatewayUri, String credential, String certSha256) transportFactory;
   final StreamController<JsonMap> _events = StreamController<JsonMap>.broadcast();
   GatewayTransport? _active;
+  GatewayTransport? _connectingCandidate;
   StreamSubscription<JsonMap>? _activeEvents;
+  Future<void>? _closeFuture;
+  bool _closed = false;
 
   @override
   Uri? selectedGatewayUri;
@@ -41,6 +53,7 @@ class ResolvingPinnedGatewayTransport
 
   @override
   Future<void> connect() async {
+    _throwIfClosed();
     final attempted = <Uri>{preferredGatewayUri};
     Object? preferredError;
     try {
@@ -49,6 +62,7 @@ class ResolvingPinnedGatewayTransport
     } catch (error) {
       preferredError = error;
     }
+    _throwIfClosed();
     Object? stableError;
     final stableCandidate = preferredGatewayUri.replace(
       port: stableGatewayPort,
@@ -61,9 +75,11 @@ class ResolvingPinnedGatewayTransport
         stableError = error;
       }
     }
+    _throwIfClosed();
     Object? discoveryError;
     try {
       await for (final host in discovery.discover()) {
+        _throwIfClosed();
         if (!isTrustedDiscoveryCandidate(host, deviceId)) continue;
         final candidate = preferredGatewayUri.replace(host: host.host, port: host.port);
         if (!attempted.add(candidate)) continue;
@@ -75,6 +91,7 @@ class ResolvingPinnedGatewayTransport
         }
       }
     } catch (error) {
+      if (_closed) rethrow;
       discoveryError = error;
     }
     throw GatewayConnectionException(
@@ -88,25 +105,67 @@ class ResolvingPinnedGatewayTransport
   }
 
   Future<void> _tryCandidate(Uri gatewayUri) async {
+    _throwIfClosed();
     if (gatewayUri.scheme != 'wss') {
       throw const GatewayConnectionException('Resolved Gateway URI must use wss');
     }
     final transport = transportFactory(gatewayUri, credential, certSha256);
+    _connectingCandidate = transport;
     try {
-      await transport.connect();
+      await transport.connect().timeout(
+        connectTimeout,
+        onTimeout: () => throw GatewayConnectionException(
+          'Gateway candidate ${gatewayUri.host}:${gatewayUri.port} connect '
+          'timed out after ${connectTimeout.inMilliseconds}ms',
+          retryable: true,
+        ),
+      );
+      if (_closed || !identical(_connectingCandidate, transport)) {
+        throw const GatewayConnectionException(
+          'Gateway resolver closed while connecting',
+          retryable: true,
+        );
+      }
       final subscription = transport.events.listen(
         _events.add,
         onError: _events.addError,
       );
+      _connectingCandidate = null;
       _active = transport;
       _activeEvents = subscription;
       selectedGatewayUri = gatewayUri;
+    } on TimeoutException {
+      if (identical(_connectingCandidate, transport)) {
+        _connectingCandidate = null;
+        await _closeTransport(transport);
+      }
+      throw GatewayConnectionException(
+        'Gateway candidate ${gatewayUri.host}:${gatewayUri.port} connect '
+        'timed out after ${connectTimeout.inMilliseconds}ms',
+        retryable: true,
+      );
     } catch (_) {
-      try {
-        await transport.close();
-      } catch (_) {}
+      if (identical(_connectingCandidate, transport)) {
+        _connectingCandidate = null;
+        await _closeTransport(transport);
+      }
       rethrow;
     }
+  }
+
+  void _throwIfClosed() {
+    if (_closed) {
+      throw const GatewayConnectionException(
+        'Gateway resolver is closed',
+        retryable: true,
+      );
+    }
+  }
+
+  Future<void> _closeTransport(GatewayTransport transport) async {
+    try {
+      await transport.close().timeout(connectTimeout);
+    } catch (_) {}
   }
 
   @override
@@ -122,12 +181,23 @@ class ResolvingPinnedGatewayTransport
   }
 
   @override
-  Future<void> close() async {
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
+    _closed = true;
+    final connectingCandidate = _connectingCandidate;
+    _connectingCandidate = null;
+    final active = _active;
+    _active = null;
     await _activeEvents?.cancel();
     _activeEvents = null;
-    await _active?.close();
-    _active = null;
-    await _events.close();
+    if (connectingCandidate != null) {
+      await _closeTransport(connectingCandidate);
+    }
+    if (active != null && !identical(active, connectingCandidate)) {
+      await _closeTransport(active);
+    }
+    if (!_events.isClosed) await _events.close();
   }
 }
 
@@ -135,10 +205,12 @@ GatewayTransport _pinnedTransport(
   Uri gatewayUri,
   String credential,
   String certSha256,
+  Duration connectTimeout,
 ) => PinnedWebSocketGatewayTransport(
       gatewayUri: gatewayUri,
       credential: credential,
       certSha256: certSha256,
+      connectTimeout: connectTimeout,
     );
 
 bool isTrustedDiscoveryCandidate(

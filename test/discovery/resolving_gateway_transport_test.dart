@@ -146,6 +146,153 @@ void main() {
     expect(credentials, ['same-opaque-credential', 'same-opaque-credential']);
     await resolver.close();
   });
+
+  test('times out and closes a stale preferred endpoint before mDNS', () async {
+    final preferred = Uri.parse(
+      'wss://192.168.0.105:47622/remote/v1/gateway',
+    );
+    final matching = DiscoveredCodePetHost(
+      instanceName: 'Replacement._codepet._tcp.local.',
+      host: '192.168.0.106',
+      port: 47622,
+      txt: valid,
+    );
+    final attempted = <Uri>[];
+    _FakeCandidateTransport? stale;
+    var staleClosedBeforeMdns = false;
+    final resolver = ResolvingPinnedGatewayTransport(
+      deviceId: trustedId,
+      preferredGatewayUri: preferred,
+      credential: 'opaque',
+      certSha256: '0' * 64,
+      connectTimeout: const Duration(milliseconds: 10),
+      discovery: _FakeDiscovery([matching]),
+      transportFactory: (uri, credential, certSha256) {
+        attempted.add(uri);
+        if (uri == preferred) {
+          final transport = _FakeCandidateTransport(
+            succeeds: false,
+            connectFuture: Completer<void>().future,
+          );
+          stale = transport;
+          return transport;
+        }
+        staleClosedBeforeMdns = stale?.closed ?? false;
+        return _FakeCandidateTransport(succeeds: true);
+      },
+    );
+
+    await resolver.connect().timeout(const Duration(seconds: 1));
+
+    expect(attempted, [
+      preferred,
+      preferred.replace(host: matching.host, port: matching.port),
+    ]);
+    expect(stale?.closed, isTrue);
+    expect(staleClosedBeforeMdns, isTrue);
+    expect(resolver.selectedGatewayUri, attempted.last);
+    await resolver.close();
+  });
+
+  test('times out the first mDNS candidate before trying the second', () async {
+    final preferred = Uri.parse(
+      'wss://192.168.0.105:47622/remote/v1/gateway',
+    );
+    final first = DiscoveredCodePetHost(
+      instanceName: 'First._codepet._tcp.local.',
+      host: '192.168.0.106',
+      port: 47622,
+      txt: valid,
+    );
+    final second = DiscoveredCodePetHost(
+      instanceName: 'Second._codepet._tcp.local.',
+      host: '192.168.0.107',
+      port: 47622,
+      txt: valid,
+    );
+    final attempted = <Uri>[];
+    _FakeCandidateTransport? firstMdns;
+    var firstClosedBeforeSecond = false;
+    final resolver = ResolvingPinnedGatewayTransport(
+      deviceId: trustedId,
+      preferredGatewayUri: preferred,
+      credential: 'opaque',
+      certSha256: '0' * 64,
+      connectTimeout: const Duration(milliseconds: 10),
+      discovery: _FakeDiscovery([first, second]),
+      transportFactory: (uri, credential, certSha256) {
+        attempted.add(uri);
+        if (uri == preferred) {
+          return _FakeCandidateTransport(succeeds: false);
+        }
+        if (uri.host == first.host) {
+          final transport = _FakeCandidateTransport(
+            succeeds: false,
+            connectFuture: Completer<void>().future,
+          );
+          firstMdns = transport;
+          return transport;
+        }
+        firstClosedBeforeSecond = firstMdns?.closed ?? false;
+        return _FakeCandidateTransport(succeeds: true);
+      },
+    );
+
+    await resolver.connect().timeout(const Duration(seconds: 1));
+
+    expect(attempted.map((uri) => uri.host), [
+      preferred.host,
+      first.host,
+      second.host,
+    ]);
+    expect(firstMdns?.closed, isTrue);
+    expect(firstClosedBeforeSecond, isTrue);
+    expect(resolver.selectedGatewayUri?.host, second.host);
+    await resolver.close();
+  });
+
+  test('all candidate timeouts fail retryably within a finite bound', () async {
+    final preferred = Uri.parse(
+      'wss://192.168.0.105:1111/remote/v1/gateway',
+    );
+    final matching = DiscoveredCodePetHost(
+      instanceName: 'Replacement._codepet._tcp.local.',
+      host: '192.168.0.106',
+      port: 47622,
+      txt: valid,
+    );
+    final candidates = <_FakeCandidateTransport>[];
+    final resolver = ResolvingPinnedGatewayTransport(
+      deviceId: trustedId,
+      preferredGatewayUri: preferred,
+      credential: 'opaque',
+      certSha256: '0' * 64,
+      connectTimeout: const Duration(milliseconds: 10),
+      discovery: _FakeDiscovery([matching]),
+      transportFactory: (uri, credential, certSha256) {
+        final candidate = _FakeCandidateTransport(
+          succeeds: false,
+          connectFuture: Completer<void>().future,
+        );
+        candidates.add(candidate);
+        return candidate;
+      },
+    );
+
+    await expectLater(
+      resolver.connect().timeout(const Duration(seconds: 1)),
+      throwsA(
+        isA<GatewayConnectionException>()
+            .having((error) => error.retryable, 'retryable', isTrue)
+            .having((error) => error.message, 'message', contains('timed out')),
+      ),
+    );
+
+    expect(candidates, hasLength(3));
+    expect(candidates.every((candidate) => candidate.closed), isTrue);
+    expect(resolver.selectedGatewayUri, isNull);
+    await resolver.close();
+  });
 }
 
 class _FakeDiscovery extends CodePetDiscovery {
@@ -160,14 +307,29 @@ class _FakeDiscovery extends CodePetDiscovery {
 }
 
 class _FakeCandidateTransport implements GatewayTransport {
-  _FakeCandidateTransport({required this.succeeds, this.error});
+  _FakeCandidateTransport({
+    required this.succeeds,
+    this.error,
+    this.connectFuture,
+  });
   final bool succeeds;
   final Object? error;
+  final Future<void>? connectFuture;
   final StreamController<JsonMap> controller = StreamController<JsonMap>.broadcast();
+  bool closed = false;
   @override Stream<JsonMap> get events => controller.stream;
   @override Future<void> connect() async {
+    final pending = connectFuture;
+    if (pending != null) {
+      await pending;
+      return;
+    }
     if (!succeeds) throw error ?? StateError('unreachable');
   }
   @override Future<JsonMap> request(String method, JsonMap params) => throw UnimplementedError();
-  @override Future<void> close() => controller.close();
+  @override
+  Future<void> close() async {
+    closed = true;
+    if (!controller.isClosed) await controller.close();
+  }
 }

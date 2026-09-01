@@ -503,6 +503,32 @@ void main() {
     session.dispose();
   });
 
+  test('bounded candidate failure leaves connecting and exposes retry state', () async {
+    final client = _ControlledConnectClient();
+    final session = DeviceSession(
+      device: _device('bounded-connect-failure'),
+      clientFactory: () => client,
+      autoReconnect: false,
+    );
+
+    final attempt = session.connect();
+    expect(session.connectionState, DeviceConnectionState.connecting);
+    await client.connectStarted.future;
+    client.connectResult.completeError(
+      const GatewayConnectionException(
+        'all Gateway candidates timed out',
+        retryable: true,
+      ),
+    );
+
+    await attempt.timeout(const Duration(seconds: 1));
+
+    expect(session.connectionState, DeviceConnectionState.failed);
+    expect(session.error, contains('timed out'));
+    expect(client.closeCalled, isTrue);
+    session.dispose();
+  });
+
   test('failed connect automatically retries with a fresh client', () async {
     final failed = _FailingClient();
     final successful = _FakeClient([
@@ -924,6 +950,18 @@ class _FailingClient implements GatewayClient {
   @override Future<void> close() async {
     closeCalled = true;
     throw StateError('close also failed');
+  }
+}
+
+class _ControlledConnectClient extends _FailingClient {
+  final Completer<void> connectStarted = Completer<void>();
+  final Completer<GatewayHandshake> connectResult =
+      Completer<GatewayHandshake>();
+
+  @override
+  Future<GatewayHandshake> connect() {
+    if (!connectStarted.isCompleted) connectStarted.complete();
+    return connectResult.future;
   }
 }
 

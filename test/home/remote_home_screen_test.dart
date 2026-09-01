@@ -9,6 +9,46 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('failed state leaves loading and allows a manual reconnect', (tester) async {
+    _useTallSurface(tester);
+    var clientBuilds = 0;
+    final session = DeviceSession(
+      device: const PairedDevice(
+        deviceId: 'bounded-retry',
+        displayName: 'Bounded retry',
+        connectionKind: DeviceConnectionKind.demo,
+      ),
+      clientFactory: () {
+        clientBuilds++;
+        return _EventClient();
+      },
+      autoReconnect: false,
+    );
+    session.connectionState = DeviceConnectionState.failed;
+    session.error = 'all Gateway candidates timed out';
+
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    expect(clientBuilds, 0);
+    expect(session.connectionState, DeviceConnectionState.failed);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text('设备连接失败'), findsOneWidget);
+    final reconnect = find.widgetWithText(TextButton, '重新连接').first;
+    expect(tester.widget<TextButton>(reconnect).onPressed, isNotNull);
+
+    await tester.tap(reconnect);
+    await tester.pump();
+    await tester.pump();
+
+    expect(clientBuilds, 1);
+    expect(session.connectionState, DeviceConnectionState.online);
+    expect(find.text('设备连接失败'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
   testWidgets('collapses and expands project and recent sections', (tester) async {
     _useTallSurface(tester);
     final session = _loadedSession(

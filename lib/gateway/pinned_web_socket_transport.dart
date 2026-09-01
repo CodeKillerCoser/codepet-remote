@@ -7,16 +7,23 @@ import 'models.dart';
 import 'transport.dart';
 
 class PinnedWebSocketGatewayTransport implements GatewayTransport {
-  PinnedWebSocketGatewayTransport({required this.gatewayUri, required this.credential, required this.certSha256});
+  PinnedWebSocketGatewayTransport({
+    required this.gatewayUri,
+    required this.credential,
+    required this.certSha256,
+    this.connectTimeout = const Duration(seconds: 8),
+  });
   final Uri gatewayUri;
   final String credential;
   final String certSha256;
+  final Duration connectTimeout;
   final StreamController<JsonMap> _events = StreamController<JsonMap>.broadcast();
   final Map<String, Completer<JsonMap>> _pending = {};
   WebSocket? _socket;
   HttpClient? _httpClient;
   int _nextId = 1;
   bool _closing = false;
+  Future<void>? _closeFuture;
 
   @override Stream<JsonMap> get events => _events.stream;
 
@@ -27,18 +34,78 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
         'Gateway WebSocket URI must use wss',
       );
     }
-    _closing = false;
+    if (_closing || _events.isClosed) {
+      throw const GatewayConnectionException(
+        'Gateway transport is closed',
+        retryable: true,
+      );
+    }
     final context = SecurityContext(withTrustedRoots: false);
     final client = HttpClient(context: context);
+    client.connectionTimeout = connectTimeout;
     client.badCertificateCallback = (certificate, host, port) => constantTimeEquals(certificateSha256(certificate), certSha256);
     _httpClient = client;
-    final socket = await WebSocket.connect(
+    final connection = WebSocket.connect(
       gatewayUri.toString(),
       headers: {'Authorization': 'Bearer $credential'},
       customClient: client,
     );
-    _socket = socket;
-    socket.listen(_handleFrame, onError: _handleError, onDone: _handleDone);
+    try {
+      final socket = await connection.timeout(
+        connectTimeout,
+        onTimeout: () {
+          if (identical(_httpClient, client)) _httpClient = null;
+          client.close(force: true);
+          unawaited(_closeLateSocket(connection));
+          throw GatewayConnectionException(
+            'Gateway WebSocket connect timed out after '
+            '${connectTimeout.inMilliseconds}ms',
+            retryable: true,
+          );
+        },
+      );
+      if (_closing || !identical(_httpClient, client)) {
+        client.close(force: true);
+        await _closeSocket(socket);
+        throw const GatewayConnectionException(
+          'Gateway connection closed while connecting',
+          retryable: true,
+        );
+      }
+      _socket = socket;
+      socket.listen(_handleFrame, onError: _handleError, onDone: _handleDone);
+    } on TimeoutException {
+      if (identical(_httpClient, client)) _httpClient = null;
+      client.close(force: true);
+      throw GatewayConnectionException(
+        'Gateway WebSocket connect timed out after '
+        '${connectTimeout.inMilliseconds}ms',
+        retryable: true,
+      );
+    } on SocketException catch (error) {
+      if (identical(_httpClient, client)) _httpClient = null;
+      client.close(force: true);
+      throw GatewayConnectionException(
+        'Gateway WebSocket connection failed: ${error.message}',
+        retryable: true,
+      );
+    } catch (_) {
+      if (identical(_httpClient, client)) _httpClient = null;
+      client.close(force: true);
+      rethrow;
+    }
+  }
+
+  Future<void> _closeLateSocket(Future<WebSocket> connection) async {
+    try {
+      await _closeSocket(await connection);
+    } catch (_) {}
+  }
+
+  Future<void> _closeSocket(WebSocket socket) async {
+    try {
+      await socket.close().timeout(connectTimeout);
+    } catch (_) {}
   }
 
   @override
@@ -86,10 +153,15 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
         final error = responseMap['error'];
         pending.completeError(error is Map ? GatewayProtocolException.fromJson(Map<String, dynamic>.from(error)) : const GatewayConnectionException('Gateway request failed'));
       }
-    } catch (error, stack) { _events.addError(error, stack); }
+    } catch (error, stack) {
+      if (!_events.isClosed) _events.addError(error, stack);
+    }
   }
 
-  void _handleError(Object error, StackTrace stack) { _fail(error); _events.addError(error, stack); }
+  void _handleError(Object error, StackTrace stack) {
+    _fail(error);
+    if (!_closing && !_events.isClosed) _events.addError(error, stack);
+  }
   void _handleDone() {
     final closeCode = _socket?.closeCode;
     _socket = null;
@@ -104,18 +176,22 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   void _fail(Object error) { final pending = _pending.values.toList(); _pending.clear(); for (final item in pending) { if (!item.isCompleted) item.completeError(error); } }
 
   @override
-  Future<void> close() async {
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     _closing = true;
     _fail(const GatewayConnectionException(
       'Gateway connection closed',
       retryable: false,
       outcomeUnknown: true,
     ));
-    await _socket?.close();
-    _socket = null;
-    _httpClient?.close(force: true);
+    final client = _httpClient;
     _httpClient = null;
-    await _events.close();
+    client?.close(force: true);
+    final socket = _socket;
+    _socket = null;
+    if (socket != null) await _closeSocket(socket);
+    if (!_events.isClosed) await _events.close();
   }
 }
 
