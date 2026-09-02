@@ -41,7 +41,10 @@ void main() {
     expect(handshake.providers.single.id, 'codex-work');
     expect(handshake.providers.single.route, _route);
     expect(handshake.providers.single.displayName, 'Codex');
-    expect(handshake.providers.single.icon, 'codex');
+    expect(
+      handshake.providers.single.icon,
+      'https://cdn.example.com/codex.png',
+    );
     expect(transport.requests[0].method, 'protocol.handshake');
     expect(transport.requests[0].params['device'], _clientDevice.toJson());
     expect(transport.requests[0].params, isNot(contains('clientName')));
@@ -111,6 +114,18 @@ void main() {
       DateTime.fromMillisecondsSinceEpoch(2000, isUtc: true),
     );
     await client.close();
+  });
+
+  test('generated Gateway SDK rejects non-HTTPS Provider icons', () {
+    final provider = Map<String, dynamic>.from(
+      (_handshakeJson()['providers'] as List).single as Map,
+    );
+    provider['icon'] = 'codex';
+
+    expect(
+      () => sdk.ProviderInstance.fromJson(provider),
+      throwsA(isA<sdk.ProtocolCodecException>()),
+    );
   });
 
   test('sends original text with route, revision and flat selection', () async {
@@ -1093,7 +1108,7 @@ JsonMap _handshakeJson() {
         'route': {'deviceId': 'device-test', 'providerPluginId': 'dev.codepet.codex', 'providerInstanceId': 'codex-work'},
         'pluginId': 'dev.codepet.codex',
         'displayName': 'Codex',
-        'icon': 'codex',
+        'icon': 'https://cdn.example.com/codex.png',
         'harness': {
           'id': 'codex',
           'displayName': 'Codex',
