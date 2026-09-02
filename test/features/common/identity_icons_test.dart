@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:codepet_remote/features/common/identity_icons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,6 +37,20 @@ void main() {
 
     expect(find.byType(Image), findsOneWidget);
     expect(find.byIcon(Icons.terminal), findsNothing);
+  });
+
+  testWidgets('delegates production HTTPS loading to the cache library',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: ProviderIcon(
+          icon: 'https://cdn.example.com/codex.png',
+          providerIdentity: 'dev.codepet.codex',
+        ),
+      ),
+    );
+
+    expect(find.byType(CachedNetworkImage), findsOneWidget);
   });
 
   testWidgets('falls back when an HTTPS provider icon cannot be decoded',

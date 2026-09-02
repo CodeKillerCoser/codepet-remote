@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 IconData providerIconData(String value) {
@@ -40,7 +41,7 @@ class ProviderIcon extends StatelessWidget {
   final String? semanticLabel;
 
   /// Allows deterministic image decoding in widget tests. Production callers
-  /// should leave this unset so HTTPS icons use [NetworkImage].
+  /// leave this unset so [CachedNetworkImage] owns downloading and caching.
   final ImageProvider<Object>? imageProvider;
 
   @override
@@ -56,15 +57,35 @@ class ProviderIcon extends StatelessWidget {
       semanticLabel: semanticLabel,
     );
     if (uri == null) return fallback;
+    if (imageProvider != null) {
+      return SizedBox.square(
+        dimension: size,
+        child: Image(
+          image: imageProvider!,
+          width: size,
+          height: size,
+          fit: BoxFit.contain,
+          semanticLabel: semanticLabel,
+          errorBuilder: (_, _, _) => fallback,
+        ),
+      );
+    }
     return SizedBox.square(
       dimension: size,
-      child: Image(
-        image: imageProvider ?? NetworkImage(uri.toString()),
+      child: CachedNetworkImage(
+        imageUrl: uri.toString(),
         width: size,
         height: size,
         fit: BoxFit.contain,
-        semanticLabel: semanticLabel,
-        errorBuilder: (_, _, _) => fallback,
+        imageBuilder: (_, provider) => Image(
+          image: provider,
+          width: size,
+          height: size,
+          fit: BoxFit.contain,
+          semanticLabel: semanticLabel,
+        ),
+        placeholder: (_, _) => const SizedBox.shrink(),
+        errorWidget: (_, _, _) => fallback,
       ),
     );
   }
