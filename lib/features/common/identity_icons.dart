@@ -84,7 +84,7 @@ class ProviderIcon extends StatelessWidget {
           fit: BoxFit.contain,
           semanticLabel: semanticLabel,
         ),
-        placeholder: (_, _) => const SizedBox.shrink(),
+        placeholder: (_, _) => fallback,
         errorWidget: (_, _, _) => fallback,
       ),
     );

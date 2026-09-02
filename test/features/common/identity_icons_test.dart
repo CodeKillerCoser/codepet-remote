@@ -51,6 +51,7 @@ void main() {
     );
 
     expect(find.byType(CachedNetworkImage), findsOneWidget);
+    expect(find.byIcon(Icons.terminal), findsOneWidget);
   });
 
   testWidgets('falls back when an HTTPS provider icon cannot be decoded',
