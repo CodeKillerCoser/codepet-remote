@@ -811,20 +811,21 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         widget.session.providerForConversation(
           _detail?.summary ?? widget.conversation,
         );
-    final providerIdentity = provider == null
-        ? widget.conversation.providerId
-        : provider.icon ?? provider.providerType;
+    final providerIdentity = provider?.providerType ??
+        widget.conversation.providerId;
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
     return Scaffold(
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: Row(
           children: [
-            Icon(
-              providerIconData(providerIdentity),
+            ProviderIcon(
               key: const Key('conversation-provider-icon'),
+              icon: provider?.icon,
+              providerIdentity: providerIdentity,
               size: 22,
               color: Theme.of(context).colorScheme.primary,
+              semanticLabel: provider?.displayName ?? 'Provider',
             ),
             const SizedBox(width: 10),
             Expanded(

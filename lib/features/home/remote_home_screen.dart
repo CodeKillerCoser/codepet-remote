@@ -661,12 +661,14 @@ class _ProviderIdentity extends StatelessWidget {
       showCheckmark: false,
       onSelected: (_) => onSelected(provider),
       visualDensity: VisualDensity.compact,
-      avatar: Icon(
-        providerIconData(provider.icon ?? provider.providerType),
+      avatar: ProviderIcon(
+        icon: provider.icon,
+        providerIdentity: provider.providerType,
         size: 17,
         color: ready
             ? Theme.of(context).colorScheme.primary
             : Theme.of(context).colorScheme.outline,
+        semanticLabel: '${provider.displayName} Provider',
       ),
       label: Text(provider.displayName),
       side: BorderSide(

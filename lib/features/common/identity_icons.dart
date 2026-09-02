@@ -8,6 +8,68 @@ IconData providerIconData(String value) {
   return Icons.extension_outlined;
 }
 
+Uri? providerIconUri(String? value) {
+  final normalized = value?.trim();
+  if (normalized == null || normalized.isEmpty) return null;
+  final uri = Uri.tryParse(normalized);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      !uri.hasAuthority ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
+    return null;
+  }
+  return uri;
+}
+
+class ProviderIcon extends StatelessWidget {
+  const ProviderIcon({
+    super.key,
+    required this.icon,
+    required this.providerIdentity,
+    this.size = 24,
+    this.color,
+    this.semanticLabel,
+    this.imageProvider,
+  });
+
+  final String? icon;
+  final String providerIdentity;
+  final double size;
+  final Color? color;
+  final String? semanticLabel;
+
+  /// Allows deterministic image decoding in widget tests. Production callers
+  /// should leave this unset so HTTPS icons use [NetworkImage].
+  final ImageProvider<Object>? imageProvider;
+
+  @override
+  Widget build(BuildContext context) {
+    final uri = providerIconUri(icon);
+    final fallbackIdentity = uri == null && icon?.trim().isNotEmpty == true
+        ? icon!
+        : providerIdentity;
+    final fallback = Icon(
+      providerIconData(fallbackIdentity),
+      size: size,
+      color: color,
+      semanticLabel: semanticLabel,
+    );
+    if (uri == null) return fallback;
+    return SizedBox.square(
+      dimension: size,
+      child: Image(
+        image: imageProvider ?? NetworkImage(uri.toString()),
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        semanticLabel: semanticLabel,
+        errorBuilder: (_, _, _) => fallback,
+      ),
+    );
+  }
+}
+
 IconData operatingSystemIconData(String value) {
   final normalized = value.toLowerCase();
   if (normalized.contains('mac') || normalized.contains('darwin')) {
