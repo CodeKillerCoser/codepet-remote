@@ -357,6 +357,10 @@ class DeviceSession extends ChangeNotifier {
     required GatewayProvider provider,
     String? title,
     String? workspaceRoot,
+    String? permissionLevel,
+    String? model,
+    String? reasoningEffort,
+    String? workspaceMode,
   }) async {
     final lease = runtimeLease;
     if (lease == null ||
@@ -364,14 +368,18 @@ class DeviceSession extends ChangeNotifier {
         !provider.methods.contains('conversation.create')) {
       throw StateError('当前 Provider 不支持新建会话');
     }
-    final capabilities = provider.capabilities.turnSend;
+    final createCapabilities = provider.capabilities.conversationCreate;
+    final capabilities = createCapabilities?.selection ??
+        provider.capabilities.turnSend;
     final accessMode = capabilities?.accessMode;
-    final permissionLevel = accessMode?.defaultId ??
+    final effectivePermissionLevel = permissionLevel ??
+        accessMode?.defaultId ??
         (accessMode?.availableOptions.isNotEmpty == true
             ? accessMode!.availableOptions.first.id
             : PermissionLevel.workspaceWrite);
     final reasoning = capabilities?.reasoningEffort;
-    final reasoningEffort = reasoning?.defaultId ??
+    final effectiveReasoningEffort = reasoningEffort ??
+        reasoning?.defaultId ??
         (reasoning?.availableOptions.isNotEmpty == true
             ? reasoning!.availableOptions.first.id
             : null);
@@ -380,16 +388,23 @@ class DeviceSession extends ChangeNotifier {
         (modelCatalog?.availableSelections.isNotEmpty == true
             ? modelCatalog!.availableSelections.first
             : null);
-    final model = modelCatalog?.modelFor(modelSelection)?.id;
+    final effectiveModel = model ?? modelCatalog?.modelFor(modelSelection)?.id;
+    final workspaceModes = createCapabilities?.workspaceMode;
+    final effectiveWorkspaceMode = workspaceMode ??
+        workspaceModes?.defaultId ??
+        (workspaceModes?.availableOptions.isNotEmpty == true
+            ? workspaceModes!.availableOptions.first.id
+            : null);
     final conversation = await lease.client.createConversation(
       route: provider.route,
       title: title?.trim().isEmpty == true ? null : title?.trim(),
-      permissionLevel: permissionLevel,
-      model: model,
-      reasoningEffort: reasoningEffort,
+      permissionLevel: effectivePermissionLevel,
+      model: effectiveModel,
+      reasoningEffort: effectiveReasoningEffort,
       workspaceRoot: workspaceRoot?.trim().isEmpty == true
           ? null
           : workspaceRoot?.trim(),
+      workspaceMode: effectiveWorkspaceMode,
     );
     if (!ownsRuntimeLease(lease)) {
       throw StateError('连接已变化，请重新新建会话');

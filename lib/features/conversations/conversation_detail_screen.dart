@@ -14,6 +14,7 @@ import 'widgets/conversation_timeline_view.dart';
 
 const int _messagePageSize = 40;
 const double _nearBottomThreshold = 160;
+const Duration _interactionAcquireInterval = Duration(seconds: 10);
 const String _unknownOutcomeMessage =
     '上次发送结果未知。请先刷新会话核对；确认后再次发送会创建新请求，仍可能产生重复任务。';
 const ConversationTimelineProjector _timelineProjector =
@@ -39,6 +40,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   final GlobalKey _messagesCenterKey = GlobalKey();
   final TextEditingController _draftController = TextEditingController();
   GatewayEventWindow? _eventWindow;
+  Timer? _interactionTimer;
   final Set<String> _appliedCursors = {};
   final Set<String> _refreshingTurns = {};
   DeviceSessionRuntimeLease? _observedLease;
@@ -50,12 +52,16 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   bool _followPendingDetailFrame = false;
   String? _error;
   String? _sendError;
+  String? _interactionError;
   String? _accessModeId;
   String? _reasoningEffortId;
   ModelSelection? _modelSelection;
   _PendingTurnSend? _pendingSend;
   int _runtimeEpoch = 0;
   bool _sending = false;
+  bool _interactionAcquired = false;
+  bool _interactionRequestInFlight = false;
+  bool _selectionInitializedFromInteraction = false;
   bool _outcomeUnknown = false;
   bool _staleCapabilities = false;
   bool _refreshingTerminal = false;
@@ -94,6 +100,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   void dispose() {
     widget.session.removeListener(_sessionChanged);
     _runtimeEpoch++;
+    _interactionTimer?.cancel();
     _cancelPendingDetailFrame();
     unawaited(_eventWindow?.close());
     _draftController.removeListener(_draftChanged);
@@ -143,6 +150,8 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
 
   Future<void> _bindRuntime() async {
     final epoch = ++_runtimeEpoch;
+    _interactionTimer?.cancel();
+    _interactionTimer = null;
     _cancelPendingDetailFrame();
     final previousBinding = _binding;
     final previousWindow = _eventWindow;
@@ -170,10 +179,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         _replaceDetail(null);
         _error = null;
         _sendError = preserveUnknown ? _unknownOutcomeMessage : null;
+        _interactionError = null;
         _accessModeId = null;
         _reasoningEffortId = null;
         _modelSelection = null;
         _sending = false;
+        _interactionAcquired = false;
+        _interactionRequestInFlight = false;
+        _selectionInitializedFromInteraction = false;
         _outcomeUnknown = preserveUnknown;
         if (!preserveUnknown) {
           _pendingSend = null;
@@ -194,6 +207,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       }
       return;
     }
+    if (provider.methods.contains('turn.send')) {
+      _startInteractionLoop(
+        lease: lease,
+        binding: binding,
+        conversation: conversation,
+        epoch: epoch,
+      );
+    }
     await _loadSnapshot(
       lease: lease,
       binding: binding,
@@ -201,6 +222,75 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       epoch: epoch,
       initializeSelection: true,
     );
+  }
+
+  void _startInteractionLoop({
+    required DeviceSessionRuntimeLease lease,
+    required _CapabilityBinding binding,
+    required ConversationSummary conversation,
+    required int epoch,
+  }) {
+    unawaited(_acquireInteraction(
+      lease: lease,
+      binding: binding,
+      conversation: conversation,
+      epoch: epoch,
+    ));
+    _interactionTimer = Timer.periodic(_interactionAcquireInterval, (_) {
+      unawaited(_acquireInteraction(
+        lease: lease,
+        binding: binding,
+        conversation: conversation,
+        epoch: epoch,
+      ));
+    });
+  }
+
+  Future<void> _acquireInteraction({
+    required DeviceSessionRuntimeLease lease,
+    required _CapabilityBinding binding,
+    required ConversationSummary conversation,
+    required int epoch,
+  }) async {
+    if (_interactionRequestInFlight ||
+        !_acceptsRuntime(epoch, lease, binding)) {
+      return;
+    }
+    _interactionRequestInFlight = true;
+    try {
+      final interaction = await lease.client.acquireInteraction(conversation);
+      if (!_acceptsRuntime(epoch, lease, binding)) return;
+      setState(() {
+        _interactionAcquired = true;
+        _interactionError = null;
+        if (!_selectionInitializedFromInteraction &&
+            _hasSelection(interaction.selection)) {
+          _initializeSelectionFrom(interaction.selection);
+          _selectionInitializedFromInteraction = true;
+        }
+      });
+    } catch (error) {
+      if (!_acceptsRuntime(epoch, lease, binding)) return;
+      setState(() {
+        _interactionAcquired = false;
+        _interactionError = _interactionFailureMessage(error);
+      });
+    } finally {
+      if (epoch == _runtimeEpoch) _interactionRequestInFlight = false;
+    }
+  }
+
+  bool _hasSelection(TurnSendSelection selection) =>
+      selection.accessModeId != null ||
+      selection.reasoningEffortId != null ||
+      selection.model != null;
+
+  String _interactionFailureMessage(Object error) {
+    if (error is GatewayProtocolException &&
+        error.code == 'conversation_write_conflict') {
+      return '该会话正在被另一个客户端写入，暂时无法继续对话。';
+    }
+    return '无法获取会话交互权：$error';
   }
 
   Future<void> _loadSnapshot({
@@ -246,7 +336,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       setState(() {
         _replaceDetail(detail);
         _provider = widget.session.providerForConversation(conversation);
-        if (initializeSelection) _initializeSelection(detail.summary);
+        if (initializeSelection && !_selectionInitializedFromInteraction) {
+          _initializeSelection(detail.summary);
+        }
         final timelineLength = _timeline.length;
         if (previous == null) {
           _hiddenMessageCount = timelineLength > _messagePageSize
@@ -345,8 +437,11 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   }
 
   void _initializeSelection(ConversationSummary summary) {
+    _initializeSelectionFrom(summary.turnSendSelection);
+  }
+
+  void _initializeSelectionFrom(TurnSendSelection? current) {
     final capabilities = _provider?.capabilities.turnSend;
-    final current = summary.turnSendSelection;
     _accessModeId = _initialChoice(
       capabilities?.accessMode,
       current?.accessModeId,
@@ -487,6 +582,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         provider.status == ProviderStatus.ready &&
         provider.methods.contains('turn.send') &&
         provider.capabilities.turnSend != null &&
+        _interactionAcquired &&
         !_staleCapabilities &&
         !_sending &&
         !_outcomeUnknown &&
@@ -500,6 +596,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       _detail != null &&
       _provider?.status == ProviderStatus.ready &&
       _provider?.methods.contains('turn.send') == true &&
+      _interactionAcquired &&
       !_staleCapabilities &&
       !_sending &&
       !_refreshingTerminal &&
@@ -986,6 +1083,16 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                     ],
                   ),
               ],
+              if (_interactionError != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _interactionError!,
+                  key: const Key('interaction-error'),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                ),
+              ],
               const SizedBox(height: 6),
               Row(
                 key: const Key('composer-toolbar'),
@@ -1079,6 +1186,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     if (status == ConversationStatus.archived) return '已归档会话不能继续';
     if (_provider?.methods.contains('turn.send') != true) {
       return '当前 Provider 不支持继续对话';
+    }
+    if (!_interactionAcquired) {
+      return _interactionError == null ? '正在获取会话交互权' : '暂时无法继续对话';
     }
     if (!_selectionValid) return '请先选择可用的发送选项';
     return '继续对话';

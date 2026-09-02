@@ -25,12 +25,49 @@ void main() {
     expect(find.byIcon(Icons.search), findsOneWidget);
 
     await tester.tap(
-      find.byKey(const Key('open-project-actions\u0000/dynamic')),
+      find.byKey(const Key('project-actions\u0000/dynamic')),
     );
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('project-search')), findsOneWidget);
     expect(find.byKey(const Key('project-new')), findsOneWidget);
+  });
+
+  testWidgets('new conversation exposes provider-declared create options',
+      (tester) async {
+    _useTallSurface(tester);
+    final client = _PagedClient(
+      ({required cursor, required limit}) async => const ConversationPage(
+        conversations: [],
+        snapshotCursor: 'handshake',
+      ),
+    );
+    final session = _sessionForClient('create-options', client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    await tester.tap(find.byKey(const Key('home-new')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('new-conversation-title')), findsNothing);
+    expect(
+      find.byKey(const Key('new-conversation-workspace-mode')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('new-conversation-access-mode')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('new-conversation-reasoning-effort')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('new-conversation-model')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
   });
 
   testWidgets('shows Provider identity from the Host handshake', (tester) async {
@@ -179,29 +216,6 @@ void main() {
 
     const firstProjectKey = 'pages\u0000/project-0';
     await tester.tap(find.byKey(const Key('project-$firstProjectKey')));
-    await tester.pump();
-    expect(
-      find.byKey(const Key(
-        'project-conversation-pages\u0000/project-0-test\u0000p0-8',
-      )),
-      findsNothing,
-    );
-    await tester.tap(find.byKey(const Key(
-      'show-more-project-conversations-$firstProjectKey',
-    )));
-    await tester.pump();
-    expect(
-      find.byKey(const Key(
-        'project-conversation-pages\u0000/project-0-test\u0000p0-8',
-      )),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(Key('show-more-project-conversations-$firstProjectKey')),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byKey(const Key('open-project-$firstProjectKey')));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('project-screen-conversation-test\u0000p0-8')),
@@ -433,12 +447,11 @@ void main() {
       MaterialApp(home: _HomeHarness(sessions: [session])),
     );
     const projectKey = 'empty-project-page\u0000/target';
-    final showMore = find.byKey(
-      const Key('show-more-project-conversations-$projectKey'),
-    );
-
     await tester.tap(find.byKey(const Key('project-$projectKey')));
-    await tester.pump();
+    await tester.pumpAndSettle();
+    final showMore = find.byKey(
+      const Key('show-more-project-screen-conversations'),
+    );
     await tester.tap(showMore);
     await tester.pumpAndSettle();
 
@@ -446,7 +459,7 @@ void main() {
     expect(showMore, findsOneWidget);
     expect(
       find.byKey(const Key(
-        'project-conversation-$projectKey-test\u0000target-8',
+        'project-screen-conversation-test\u0000target-8',
       )),
       findsNothing,
     );
@@ -457,7 +470,7 @@ void main() {
     expect(client.cursors, [null, 'target-2', 'target-3']);
     expect(
       find.byKey(const Key(
-        'project-conversation-$projectKey-test\u0000target-8',
+        'project-screen-conversation-test\u0000target-8',
       )),
       findsOneWidget,
     );
@@ -506,7 +519,7 @@ void main() {
     );
     const projectKey = 'project-screen-network\u0000/screen';
 
-    await tester.tap(find.byKey(const Key('open-project-$projectKey')));
+    await tester.tap(find.byKey(const Key('project-$projectKey')));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('project-screen-conversation-test\u0000screen-8')),
@@ -684,21 +697,13 @@ void main() {
     await tester.tap(
       find.byKey(const Key('project-sorting\u0000/new')),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(
       tester.getTopLeft(find.byKey(const Key(
-        'project-conversation-sorting\u0000/new-test\u0000newest-in-new',
+        'project-screen-conversation-test\u0000newest-in-new',
       ))).dy,
       lessThan(tester.getTopLeft(find.byKey(const Key(
-        'project-conversation-sorting\u0000/new-test\u0000older-in-new',
-      ))).dy),
-    );
-    expect(
-      tester.getTopLeft(find.byKey(const Key(
-        'recent-conversation-sorting-test\u0000newest-in-new',
-      ))).dy,
-      lessThan(tester.getTopLeft(find.byKey(const Key(
-        'recent-conversation-sorting-test\u0000older-in-new',
+        'project-screen-conversation-test\u0000older-in-new',
       ))).dy),
     );
 
@@ -870,7 +875,8 @@ class _EventClient implements GatewayClient {
   @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
   @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: 'handshake');
-  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw UnimplementedError();
+  @override Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async => const ConversationInteraction(selection: TurnSendSelection());
+  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
   @override Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
   @override Future<void> close() => controller.close();
 }
@@ -929,7 +935,11 @@ class _PagedClient implements GatewayClient {
       );
 
   @override
-  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw UnimplementedError();
+  Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async =>
+      const ConversationInteraction(selection: TurnSendSelection());
+
+  @override
+  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
 
   @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
@@ -953,6 +963,36 @@ const _homeListProvider = GatewayProvider(
   harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
   capabilities: GatewayCapabilities(
     revision: 'test-1',
-    methods: ['conversation.list', 'conversation.get'],
+    methods: [
+      'conversation.list',
+      'conversation.get',
+      'conversation.create',
+    ],
+    conversationCreate: ConversationCreateCapabilities(
+      supportsTitle: false,
+      selection: TurnSendCapabilities(
+        accessMode: ProviderChoiceSet(
+          options: [
+            ProviderChoice(id: 'workspace-write', displayName: 'Workspace write'),
+          ],
+          defaultId: 'workspace-write',
+        ),
+        reasoningEffort: ProviderChoiceSet(
+          options: [ProviderChoice(id: 'high', displayName: 'High')],
+          defaultId: 'high',
+        ),
+        modelCatalog: FlatModelCatalog(
+          models: [ProviderChoice(id: 'gpt-test', displayName: 'GPT Test')],
+          defaultSelection: FlatModelSelection(modelId: 'gpt-test'),
+        ),
+      ),
+      workspaceMode: ProviderChoiceSet(
+        options: [
+          ProviderChoice(id: 'main', displayName: 'Main workspace'),
+          ProviderChoice(id: 'worktree', displayName: 'Worktree'),
+        ],
+        defaultId: 'main',
+      ),
+    ),
   ),
 );

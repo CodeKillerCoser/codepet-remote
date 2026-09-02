@@ -523,6 +523,114 @@ void main() {
     await client.close();
   });
 
+  testWidgets('enables interaction only after acquire and uses resumed selection',
+      (tester) async {
+    final acquired = Completer<ConversationInteraction>();
+    final provider = _providerWith(
+      revision: 'revision-acquire',
+      turnSend: const TurnSendCapabilities(
+        accessMode: ProviderChoiceSet(
+          options: [
+            ProviderChoice(id: 'read', displayName: 'Read only'),
+            ProviderChoice(id: 'write', displayName: 'Workspace write'),
+          ],
+          defaultId: 'read',
+        ),
+        reasoningEffort: ProviderChoiceSet(
+          options: [
+            ProviderChoice(id: 'low', displayName: 'Low'),
+            ProviderChoice(id: 'high', displayName: 'High'),
+          ],
+          defaultId: 'low',
+        ),
+        modelCatalog: FlatModelCatalog(
+          models: [
+            ProviderChoice(id: 'fast', displayName: 'Fast'),
+            ProviderChoice(id: 'deep', displayName: 'Deep'),
+          ],
+          defaultSelection: FlatModelSelection(modelId: 'fast'),
+        ),
+      ),
+    );
+    final client = _DetailClient(
+      provider: provider,
+      onAcquire: (_) => acquired.future,
+    );
+    await _pumpDetail(
+      tester,
+      client,
+      conversation: _idleConversation(
+        selection: const TurnSendSelection(
+          accessModeId: 'read',
+          reasoningEffortId: 'low',
+          model: FlatModelSelection(modelId: 'fast'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(client.acquireCalls, 1);
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
+      isFalse,
+    );
+    expect(find.text('正在获取会话交互权'), findsOneWidget);
+
+    acquired.complete(const ConversationInteraction(
+      selection: TurnSendSelection(
+        accessModeId: 'write',
+        reasoningEffortId: 'high',
+        model: FlatModelSelection(modelId: 'deep'),
+      ),
+    ));
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
+      isTrue,
+    );
+    expect(find.text('访问 · Workspace write'), findsOneWidget);
+    expect(find.text('推理 · High'), findsOneWidget);
+    expect(find.text('模型 · Deep'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('keeps sending disabled when Codex interaction is owned elsewhere',
+      (tester) async {
+    final client = _DetailClient(
+      onAcquire: (_) => Future.error(const GatewayProtocolException(
+        code: 'conversation_write_conflict',
+        message: 'writer conflict',
+        retryable: true,
+      )),
+    );
+    await _pumpDetail(
+      tester,
+      client,
+      conversation: _idleConversation(),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('interaction-error')), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(const Key('interaction-error'))).data,
+      '该会话正在被另一个客户端写入，暂时无法继续对话。',
+    );
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
+      isFalse,
+    );
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('turn-send'))).onPressed,
+      isNull,
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('raises the composer above the software keyboard', (tester) async {
     final client = _DetailClient();
     await _pumpDetail(
@@ -1169,17 +1277,20 @@ class _DetailClient implements GatewayClient {
     this.committedMessages = const [],
     this.eventDuringFirstGet,
     this.provider = _detailProvider,
+    this.onAcquire,
     this.onSend,
   });
 
   final List<GatewayMessage> committedMessages;
   final GatewayEvent? eventDuringFirstGet;
   GatewayProvider provider;
+  final Future<ConversationInteraction> Function(ConversationSummary conversation)? onAcquire;
   final Future<TurnSendReceipt> Function(_SendCall call)? onSend;
   final StreamController<GatewayEvent> eventsController = StreamController<GatewayEvent>.broadcast(sync: true);
   final List<_SendCall> sendCalls = [];
   String _cursor = 'H';
   int getCalls = 0;
+  int acquireCalls = 0;
 
   @override Stream<GatewayEvent> get events => eventsController.stream;
   @override String? get latestEventCursor => _cursor;
@@ -1196,7 +1307,17 @@ class _DetailClient implements GatewayClient {
   @override Future<GatewayHandshake> connect() async => GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: [provider], eventCursor: _cursor);
   @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
-  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw UnimplementedError();
+  @override
+  Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) {
+    acquireCalls++;
+    final handler = onAcquire;
+    return handler == null
+        ? Future.value(ConversationInteraction(
+            selection: conversation.turnSendSelection ?? const TurnSendSelection(),
+          ))
+        : handler(conversation);
+  }
+  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
   @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) {
     final call = _SendCall(

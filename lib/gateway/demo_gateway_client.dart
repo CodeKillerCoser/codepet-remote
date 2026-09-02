@@ -274,8 +274,17 @@ class DemoGatewayClient implements GatewayClient {
         ...?_sentHistory[conversation.id],
       ],
       lastEventCursor: _cursor),
-    );
+      );
   }
+
+  @override
+  Future<ConversationInteraction> acquireInteraction(
+    ConversationSummary conversation,
+  ) async =>
+      ConversationInteraction(
+        selection: conversation.turnSendSelection ??
+            const TurnSendSelection(),
+      );
 
   @override
   Future<ConversationSummary> createConversation({
@@ -285,6 +294,7 @@ class DemoGatewayClient implements GatewayClient {
     String? model,
     String? reasoningEffort,
     String? workspaceRoot,
+    String? workspaceMode,
   }) async {
     if (route != _route) {
       throw const FormatException('Unknown demo Provider route');

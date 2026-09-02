@@ -70,6 +70,49 @@ void main() {
     expect(conversation.permissionLevel, 'opencode-default');
   });
 
+  test('acquires interaction through the generated method and maps its lease',
+      () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'conversation.acquireInteraction': {
+        'selection': {
+          'accessModeId': 'workspace-write',
+          'reasoningEffortId': 'high',
+          'model': {'kind': 'flat', 'modelId': 'model-a'},
+        },
+        'leaseExpiresAt': 2000,
+      },
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+
+    final interaction = await client.acquireInteraction(_domainConversation());
+
+    expect(transport.requests.last.method, 'conversation.acquireInteraction');
+    expect(
+      transport.requests.last.params['conversation'],
+      _domainConversation().wireResource,
+    );
+    expect(interaction.selection.accessModeId, 'workspace-write');
+    expect(interaction.selection.reasoningEffortId, 'high');
+    expect(interaction.selection.model?.toJson(), {
+      'kind': 'flat',
+      'modelId': 'model-a',
+    });
+    expect(
+      interaction.leaseExpiresAt,
+      DateTime.fromMillisecondsSinceEpoch(2000, isUtc: true),
+    );
+    await client.close();
+  });
+
   test('sends original text with route, revision and flat selection', () async {
     final handshakeJson = _handshakeJson();
     final provider = (handshakeJson['providers'] as List).single
@@ -193,6 +236,7 @@ void main() {
       model: 'model-a',
       reasoningEffort: 'high',
       workspaceRoot: '/workspace/project',
+      workspaceMode: 'worktree',
     );
 
     expect(conversation.title, 'Test conversation');
@@ -205,6 +249,7 @@ void main() {
         'model': 'model-a',
         'reasoningEffort': 'high',
         'workspaceRoot': '/workspace/project',
+        'workspaceMode': 'worktree',
       },
     );
     await client.close();

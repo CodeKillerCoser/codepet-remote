@@ -326,6 +326,33 @@ final class ProtocolGatewayClient implements GatewayClient {
   }
 
   @override
+  Future<ConversationInteraction> acquireInteraction(
+    ConversationSummary conversation,
+  ) async {
+    final resourceJson = conversation.wireResource;
+    if (resourceJson == null) {
+      throw const FormatException('Conversation has no routed identity');
+    }
+    final requested = _mapper.sdkResource(resourceJson);
+    final response = await _call(
+      () => _protocol.conversationAcquireInteraction(
+        sdk.ConversationAcquireInteractionRequest(conversation: requested),
+      ),
+    );
+    return ConversationInteraction(
+      selection: TurnSendSelection.fromJson(
+        Map<String, dynamic>.from(response.selection.toJson()),
+      ),
+      leaseExpiresAt: response.leaseExpiresAt == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(
+              response.leaseExpiresAt!,
+              isUtc: true,
+            ),
+    );
+  }
+
+  @override
   Future<ConversationSummary> createConversation({
     required GatewayProviderRoute route,
     String? title,
@@ -333,6 +360,7 @@ final class ProtocolGatewayClient implements GatewayClient {
     String? model,
     String? reasoningEffort,
     String? workspaceRoot,
+    String? workspaceMode,
   }) async {
     _validateProviderRequest(route, cursor: null, limit: 1);
     final provider = _providersByRoute[route.key];
@@ -352,6 +380,7 @@ final class ProtocolGatewayClient implements GatewayClient {
           model: model,
           reasoningEffort: reasoningEffort,
           workspaceRoot: workspaceRoot,
+          workspaceMode: workspaceMode,
         ),
       ),
     );

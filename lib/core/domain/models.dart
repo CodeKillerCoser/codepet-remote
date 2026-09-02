@@ -602,6 +602,16 @@ class TurnSendSelection {
       };
 }
 
+class ConversationInteraction {
+  const ConversationInteraction({
+    required this.selection,
+    this.leaseExpiresAt,
+  });
+
+  final TurnSendSelection selection;
+  final DateTime? leaseExpiresAt;
+}
+
 class TurnSendCapabilities {
   const TurnSendCapabilities({
     this.accessMode,
@@ -646,18 +656,55 @@ class TurnSendCapabilities {
           : modelCatalog!.accepts(selection.model));
 }
 
+class ConversationCreateCapabilities {
+  const ConversationCreateCapabilities({
+    required this.supportsTitle,
+    this.selection,
+    this.workspaceMode,
+  });
+
+  factory ConversationCreateCapabilities.fromJson(JsonMap json) {
+    _validateJsonFields(
+      json,
+      required: const {'supportsTitle'},
+      optional: const {'selection', 'workspaceMode'},
+      name: 'Conversation create capabilities',
+    );
+    final supportsTitle = json['supportsTitle'];
+    if (supportsTitle is! bool) {
+      throw const FormatException(
+        'Conversation create supportsTitle must be a boolean',
+      );
+    }
+    return ConversationCreateCapabilities(
+      supportsTitle: supportsTitle,
+      selection: json['selection'] == null
+          ? null
+          : TurnSendCapabilities.fromJson(_requiredMap(json, 'selection')),
+      workspaceMode: json['workspaceMode'] == null
+          ? null
+          : ProviderChoiceSet.fromJson(_requiredMap(json, 'workspaceMode')),
+    );
+  }
+
+  final bool supportsTitle;
+  final TurnSendCapabilities? selection;
+  final ProviderChoiceSet? workspaceMode;
+}
+
 class GatewayCapabilities {
   const GatewayCapabilities({
     required this.revision,
     required this.methods,
     this.turnSend,
+    this.conversationCreate,
   });
 
   factory GatewayCapabilities.fromJson(JsonMap json) {
     _validateJsonFields(
       json,
       required: const {'revision', 'methods'},
-      optional: const {'turnSend'},
+      optional: const {'turnSend', 'conversationCreate'},
       name: 'Gateway capabilities',
     );
     final methods = _stringList(json, 'methods');
@@ -668,12 +715,18 @@ class GatewayCapabilities {
       turnSend: json['turnSend'] == null
           ? null
           : TurnSendCapabilities.fromJson(_requiredMap(json, 'turnSend')),
+      conversationCreate: json['conversationCreate'] == null
+          ? null
+          : ConversationCreateCapabilities.fromJson(
+              _requiredMap(json, 'conversationCreate'),
+            ),
     );
   }
 
   final String revision;
   final List<String> methods;
   final TurnSendCapabilities? turnSend;
+  final ConversationCreateCapabilities? conversationCreate;
 }
 
 class GatewayProvider {

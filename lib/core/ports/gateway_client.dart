@@ -23,6 +23,9 @@ abstract interface class GatewayClient {
   Future<ConversationSnapshot> getConversation(
     ConversationSummary conversation,
   );
+  Future<ConversationInteraction> acquireInteraction(
+    ConversationSummary conversation,
+  );
   Future<ConversationSummary> createConversation({
     required GatewayProviderRoute route,
     String? title,
@@ -30,6 +33,7 @@ abstract interface class GatewayClient {
     String? model,
     String? reasoningEffort,
     String? workspaceRoot,
+    String? workspaceMode,
   });
   Future<TurnSendReceipt> sendTurn({
     required GatewayProviderRoute route,

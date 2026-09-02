@@ -432,7 +432,11 @@ class _SearchClient implements GatewayClient {
   }
 
   @override
-  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw UnimplementedError();
+  Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async =>
+      const ConversationInteraction(selection: TurnSendSelection());
+
+  @override
+  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
 
   @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();

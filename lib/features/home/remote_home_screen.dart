@@ -121,8 +121,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
         : _deviceViewStates.putIfAbsent(
             '${session.device.deviceId}\u0000${selectedProvider?.route.key ?? 'no-provider'}',
             _DeviceHomeViewState.new,
-          )
-      ?..retainProjects(projects.map((project) => project.key));
+          );
     return Scaffold(
       appBar: AppBar(
         title: const Text('CodePet Remote'),
@@ -283,35 +282,13 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
           .where((part) => part.isNotEmpty)
           .toList(growable: false);
       final name = pathParts.isEmpty ? project.workspaceRoot : pathParts.last;
-      final expanded = viewState.expandedProjects[project.key] ?? false;
-      final conversationPages =
-          viewState.projectConversationPages[project.key] ?? 1;
       return Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: _ProjectCard(
             key: Key('project-card-${project.key}'),
-            session: session,
             project: project,
             projectName: name,
-            expanded: expanded,
-            conversationPages: conversationPages,
-            onToggle: () => setState(() {
-              viewState.expandedProjects[project.key] = !expanded;
-            }),
             canLoadMore: session.canLoadMoreSelectedProviderConversations,
-            isLoadingMore: session.isLoadingMoreConversations,
-            loadMoreError: session.loadMoreError,
-            onShowMore: () {
-              unawaited(_advanceWindow(
-                session: session,
-                hasLocalMore: conversationPages * _conversationPageSize <
-                    project.conversations.length,
-                advance: () {
-                  viewState.projectConversationPages[project.key] =
-                      (viewState.projectConversationPages[project.key] ?? 1) + 1;
-                },
-              ));
-            },
             onOpenProject: () => Navigator.of(context).push<void>(
               MaterialPageRoute(
                 builder: (_) => _ProjectConversationsScreen(
@@ -321,8 +298,6 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                 ),
               ),
             ),
-            onOpenConversation: (conversation) =>
-                _openConversation(context, session, conversation),
         ),
       );
     }));
@@ -424,14 +399,6 @@ class _DeviceHomeViewState {
   bool recentExpanded = true;
   int projectPages = 1;
   int recentPages = 1;
-  final Map<String, bool> expandedProjects = {};
-  final Map<String, int> projectConversationPages = {};
-
-  void retainProjects(Iterable<String> values) {
-    final keys = values.toSet();
-    expandedProjects.removeWhere((key, _) => !keys.contains(key));
-    projectConversationPages.removeWhere((key, _) => !keys.contains(key));
-  }
 }
 
 List<ConversationProject> _sortedProjects(
@@ -759,106 +726,39 @@ class _SectionTitle extends StatelessWidget {
 class _ProjectCard extends StatelessWidget {
   const _ProjectCard({
     super.key,
-    required this.session,
     required this.project,
     required this.projectName,
-    required this.expanded,
-    required this.conversationPages,
     required this.canLoadMore,
-    required this.isLoadingMore,
-    required this.loadMoreError,
-    required this.onToggle,
-    required this.onShowMore,
     required this.onOpenProject,
-    required this.onOpenConversation,
   });
 
-  final DeviceSession session;
   final ConversationProject project;
   final String projectName;
-  final bool expanded;
-  final int conversationPages;
   final bool canLoadMore;
-  final bool isLoadingMore;
-  final String? loadMoreError;
-  final VoidCallback onToggle;
-  final VoidCallback onShowMore;
   final VoidCallback onOpenProject;
-  final ValueChanged<ConversationSummary> onOpenConversation;
 
   @override
   Widget build(BuildContext context) {
     final conversations = sortRecentConversations(project.conversations);
-    final requestedCount = conversationPages * _conversationPageSize;
-    final visibleCount = requestedCount < conversations.length
-        ? requestedCount
-        : conversations.length;
     return Card(
       margin: EdgeInsets.zero,
       elevation: 0,
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          ListTile(
-            key: Key('project-${project.key}'),
-            leading: const Icon(Icons.folder_outlined),
-            title: Text(
-              projectName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: Text(
-              '${conversations.length}${canLoadMore ? '+' : ''} 个会话 · ${project.workspaceRoot}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  key: Key('open-project-${project.key}'),
-                  tooltip: '打开项目会话列表',
-                  onPressed: onOpenProject,
-                  icon: const Icon(Icons.open_in_new, size: 20),
-                ),
-                Icon(expanded ? Icons.expand_less : Icons.expand_more),
-              ],
-            ),
-            onTap: onToggle,
-          ),
-          if (expanded) ...[
-            const Divider(height: 1),
-            for (var index = 0; index < visibleCount; index++) ...[
-              _LiveConversationTile(
-                key: Key(
-                  'project-conversation-${project.key}-${conversationRoutingKey(conversations[index])}',
-                ),
-                session: session,
-                conversation: conversations[index],
-                onTap: onOpenConversation,
-              ),
-              if (index != visibleCount - 1)
-                const Divider(height: 1, indent: 56),
-            ],
-            if (visibleCount < conversations.length ||
-                canLoadMore ||
-                isLoadingMore)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: _PaginationControl(
-                  buttonKey: Key(
-                    'show-more-project-conversations-${project.key}',
-                  ),
-                  label: '显示更多对话',
-                  loading: isLoadingMore,
-                  error: visibleCount < conversations.length
-                      ? null
-                      : loadMoreError,
-                  onPressed: onShowMore,
-                ),
-              ),
-          ],
-        ],
+      child: ListTile(
+        key: Key('project-${project.key}'),
+        leading: const Icon(Icons.folder_outlined),
+        title: Text(
+          projectName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          '${conversations.length}${canLoadMore ? '+' : ''} 个会话 · ${project.workspaceRoot}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onOpenProject,
       ),
     );
   }
@@ -1244,15 +1144,42 @@ class _NewConversationDialog extends StatefulWidget {
 class _NewConversationDialogState extends State<_NewConversationDialog> {
   late final TextEditingController _titleController;
   late final TextEditingController _workspaceController;
+  String? _permissionLevel;
+  String? _reasoningEffort;
+  String? _model;
+  String? _workspaceMode;
   bool _creating = false;
   String? _error;
+
+  ConversationCreateCapabilities? get _createCapabilities =>
+      widget.provider.capabilities.conversationCreate;
+
+  TurnSendCapabilities? get _selectionCapabilities =>
+      _createCapabilities?.selection ?? widget.provider.capabilities.turnSend;
 
   @override
   void initState() {
     super.initState();
     _titleController = TextEditingController();
     _workspaceController = TextEditingController(text: widget.workspaceRoot);
+    final selection = _selectionCapabilities;
+    _permissionLevel = _initialChoice(selection?.accessMode) ??
+        PermissionLevel.workspaceWrite;
+    _reasoningEffort = _initialChoice(selection?.reasoningEffort);
+    final catalog = selection?.modelCatalog;
+    final modelSelection = catalog?.defaultSelection ??
+        (catalog?.availableSelections.isNotEmpty == true
+            ? catalog!.availableSelections.first
+            : null);
+    _model = catalog?.modelFor(modelSelection)?.id;
+    _workspaceMode = _initialChoice(_createCapabilities?.workspaceMode);
   }
+
+  String? _initialChoice(ProviderChoiceSet? choices) =>
+      choices?.defaultId ??
+      (choices?.availableOptions.isNotEmpty == true
+          ? choices!.availableOptions.first.id
+          : null);
 
   @override
   void dispose() {
@@ -1272,6 +1199,10 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
         provider: widget.provider,
         title: _titleController.text,
         workspaceRoot: _workspaceController.text,
+        permissionLevel: _permissionLevel,
+        reasoningEffort: _reasoningEffort,
+        model: _model,
+        workspaceMode: _workspaceMode,
       );
       if (mounted) Navigator.of(context).pop(conversation);
     } catch (error) {
@@ -1292,15 +1223,17 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextField(
-                key: const Key('new-conversation-title'),
-                controller: _titleController,
-                enabled: !_creating,
-                decoration: const InputDecoration(
-                  labelText: '标题（可选）',
+              if (_createCapabilities?.supportsTitle != false) ...[
+                TextField(
+                  key: const Key('new-conversation-title'),
+                  controller: _titleController,
+                  enabled: !_creating,
+                  decoration: const InputDecoration(
+                    labelText: '标题（可选）',
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
+                const SizedBox(height: 12),
+              ],
               TextField(
                 key: const Key('new-conversation-workspace'),
                 controller: _workspaceController,
@@ -1310,6 +1243,72 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                   prefixIcon: Icon(Icons.folder_outlined),
                 ),
               ),
+              if (_createCapabilities?.workspaceMode != null) ...[
+                const SizedBox(height: 12),
+                _choiceField(
+                  key: const Key('new-conversation-workspace-mode'),
+                  label: '工作区模式',
+                  choices: _createCapabilities!.workspaceMode!,
+                  value: _workspaceMode,
+                  onChanged: (value) => setState(() {
+                    _workspaceMode = value;
+                  }),
+                ),
+              ],
+              if (_selectionCapabilities?.accessMode != null) ...[
+                const SizedBox(height: 12),
+                _choiceField(
+                  key: const Key('new-conversation-access-mode'),
+                  label: '访问模式',
+                  choices: _selectionCapabilities!.accessMode!,
+                  value: _permissionLevel,
+                  onChanged: (value) => setState(() {
+                    _permissionLevel = value;
+                  }),
+                ),
+              ],
+              if (_selectionCapabilities?.reasoningEffort != null) ...[
+                const SizedBox(height: 12),
+                _choiceField(
+                  key: const Key('new-conversation-reasoning-effort'),
+                  label: '推理强度',
+                  choices: _selectionCapabilities!.reasoningEffort!,
+                  value: _reasoningEffort,
+                  onChanged: (value) => setState(() {
+                    _reasoningEffort = value;
+                  }),
+                ),
+              ],
+              if (_selectionCapabilities?.modelCatalog != null) ...[
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const Key('new-conversation-model'),
+                  initialValue: _model,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: '模型'),
+                  items: [
+                    for (final selection in _selectionCapabilities!
+                        .modelCatalog!
+                        .availableSelections)
+                      DropdownMenuItem(
+                        value: _selectionCapabilities!.modelCatalog!
+                            .modelFor(selection)!
+                            .id,
+                        child: Text(
+                          _selectionCapabilities!.modelCatalog!
+                              .modelFor(selection)!
+                              .displayName,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: _creating
+                      ? null
+                      : (value) => setState(() {
+                            _model = value;
+                          }),
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Text(
@@ -1339,6 +1338,30 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
           ),
         ],
       );
+
+  Widget _choiceField({
+    required Key key,
+    required String label,
+    required ProviderChoiceSet choices,
+    required String? value,
+    required ValueChanged<String?> onChanged,
+  }) {
+    final options = choices.availableOptions;
+    return DropdownButtonFormField<String>(
+      key: key,
+      initialValue: value,
+      isExpanded: true,
+      decoration: InputDecoration(labelText: label),
+      items: [
+        for (final option in options)
+          DropdownMenuItem(
+            value: option.id,
+            child: Text(option.displayName, overflow: TextOverflow.ellipsis),
+          ),
+      ],
+      onChanged: _creating || options.length < 2 ? null : onChanged,
+    );
+  }
 }
 
 void _openSearch(
