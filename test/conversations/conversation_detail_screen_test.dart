@@ -65,14 +65,14 @@ void main() {
     expect(find.byKey(const Key('message-history-44')), findsOneWidget);
 
     final position = _detailScrollPosition(tester);
-    position.jumpTo(0);
+    position.jumpTo(position.minScrollExtent);
     await tester.pump();
     expect(find.byKey(const Key('show-earlier-messages')), findsOneWidget);
     await tester.tap(find.byKey(const Key('show-earlier-messages')));
     await tester.pump();
     await tester.pump();
 
-    position.jumpTo(0);
+    position.jumpTo(position.minScrollExtent);
     await tester.pump();
     expect(find.byKey(const Key('show-earlier-messages')), findsNothing);
     expect(find.byKey(const Key('message-history-0')), findsOneWidget);
@@ -82,6 +82,41 @@ void main() {
         tester.getTopLeft(find.byKey(const Key('message-history-1'))).dy,
       ),
     );
+
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('keeps visible messages fixed when revealing earlier messages',
+      (tester) async {
+    final client = _DetailClient(
+      committedMessages: [
+        for (var index = 0; index < 100; index++)
+          _history(
+            'anchored-$index',
+            index.isEven ? MessageRole.user : MessageRole.assistant,
+            'message',
+            index < 60
+                ? '较长的更早消息 $index ${List.filled(24, '内容 ').join()}'
+                : '当前可见消息 $index',
+            createdMilliseconds: index,
+          ),
+      ],
+    );
+    await _pumpDetail(tester, client);
+    await tester.pumpAndSettle();
+
+    final position = _detailScrollPosition(tester);
+    position.jumpTo(position.minScrollExtent);
+    await tester.pumpAndSettle();
+    final anchor = find.byKey(const Key('message-anchored-60'));
+    final anchorTopBefore = tester.getTopLeft(anchor).dy;
+
+    await tester.tap(find.byKey(const Key('show-earlier-messages')));
+    await tester.pumpAndSettle();
+
+    expect(anchor, findsOneWidget);
+    expect(tester.getTopLeft(anchor).dy, closeTo(anchorTopBefore, 1));
 
     await tester.pumpWidget(const SizedBox());
     await client.close();

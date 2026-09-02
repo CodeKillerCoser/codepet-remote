@@ -36,6 +36,7 @@ class ConversationDetailScreen extends StatefulWidget {
 
 class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey _messagesCenterKey = GlobalKey();
   final TextEditingController _draftController = TextEditingController();
   GatewayEventWindow? _eventWindow;
   final Set<String> _appliedCursors = {};
@@ -699,32 +700,12 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   void _showEarlierMessages() {
     if (_hiddenMessageCount == 0) return;
     _scrollRequest++;
-    final previousOffset = _scrollController.hasClients
-        ? _scrollController.offset
-        : 0.0;
-    final previousMaxExtent = _scrollController.hasClients
-        ? _scrollController.position.maxScrollExtent
-        : 0.0;
     setState(() {
       _hiddenMessageCount = _hiddenMessageCount > _messagePageSize
           ? _hiddenMessageCount - _messagePageSize
           : 0;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
-      final addedExtent =
-          _scrollController.position.maxScrollExtent - previousMaxExtent;
-      final target = previousOffset + addedExtent;
-      final maxExtent = _scrollController.position.maxScrollExtent;
-      _scrollController.jumpTo(
-        target < 0
-            ? 0.0
-            : target > maxExtent
-                ? maxExtent
-                : target,
-      );
-      _handleScroll();
-    });
+    _scheduleScrollStateUpdate();
   }
 
   @override
@@ -817,7 +798,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     }
 
     final timeline = _timeline;
-    final visibleMessageCount = timeline.length - _hiddenMessageCount;
+    final centerBlockIndex = timeline.length > _messagePageSize
+        ? timeline.length - _messagePageSize
+        : 0;
+    final centerBlockCount = timeline.length - centerBlockIndex;
+    final earlierVisibleBlockCount =
+        centerBlockIndex - _hiddenMessageCount;
+    final growsUpward =
+        _messagesExpanded && timeline.length > _messagePageSize;
     return NotificationListener<ScrollStartNotification>(
       onNotification: (notification) {
         if (notification.dragDetails != null) {
@@ -828,6 +816,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       child: CustomScrollView(
         key: const Key('conversation-detail'),
         controller: _scrollController,
+        center: growsUpward ? _messagesCenterKey : null,
         slivers: [
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -873,27 +862,19 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
               ]),
             ),
           ),
-          if (_messagesExpanded && timeline.isEmpty)
-            const SliverPadding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 28),
-              sliver: SliverToBoxAdapter(child: _NoHistoryNotice()),
-            ),
-          if (_messagesExpanded && timeline.isNotEmpty)
+          if (_messagesExpanded && earlierVisibleBlockCount > 0)
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
               sliver: SliverList(
-                // The visible window is deliberately bounded. Building it as
-                // a fixed list gives ScrollPosition an exact max extent and
-                // avoids animating into a lazy sliver's estimated blank area.
                 delegate: SliverChildListDelegate.fixed([
-                  for (var index = 0; index < visibleMessageCount; index++)
+                  for (var index = 0;
+                      index < earlierVisibleBlockCount;
+                      index++)
                     Builder(builder: (context) {
-                      final block = timeline[_hiddenMessageCount + index];
+                      final block = timeline[centerBlockIndex - index - 1];
                       return Padding(
                         key: Key('message-${block.id}'),
-                        padding: EdgeInsets.only(
-                          bottom: index == visibleMessageCount - 1 ? 0 : 10,
-                        ),
+                        padding: const EdgeInsets.only(bottom: 10),
                         child: ConversationTimelineBlockView(
                           key: ValueKey(block.id),
                           block: block,
@@ -903,8 +884,44 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                 ]),
               ),
             ),
-          if (!_messagesExpanded)
-            const SliverToBoxAdapter(child: SizedBox(height: 28)),
+          SliverPadding(
+            key: _messagesCenterKey,
+            padding: EdgeInsets.fromLTRB(
+              _messagesExpanded ? 16 : 0,
+              0,
+              _messagesExpanded ? 16 : 0,
+              28,
+            ),
+            sliver: !_messagesExpanded
+                ? const SliverToBoxAdapter(child: SizedBox.shrink())
+                : timeline.isEmpty
+                    ? const SliverToBoxAdapter(child: _NoHistoryNotice())
+                    : SliverList(
+                        // The latest page is deliberately bounded and fixed so
+                        // scrolling to the bottom uses an exact max extent.
+                        delegate: SliverChildListDelegate.fixed([
+                          for (var index = 0;
+                              index < centerBlockCount;
+                              index++)
+                            Builder(builder: (context) {
+                              final block =
+                                  timeline[centerBlockIndex + index];
+                              return Padding(
+                                key: Key('message-${block.id}'),
+                                padding: EdgeInsets.only(
+                                  bottom: index == centerBlockCount - 1
+                                      ? 0
+                                      : 10,
+                                ),
+                                child: ConversationTimelineBlockView(
+                                  key: ValueKey(block.id),
+                                  block: block,
+                                ),
+                              );
+                            }),
+                        ]),
+                      ),
+          ),
         ],
       ),
     );
