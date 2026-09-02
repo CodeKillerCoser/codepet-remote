@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../devices/device_session.dart';
-import '../../gateway/models.dart';
+import '../../application/sessions/device_session.dart';
+import '../../core/domain/models.dart';
+import '../common/identity_icons.dart';
 import '../conversations/conversation_detail_screen.dart';
 import '../conversations/conversation_search_screen.dart';
 
@@ -70,8 +71,8 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     required VoidCallback advance,
   }) async {
     if (session.isLoadingMoreConversations) return;
-    if (session.canLoadMoreConversations) {
-      await session.loadMoreConversations();
+    if (session.canLoadMoreSelectedProviderConversations) {
+      await session.loadMoreSelectedProviderConversations();
       if (!mounted ||
           session.connectionState != DeviceConnectionState.online ||
           session.loadMoreError != null) {
@@ -103,16 +104,22 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                 ? sessions.length - 1
                 : widget.selectedIndex;
     final session = sessions.isEmpty ? null : sessions[selectedIndex];
-    final projects = session == null ? const <ConversationProject>[] : _sortedProjects(session);
+    final selectedProvider = session?.selectedProvider;
+    final selectedConversations = session == null
+        ? const <ConversationSummary>[]
+        : session.selectedProviderConversations;
+    final projects = session == null
+        ? const <ConversationProject>[]
+        : _sortedProjects(session, selectedConversations);
     final recent = session == null
         ? const <ConversationSummary>[]
         : sortRecentConversations(
-            deduplicateRoutedConversations(session.conversations),
+            deduplicateRoutedConversations(selectedConversations),
           );
     final viewState = session == null
         ? null
         : _deviceViewStates.putIfAbsent(
-            session.device.deviceId,
+            '${session.device.deviceId}\u0000${selectedProvider?.route.key ?? 'no-provider'}',
             _DeviceHomeViewState.new,
           )
       ?..retainProjects(projects.map((project) => project.key));
@@ -120,19 +127,6 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       appBar: AppBar(
         title: const Text('CodePet Remote'),
         actions: [
-          IconButton(
-            key: const Key('home-search'),
-            tooltip: '搜索会话',
-            onPressed: session == null
-                ? null
-                : () => Navigator.of(context).push<void>(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            ConversationSearchScreen(session: session),
-                      ),
-                    ),
-            icon: const Icon(Icons.search),
-          ),
           PopupMenuButton<String>(
             key: const Key('home-overflow-menu'),
             onSelected: (value) {
@@ -161,13 +155,17 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     onSelect: widget.onSelectDevice,
                   ),
                   const SizedBox(height: 12),
-                  _DeviceActions(session: session),
+                  _DeviceActions(
+                    session: session,
+                    selectedProvider: selectedProvider,
+                    onSelectProvider: session.selectProvider,
+                  ),
                   const SizedBox(height: 28),
                   _SectionTitle(
                     key: Key('projects-section-${session.device.deviceId}'),
                     title: '项目',
                     countLabel:
-                        '${projects.length}${session.canLoadMoreConversations ? '+' : ''}',
+                        '${projects.length}${session.canLoadMoreSelectedProviderConversations ? '+' : ''}',
                     expanded: viewState!.projectsExpanded,
                     onTap: () => setState(() {
                       viewState.projectsExpanded = !viewState.projectsExpanded;
@@ -181,7 +179,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                   _SectionTitle(
                     key: Key('recent-section-${session.device.deviceId}'),
                     title: '最近',
-                    countLabel: session.conversationCountLabel,
+                    countLabel: session.selectedProviderConversationCountLabel,
                     expanded: viewState.recentExpanded,
                     onTap: () => setState(() {
                       viewState.recentExpanded = !viewState.recentExpanded;
@@ -194,6 +192,25 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                 ],
               ),
             ),
+      bottomNavigationBar: session == null
+          ? null
+          : _ConversationActionsBar(
+              searchKey: const Key('home-search'),
+              createKey: const Key('home-new'),
+              canSearch: selectedProvider != null,
+              canCreate: selectedProvider?.status == ProviderStatus.ready &&
+                  selectedProvider?.methods
+                          .contains('conversation.create') ==
+                      true,
+              onSearch: () => _openSearch(context, session),
+              onCreate: selectedProvider == null
+                  ? null
+                  : () => _startConversation(
+                        context,
+                        session: session,
+                        provider: selectedProvider,
+                      ),
+            ),
     );
   }
 
@@ -204,7 +221,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     _DeviceHomeViewState viewState,
   ) {
     if (session.connectionState == DeviceConnectionState.connecting &&
-        session.conversations.isEmpty) {
+        session.selectedProviderConversations.isEmpty) {
       return const [LinearProgressIndicator()];
     }
     if (session.connectionState == DeviceConnectionState.failed) {
@@ -236,7 +253,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
           title: '没有可分组的项目',
           message: '当前会话没有 workspaceRoot；它们仍会显示在“最近”中。',
         ),
-        if (session.canLoadMoreConversations ||
+        if (session.canLoadMoreSelectedProviderConversations ||
             session.isLoadingMoreConversations)
           _PaginationControl(
             buttonKey: Key(
@@ -272,44 +289,45 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       return Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: _ProjectCard(
-          key: Key('project-card-${project.key}'),
-          project: project,
-          projectName: name,
-          expanded: expanded,
-          conversationPages: conversationPages,
-          onToggle: () => setState(() {
-            viewState.expandedProjects[project.key] = !expanded;
-          }),
-          canLoadMore: session.canLoadMoreConversations,
-          isLoadingMore: session.isLoadingMoreConversations,
-          loadMoreError: session.loadMoreError,
-          onShowMore: () {
-            unawaited(_advanceWindow(
-              session: session,
-              hasLocalMore: conversationPages * _conversationPageSize <
-                  project.conversations.length,
-              advance: () {
-                viewState.projectConversationPages[project.key] =
-                    (viewState.projectConversationPages[project.key] ?? 1) + 1;
-              },
-            ));
-          },
-          onOpenProject: () => Navigator.of(context).push<void>(
-            MaterialPageRoute(
-              builder: (_) => _ProjectConversationsScreen(
-                projectName: name,
-                workspaceRoot: project.workspaceRoot,
+            key: Key('project-card-${project.key}'),
+            session: session,
+            project: project,
+            projectName: name,
+            expanded: expanded,
+            conversationPages: conversationPages,
+            onToggle: () => setState(() {
+              viewState.expandedProjects[project.key] = !expanded;
+            }),
+            canLoadMore: session.canLoadMoreSelectedProviderConversations,
+            isLoadingMore: session.isLoadingMoreConversations,
+            loadMoreError: session.loadMoreError,
+            onShowMore: () {
+              unawaited(_advanceWindow(
                 session: session,
+                hasLocalMore: conversationPages * _conversationPageSize <
+                    project.conversations.length,
+                advance: () {
+                  viewState.projectConversationPages[project.key] =
+                      (viewState.projectConversationPages[project.key] ?? 1) + 1;
+                },
+              ));
+            },
+            onOpenProject: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => _ProjectConversationsScreen(
+                  projectName: name,
+                  workspaceRoot: project.workspaceRoot,
+                  session: session,
+                ),
               ),
             ),
-          ),
-          onOpenConversation: (conversation) =>
-              _openConversation(context, session, conversation),
+            onOpenConversation: (conversation) =>
+                _openConversation(context, session, conversation),
         ),
       );
     }));
     if (visibleCount < projects.length ||
-        session.canLoadMoreConversations ||
+        session.canLoadMoreSelectedProviderConversations ||
         session.isLoadingMoreConversations) {
       widgets.add(
         _PaginationControl(
@@ -344,7 +362,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
           title: '还没有会话',
           message: '此设备当前没有可展示的会话。',
         ),
-        if (session.canLoadMoreConversations ||
+        if (session.canLoadMoreSelectedProviderConversations ||
             session.isLoadingMoreConversations)
           _PaginationControl(
             buttonKey: Key('show-more-recent-${session.device.deviceId}'),
@@ -369,15 +387,17 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     widgets.addAll(recent.take(visibleCount).map((conversation) => Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: _ConversationRow(
-            key: Key(
-              'recent-conversation-${session.device.deviceId}-${conversationRoutingKey(conversation)}',
-            ),
-            conversation: conversation,
-            onTap: () => _openConversation(context, session, conversation),
+              key: Key(
+                'recent-conversation-${session.device.deviceId}-${conversationRoutingKey(conversation)}',
+              ),
+              session: session,
+              conversation: conversation,
+              onTap: (current) =>
+                  _openConversation(context, session, current),
           ),
         )));
     if (visibleCount < recent.length ||
-        session.canLoadMoreConversations ||
+        session.canLoadMoreSelectedProviderConversations ||
         session.isLoadingMoreConversations) {
       widgets.add(
         _PaginationControl(
@@ -414,10 +434,13 @@ class _DeviceHomeViewState {
   }
 }
 
-List<ConversationProject> _sortedProjects(DeviceSession session) {
+List<ConversationProject> _sortedProjects(
+  DeviceSession session,
+  Iterable<ConversationSummary> conversations,
+) {
   final projects = groupConversationsByProject(
     hostDeviceId: session.device.deviceId,
-    values: session.conversations,
+    values: conversations,
   );
   return projects
     ..sort((left, right) {
@@ -438,7 +461,7 @@ class _DeviceSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 82,
+      height: 62,
       child: ListView.separated(
         key: const Key('device-selector'),
         scrollDirection: Axis.horizontal,
@@ -449,45 +472,123 @@ class _DeviceSelector extends StatelessWidget {
           final descriptor = session.handshake?.deviceDescriptor ??
               session.device.descriptor;
           final alias = session.device.alias?.trim();
-          final deviceDetails = [
-            if (alias?.isNotEmpty == true && descriptor != null)
-              descriptor.deviceName,
-            if (descriptor != null)
-              '${descriptor.operatingSystem} ${descriptor.systemVersion}',
-            _deviceStateLabel(session.connectionState),
-          ].join(' · ');
+          final deviceName = alias?.isNotEmpty == true
+              ? alias!
+              : descriptor?.deviceName ?? session.device.displayName;
+          final systemLabel = descriptor == null
+              ? _deviceStateLabel(session.connectionState)
+              : '${descriptor.operatingSystem} ${descriptor.systemVersion}';
           final selected = index == selectedIndex;
-          return ChoiceChip(
+          final colorScheme = Theme.of(context).colorScheme;
+          return Semantics(
             key: Key('device-${session.device.deviceId}'),
+            button: true,
             selected: selected,
-            showCheckmark: false,
-            onSelected: (_) => onSelect(index),
-            label: SizedBox(
-              width: 150,
-              child: Row(children: [
-                Icon(Icons.computer_outlined, color: selected ? Theme.of(context).colorScheme.onSecondaryContainer : null),
-                const SizedBox(width: 10),
-                Expanded(child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      alias?.isNotEmpty == true
-                          ? alias!
-                          : descriptor?.deviceName ?? session.device.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+            label: '$deviceName，$systemLabel，${_deviceStateLabel(session.connectionState)}',
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => onSelect(index),
+                borderRadius: BorderRadius.circular(16),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOut,
+                  width: 158,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? colorScheme.secondaryContainer
+                        : colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: selected
+                          ? colorScheme.primary.withValues(alpha: 0.55)
+                          : colorScheme.outlineVariant,
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      deviceDetails,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                )),
-              ]),
+                  ),
+                  child: Row(
+                    children: [
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? colorScheme.primary.withValues(alpha: 0.12)
+                                  : colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(11),
+                            ),
+                            alignment: Alignment.center,
+                            child: Icon(
+                              operatingSystemIconData(
+                                descriptor?.operatingSystem ??
+                                    session.device.displayName,
+                              ),
+                              size: 22,
+                              color: selected
+                                  ? colorScheme.primary
+                                  : colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          Positioned(
+                            right: -2,
+                            bottom: -2,
+                            child: Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: _deviceStateColor(
+                                  colorScheme,
+                                  session.connectionState,
+                                ),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: selected
+                                      ? colorScheme.secondaryContainer
+                                      : colorScheme.surfaceContainerLow,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              deviceName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              systemLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           );
         },
@@ -496,20 +597,117 @@ class _DeviceSelector extends StatelessWidget {
   }
 }
 
+Color _deviceStateColor(
+  ColorScheme colorScheme,
+  DeviceConnectionState state,
+) => switch (state) {
+      DeviceConnectionState.online => Colors.green.shade600,
+      DeviceConnectionState.connecting => colorScheme.tertiary,
+      DeviceConnectionState.offline => colorScheme.outline,
+      DeviceConnectionState.failed => colorScheme.error,
+    };
+
 class _DeviceActions extends StatelessWidget {
-  const _DeviceActions({required this.session});
+  const _DeviceActions({
+    required this.session,
+    required this.selectedProvider,
+    required this.onSelectProvider,
+  });
   final DeviceSession session;
+  final GatewayProvider? selectedProvider;
+  final ValueChanged<GatewayProvider> onSelectProvider;
   @override
   Widget build(BuildContext context) {
-    return Row(children: [
-      Expanded(child: Text(session.handshake == null ? '会话数据仅保留在本次连接中' : '${session.handshake!.serverName} · ${session.handshake!.serverVersion}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall)),
-      TextButton.icon(onPressed: session.connectionState == DeviceConnectionState.connecting ? null : session.connect, icon: const Icon(Icons.refresh, size: 18), label: const Text('重新连接')),
-      PopupMenuButton<String>(
-        tooltip: '设备管理',
-        onSelected: (value) { if (value == 'disconnect') session.disconnect(); },
-        itemBuilder: (_) => const [PopupMenuItem(value: 'disconnect', child: Text('断开设备'))],
+    final handshake = session.handshake;
+    final providers = handshake?.providers ?? const <GatewayProvider>[];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (providers.isNotEmpty) ...[
+          SizedBox(
+            height: 42,
+            child: ListView.separated(
+              key: const Key('connected-providers'),
+              scrollDirection: Axis.horizontal,
+              itemCount: providers.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final provider = providers[index];
+                return _ProviderIdentity(
+                  provider: provider,
+                  selected: provider.route == selectedProvider?.route,
+                  onSelected: onSelectProvider,
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
+        Row(children: [
+          Expanded(child: Text(
+            handshake == null
+                ? '会话数据仅保留在本次连接中'
+                : '${handshake.serverName} · ${handshake.serverVersion}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall,
+          )),
+          TextButton.icon(
+            onPressed: session.connectionState == DeviceConnectionState.connecting
+                ? null
+                : session.connect,
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('重新连接'),
+          ),
+          PopupMenuButton<String>(
+            tooltip: '设备管理',
+            onSelected: (value) {
+              if (value == 'disconnect') session.disconnect();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'disconnect', child: Text('断开设备')),
+            ],
+          ),
+        ]),
+      ],
+    );
+  }
+}
+
+class _ProviderIdentity extends StatelessWidget {
+  const _ProviderIdentity({
+    required this.provider,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final GatewayProvider provider;
+  final bool selected;
+  final ValueChanged<GatewayProvider> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final ready = provider.status == ProviderStatus.ready;
+    return ChoiceChip(
+      key: Key('provider-${provider.route.key}'),
+      selected: selected,
+      showCheckmark: false,
+      onSelected: (_) => onSelected(provider),
+      visualDensity: VisualDensity.compact,
+      avatar: Icon(
+        providerIconData(provider.icon ?? provider.providerType),
+        size: 17,
+        color: ready
+            ? Theme.of(context).colorScheme.primary
+            : Theme.of(context).colorScheme.outline,
       ),
-    ]);
+      label: Text(provider.displayName),
+      side: BorderSide(
+        color: ready
+            ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.35)
+            : Theme.of(context).colorScheme.outlineVariant,
+      ),
+    );
   }
 }
 
@@ -561,6 +759,7 @@ class _SectionTitle extends StatelessWidget {
 class _ProjectCard extends StatelessWidget {
   const _ProjectCard({
     super.key,
+    required this.session,
     required this.project,
     required this.projectName,
     required this.expanded,
@@ -574,6 +773,7 @@ class _ProjectCard extends StatelessWidget {
     required this.onOpenConversation,
   });
 
+  final DeviceSession session;
   final ConversationProject project;
   final String projectName;
   final bool expanded;
@@ -629,12 +829,13 @@ class _ProjectCard extends StatelessWidget {
           if (expanded) ...[
             const Divider(height: 1),
             for (var index = 0; index < visibleCount; index++) ...[
-              _ConversationTile(
+              _LiveConversationTile(
                 key: Key(
                   'project-conversation-${project.key}-${conversationRoutingKey(conversations[index])}',
                 ),
+                session: session,
                 conversation: conversations[index],
-                onTap: () => onOpenConversation(conversations[index]),
+                onTap: onOpenConversation,
               ),
               if (index != visibleCount - 1)
                 const Divider(height: 1, indent: 56),
@@ -736,28 +937,53 @@ class _MessageCard extends StatelessWidget {
 class _ConversationRow extends StatelessWidget {
   const _ConversationRow({
     super.key,
+    required this.session,
     required this.conversation,
     required this.onTap,
   });
 
+  final DeviceSession session;
   final ConversationSummary conversation;
-  final VoidCallback onTap;
+  final ValueChanged<ConversationSummary> onTap;
 
   @override
   Widget build(BuildContext context) => Card(
         margin: EdgeInsets.zero,
         elevation: 0,
-        child: _ConversationTile(
+        child: _LiveConversationTile(
           key: Key('conversation-${conversation.id}'),
+          session: session,
           conversation: conversation,
           onTap: onTap,
         ),
       );
 }
 
+class _LiveConversationTile extends StatelessWidget {
+  const _LiveConversationTile({
+    super.key,
+    required this.session,
+    required this.conversation,
+    required this.onTap,
+  });
+
+  final DeviceSession session;
+  final ConversationSummary conversation;
+  final ValueChanged<ConversationSummary> onTap;
+
+  @override
+  Widget build(BuildContext context) =>
+      ValueListenableBuilder<ConversationSummary>(
+        valueListenable: session.conversationListenable(conversation),
+        builder: (context, current, _) => _ConversationTile(
+          conversation: current,
+          onTap: () => onTap(current),
+        ),
+      );
+}
+
 class _ConversationTile extends StatelessWidget {
   const _ConversationTile({
-    super.key,
     required this.conversation,
     required this.onTap,
   });
@@ -853,8 +1079,8 @@ class _ProjectConversationsScreenState
 
   Future<void> _showMore({required bool hasLocalMore}) async {
     if (widget.session.isLoadingMoreConversations) return;
-    if (widget.session.canLoadMoreConversations) {
-      await widget.session.loadMoreConversations();
+    if (widget.session.canLoadMoreSelectedProviderConversations) {
+      await widget.session.loadMoreSelectedProviderConversations();
       if (!mounted ||
           widget.session.connectionState != DeviceConnectionState.online ||
           widget.session.loadMoreError != null) {
@@ -871,7 +1097,7 @@ class _ProjectConversationsScreenState
   List<ConversationSummary> _projectConversations() =>
       sortRecentConversations(
         deduplicateRoutedConversations(
-          widget.session.conversations.where(
+          widget.session.selectedProviderConversations.where(
             (conversation) =>
                 conversation.workspaceRoot == widget.workspaceRoot,
           ),
@@ -887,8 +1113,9 @@ class _ProjectConversationsScreenState
         : conversations.length;
     final hasLocalMore = visibleCount < conversations.length;
     final hasMore = hasLocalMore ||
-        widget.session.canLoadMoreConversations ||
+        widget.session.canLoadMoreSelectedProviderConversations ||
         widget.session.isLoadingMoreConversations;
+    final selectedProvider = widget.session.selectedProvider;
     return Scaffold(
       appBar: AppBar(title: Text(widget.projectName)),
       body: ListView.separated(
@@ -917,16 +1144,234 @@ class _ProjectConversationsScreenState
             key: Key(
               'project-screen-conversation-${conversationRoutingKey(conversation)}',
             ),
+            session: widget.session,
             conversation: conversation,
-            onTap: () => _openConversation(
+            onTap: (current) => _openConversation(
               context,
               widget.session,
-              conversation,
+              current,
             ),
           );
         },
       ),
+      bottomNavigationBar: _ConversationActionsBar(
+        searchKey: const Key('project-search'),
+        createKey: const Key('project-new'),
+        canSearch: selectedProvider != null,
+        canCreate: selectedProvider?.status == ProviderStatus.ready &&
+            selectedProvider?.methods.contains('conversation.create') == true,
+        onSearch: () => _openSearch(
+          context,
+          widget.session,
+          workspaceRoot: widget.workspaceRoot,
+        ),
+        onCreate: selectedProvider == null
+            ? null
+            : () => _startConversation(
+                  context,
+                  session: widget.session,
+                  provider: selectedProvider,
+                  workspaceRoot: widget.workspaceRoot,
+                ),
+      ),
     );
+  }
+}
+
+class _ConversationActionsBar extends StatelessWidget {
+  const _ConversationActionsBar({
+    required this.searchKey,
+    required this.createKey,
+    required this.canSearch,
+    required this.canCreate,
+    required this.onSearch,
+    required this.onCreate,
+  });
+
+  final Key searchKey;
+  final Key createKey;
+  final bool canSearch;
+  final bool canCreate;
+  final VoidCallback onSearch;
+  final VoidCallback? onCreate;
+
+  @override
+  Widget build(BuildContext context) => Material(
+        elevation: 8,
+        color: Theme.of(context).colorScheme.surface,
+        child: SafeArea(
+          top: false,
+          minimum: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: searchKey,
+                  onPressed: canSearch ? onSearch : null,
+                  icon: const Icon(Icons.search),
+                  label: const Text('搜索'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                key: createKey,
+                onPressed: canCreate ? onCreate : null,
+                icon: const Icon(Icons.add),
+                label: const Text('新建'),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+class _NewConversationDialog extends StatefulWidget {
+  const _NewConversationDialog({
+    required this.session,
+    required this.provider,
+    this.workspaceRoot,
+  });
+
+  final DeviceSession session;
+  final GatewayProvider provider;
+  final String? workspaceRoot;
+
+  @override
+  State<_NewConversationDialog> createState() =>
+      _NewConversationDialogState();
+}
+
+class _NewConversationDialogState extends State<_NewConversationDialog> {
+  late final TextEditingController _titleController;
+  late final TextEditingController _workspaceController;
+  bool _creating = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController();
+    _workspaceController = TextEditingController(text: widget.workspaceRoot);
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _workspaceController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    if (_creating) return;
+    setState(() {
+      _creating = true;
+      _error = null;
+    });
+    try {
+      final conversation = await widget.session.createConversation(
+        provider: widget.provider,
+        title: _titleController.text,
+        workspaceRoot: _workspaceController.text,
+      );
+      if (mounted) Navigator.of(context).pop(conversation);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _creating = false;
+          _error = error.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text('在 ${widget.provider.displayName} 中新建会话'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                key: const Key('new-conversation-title'),
+                controller: _titleController,
+                enabled: !_creating,
+                decoration: const InputDecoration(
+                  labelText: '标题（可选）',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('new-conversation-workspace'),
+                controller: _workspaceController,
+                enabled: !_creating && widget.workspaceRoot == null,
+                decoration: const InputDecoration(
+                  labelText: '工作区路径（可选）',
+                  prefixIcon: Icon(Icons.folder_outlined),
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _creating ? null : () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('confirm-new-conversation'),
+            onPressed: _creating ? null : _create,
+            child: _creating
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('创建'),
+          ),
+        ],
+      );
+}
+
+void _openSearch(
+  BuildContext context,
+  DeviceSession session, {
+  String? workspaceRoot,
+}) {
+  Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (_) => ConversationSearchScreen(
+        session: session,
+        workspaceRoot: workspaceRoot,
+      ),
+    ),
+  );
+}
+
+Future<void> _startConversation(
+  BuildContext context, {
+  required DeviceSession session,
+  required GatewayProvider provider,
+  String? workspaceRoot,
+}) async {
+  final conversation = await showDialog<ConversationSummary>(
+    context: context,
+    builder: (_) => _NewConversationDialog(
+      session: session,
+      provider: provider,
+      workspaceRoot: workspaceRoot,
+    ),
+  );
+  if (conversation != null && context.mounted) {
+    _openConversation(context, session, conversation);
   }
 }
 

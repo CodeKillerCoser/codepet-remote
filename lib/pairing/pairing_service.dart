@@ -1,7 +1,7 @@
 import '../devices/device_models.dart';
 import '../devices/device_registry.dart';
 import '../devices/local_device_descriptor.dart';
-import '../gateway/models.dart';
+import '../core/domain/models.dart';
 import '../security/pinned_tls.dart';
 import 'pairing_models.dart';
 import 'package:codepet_lan_channel_sdk/codepet_lan_channel_sdk.dart' as sdk;

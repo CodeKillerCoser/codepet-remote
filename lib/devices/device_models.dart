@@ -1,6 +1,6 @@
-import '../gateway/models.dart';
+import '../core/domain/models.dart';
 
-enum DeviceConnectionKind { pairedGateway, developmentGateway, demo }
+enum DeviceConnectionKind { pairedGateway, demo }
 
 class PairedDevice {
   const PairedDevice({
@@ -88,8 +88,7 @@ class PairedDevice {
       clientId: json['clientId'] as String?,
       preferredEndpoint: _migrateGatewayEndpoint(json['preferredEndpoint'] as String?),
       autoConnect: json['autoConnect'] == true,
-      connectionKind:
-          DeviceConnectionKind.values.byName(json['connectionKind'] as String),
+      connectionKind: _connectionKindFromJson(json['connectionKind'] as String),
     );
   }
 }
@@ -101,9 +100,7 @@ String? _migrateGatewayEndpoint(String? endpoint) {
   return uri.replace(path: '/remote/v2/gateway').toString();
 }
 
-class DevelopmentConnection {
-  const DevelopmentConnection({required this.device, required this.connection});
-
-  final PairedDevice device;
-  final DeviceConnection connection;
-}
+DeviceConnectionKind _connectionKindFromJson(String value) =>
+    value == 'developmentGateway'
+        ? DeviceConnectionKind.pairedGateway
+        : DeviceConnectionKind.values.byName(value);

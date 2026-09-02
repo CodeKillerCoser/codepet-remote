@@ -15,6 +15,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('实现 Remote 会话流'), findsNothing);
     expect(find.text('检查 Android 构建'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('无项目临时会话'),
+      240,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('remote-home')),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
     expect(find.text('无项目临时会话'), findsOneWidget);
   });
 

@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'gateway_client.dart';
-import 'models.dart';
+import '../core/domain/models.dart';
+import '../core/ports/gateway_client.dart';
 
 class DemoGatewayClient implements GatewayClient {
   DemoGatewayClient({this.profileId = 'studio'}) : _now = DateTime.now().toUtc();
@@ -118,6 +118,7 @@ class DemoGatewayClient implements GatewayClient {
               'conversation.list',
               'conversation.search',
               'conversation.get',
+              'conversation.create',
               'turn.send',
             ],
             turnSend: TurnSendCapabilities(
@@ -274,6 +275,41 @@ class DemoGatewayClient implements GatewayClient {
       ],
       lastEventCursor: _cursor),
     );
+  }
+
+  @override
+  Future<ConversationSummary> createConversation({
+    required GatewayProviderRoute route,
+    String? title,
+    required String permissionLevel,
+    String? model,
+    String? reasoningEffort,
+    String? workspaceRoot,
+  }) async {
+    if (route != _route) {
+      throw const FormatException('Unknown demo Provider route');
+    }
+    final now = DateTime.now().toUtc();
+    final id = 'demo-created-${++_sequence}';
+    final conversation = ConversationSummary(
+      id: id,
+      providerId: _route.providerInstanceId,
+      title: title ?? '新会话',
+      status: ConversationStatus.idle,
+      permissionLevel: permissionLevel,
+      model: model,
+      reasoningEffort: reasoningEffort,
+      workspaceRoot: workspaceRoot,
+      createdAt: now,
+      updatedAt: now,
+      wireResource: _conversationResource(id),
+    );
+    _conversations.insert(0, conversation);
+    _events.add(ConversationUpsertedEvent(
+      eventCursor: 'demo-${++_sequence}',
+      conversation: conversation,
+    ));
+    return conversation;
   }
 
   @override

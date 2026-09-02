@@ -1,14 +1,73 @@
 import 'dart:async';
 
 import 'package:codepet_remote/devices/device_models.dart';
-import 'package:codepet_remote/devices/device_session.dart';
+import 'package:codepet_remote/application/sessions/device_session.dart';
 import 'package:codepet_remote/features/home/remote_home_screen.dart';
-import 'package:codepet_remote/gateway/gateway_client.dart';
-import 'package:codepet_remote/gateway/models.dart';
+import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('shows bottom search and new actions outside and inside projects',
+      (tester) async {
+    _useTallSurface(tester);
+    final session = _loadedSession(
+      'actions',
+      [_conversation('action-conversation', '入口会话')],
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    expect(find.byKey(const Key('home-search')), findsOneWidget);
+    expect(find.byKey(const Key('home-new')), findsOneWidget);
+    expect(find.byIcon(Icons.search), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const Key('open-project-actions\u0000/dynamic')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('project-search')), findsOneWidget);
+    expect(find.byKey(const Key('project-new')), findsOneWidget);
+  });
+
+  testWidgets('shows Provider identity from the Host handshake', (tester) async {
+    _useTallSurface(tester);
+    final client = _PagedClient(
+      ({required cursor, required limit}) async =>
+          const ConversationPage(
+            conversations: [],
+            snapshotCursor: 'handshake',
+          ),
+    );
+    final session = _sessionForClient('provider-identity', client);
+    await session.connect();
+
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    expect(find.byKey(const Key('connected-providers')), findsOneWidget);
+    expect(find.text('Codex Work'), findsOneWidget);
+    expect(find.byIcon(Icons.terminal), findsOneWidget);
+    expect(
+      tester
+          .widget<ListView>(find.byKey(const Key('device-selector')))
+          .scrollDirection,
+      Axis.horizontal,
+    );
+    expect(
+      tester
+          .widget<ListView>(find.byKey(const Key('connected-providers')))
+          .scrollDirection,
+      Axis.horizontal,
+    );
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
   testWidgets('failed state leaves loading and allows a manual reconnect', (tester) async {
     _useTallSurface(tester);
     var clientBuilds = 0;
@@ -655,7 +714,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('动态事件会话'), findsNothing);
     expect(find.text('Host Metadata'), findsOneWidget);
-    expect(find.text('TestOS 9 · 在线'), findsOneWidget);
+    expect(find.text('TestOS 9'), findsOneWidget);
 
     client.emit(ConversationUpsertedEvent(
       eventCursor: 'event-1',
@@ -811,6 +870,7 @@ class _EventClient implements GatewayClient {
   @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
   @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: 'handshake');
+  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw UnimplementedError();
   @override Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
   @override Future<void> close() => controller.close();
 }
@@ -869,6 +929,9 @@ class _PagedClient implements GatewayClient {
       );
 
   @override
+  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw UnimplementedError();
+
+  @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
 
   @override
@@ -878,13 +941,18 @@ class _PagedClient implements GatewayClient {
 const _homeRoute = GatewayProviderRoute(
   deviceId: 'home-host',
   providerPluginId: 'dev.codepet.codex',
-  providerInstanceId: 'codex-work',
+  providerInstanceId: 'test',
 );
 
 const _homeListProvider = GatewayProvider(
   route: _homeRoute,
   providerType: 'dev.codepet.codex',
   displayName: 'Codex Work',
+  icon: 'codex',
   status: ProviderStatus.ready,
-  methods: ['conversation.list', 'conversation.get'],
+  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
+  capabilities: GatewayCapabilities(
+    revision: 'test-1',
+    methods: ['conversation.list', 'conversation.get'],
+  ),
 );

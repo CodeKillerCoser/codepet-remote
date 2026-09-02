@@ -8,4 +8,3 @@ export '../discovery/codepet_discovery.dart';
 export '../discovery/resolving_gateway_transport.dart';
 export '../gateway/pinned_web_socket_transport.dart';
 export '../gateway/transport.dart';
-export '../gateway/web_socket_transport.dart';

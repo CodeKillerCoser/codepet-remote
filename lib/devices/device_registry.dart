@@ -4,7 +4,7 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../gateway/models.dart';
+import '../core/domain/models.dart';
 import '../security/pinned_tls.dart';
 import 'device_models.dart';
 

@@ -2,8 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../core/domain/models.dart';
+import '../core/errors/gateway_failures.dart';
 import '../security/pinned_tls.dart';
-import 'models.dart';
 import 'transport.dart';
 
 class PinnedWebSocketGatewayTransport implements GatewayTransport {
@@ -12,11 +13,13 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     required this.credential,
     required this.certSha256,
     this.connectTimeout = const Duration(seconds: 8),
+    this.keepAliveInterval = const Duration(seconds: 20),
   });
   final Uri gatewayUri;
   final String credential;
   final String certSha256;
   final Duration connectTimeout;
+  final Duration keepAliveInterval;
   final StreamController<JsonMap> _events = StreamController<JsonMap>.broadcast();
   final Map<String, Completer<Object?>> _pending = {};
   WebSocket? _socket;
@@ -72,6 +75,10 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
         );
       }
       _socket = socket;
+      // Mobile networks, VPNs and NAT gateways commonly reap an otherwise
+      // healthy idle WebSocket. Dart does not send protocol pings unless this
+      // interval is configured, so keep the single Gateway channel active.
+      socket.pingInterval = keepAliveInterval;
       socket.listen(_handleFrame, onError: _handleError, onDone: _handleDone);
     } on TimeoutException {
       if (identical(_httpClient, client)) _httpClient = null;
@@ -157,10 +164,14 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     if (!_closing && !_events.isClosed) _events.addError(error, stack);
   }
   void _handleDone() {
-    final closeCode = _socket?.closeCode;
+    final socket = _socket;
+    final closeCode = socket?.closeCode;
+    final closeReason = socket?.closeReason;
     _socket = null;
     final error = GatewayConnectionException(
-      'Gateway connection closed (code: ${closeCode ?? 'unknown'})',
+      'Gateway connection closed '
+      '(code: ${closeCode ?? 'unknown'}, '
+      'reason: ${closeReason ?? 'none'})',
       retryable: isRetryableWebSocketCloseCode(closeCode),
       outcomeUnknown: true,
     );

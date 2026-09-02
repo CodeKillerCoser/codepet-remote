@@ -2,17 +2,19 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../devices/device_session.dart';
-import '../../gateway/models.dart';
+import '../../application/sessions/device_session.dart';
+import '../../core/domain/models.dart';
 import 'conversation_detail_screen.dart';
 
 class ConversationSearchScreen extends StatefulWidget {
   const ConversationSearchScreen({
     super.key,
     required this.session,
+    this.workspaceRoot,
   });
 
   final DeviceSession session;
+  final String? workspaceRoot;
 
   @override
   State<ConversationSearchScreen> createState() =>
@@ -35,8 +37,14 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
   DeviceSessionRuntimeLease? _observedLease;
   DeviceSessionRuntimeLease? _resultsLease;
 
-  List<GatewayProvider> get _providers =>
-      widget.session.conversationSearchProviders;
+  List<GatewayProvider> get _providers {
+    final provider = widget.session.selectedProvider;
+    if (provider == null ||
+        !provider.methods.contains('conversation.search')) {
+      return const [];
+    }
+    return [provider];
+  }
 
   bool get _canLoadMore =>
       _cursors.values.any((cursor) => cursor != null);
@@ -51,9 +59,14 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
   @override
   void didUpdateWidget(ConversationSearchScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.session == widget.session) return;
-    oldWidget.session.removeListener(_sessionChanged);
-    widget.session.addListener(_sessionChanged);
+    if (oldWidget.session == widget.session &&
+        oldWidget.workspaceRoot == widget.workspaceRoot) {
+      return;
+    }
+    if (oldWidget.session != widget.session) {
+      oldWidget.session.removeListener(_sessionChanged);
+      widget.session.addListener(_sessionChanged);
+    }
     _observedLease = widget.session.runtimeLease;
     _requestGeneration++;
     _clearRuntimeState();
@@ -150,7 +163,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
       for (var index = 0; index < pages.length; index++) {
         conversations = mergeRoutedConversations(
           conversations,
-          pages[index].conversations,
+          _inScope(pages[index].conversations),
         );
         cursors[providers[index].route] = pages[index].nextCursor;
       }
@@ -221,7 +234,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
       for (var index = 0; index < pages.length; index++) {
         conversations = mergeRoutedConversations(
           conversations,
-          pages[index].conversations,
+          _inScope(pages[index].conversations),
         );
         cursors[pendingRoutes[index].key] = pages[index].nextCursor;
       }
@@ -269,6 +282,16 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     );
   }
 
+  Iterable<ConversationSummary> _inScope(
+    Iterable<ConversationSummary> conversations,
+  ) {
+    final workspaceRoot = widget.workspaceRoot;
+    if (workspaceRoot == null) return conversations;
+    return conversations.where(
+      (conversation) => conversation.workspaceRoot == workspaceRoot,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final online =
@@ -298,7 +321,9 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
               textInputAction: TextInputAction.search,
               autofocus: supported,
               decoration: InputDecoration(
-                labelText: '搜索 Host 上的会话',
+                labelText: widget.workspaceRoot == null
+                    ? '搜索 Host 上的会话'
+                    : '搜索当前项目的会话',
                 hintText: '输入标题或会话内容关键词',
                 errorText: _validationError,
                 prefixIcon: const Icon(Icons.search),
@@ -329,18 +354,21 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
       );
     }
     if (!supported) {
-      return const _SearchMessage(
+      return _SearchMessage(
         key: Key('search-unsupported'),
         icon: Icons.search_off_outlined,
-        title: '此设备不支持会话搜索',
-        message: 'Host 上没有 Provider 广告 conversation.search 能力。',
+        title: '当前 Provider 不支持会话搜索',
+        message: widget.session.selectedProvider == null
+            ? '当前设备没有可选择的 Provider。'
+            : '${widget.session.selectedProvider!.displayName} '
+                '没有广告 conversation.search 能力。',
       );
     }
     if (!_hasSearched) {
       return const _SearchMessage(
         icon: Icons.manage_search_outlined,
         title: '搜索远程会话',
-        message: '搜索由各 Provider 在 Host 上执行，结果不会加入首页最近列表。',
+        message: '搜索由当前选中的 Provider 执行，结果不会加入首页最近列表。',
       );
     }
     if (_isLoading && _conversations.isEmpty) {

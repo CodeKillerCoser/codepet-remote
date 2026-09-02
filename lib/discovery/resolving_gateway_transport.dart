@@ -1,17 +1,10 @@
 import 'dart:async';
 
-import '../gateway/models.dart';
+import '../core/domain/models.dart';
+import '../core/errors/gateway_failures.dart';
 import '../gateway/pinned_web_socket_transport.dart';
 import '../gateway/transport.dart';
 import 'codepet_discovery.dart';
-
-abstract interface class EndpointAwareGatewayTransport {
-  Uri? get selectedGatewayUri;
-}
-
-abstract interface class EndpointPersistenceAwareGatewayTransport {
-  bool get shouldPersistSelectedGatewayUri;
-}
 
 Uri? debugAndroidEmulatorGatewayCandidate(Uri preferredGatewayUri) {
   if (!preferredGatewayUri.hasScheme || preferredGatewayUri.host.isEmpty) {

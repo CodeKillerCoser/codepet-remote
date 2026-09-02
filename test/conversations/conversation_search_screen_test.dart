@@ -1,16 +1,16 @@
 import 'dart:async';
 
 import 'package:codepet_remote/devices/device_models.dart';
-import 'package:codepet_remote/devices/device_session.dart';
+import 'package:codepet_remote/application/sessions/device_session.dart';
 import 'package:codepet_remote/features/conversations/conversation_search_screen.dart';
 import 'package:codepet_remote/features/home/remote_home_screen.dart';
-import 'package:codepet_remote/gateway/gateway_client.dart';
-import 'package:codepet_remote/gateway/models.dart';
+import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('home search merges routed results without changing recents', (tester) async {
+  testWidgets('Provider selection scopes home content and search requests', (tester) async {
     _useTallSurface(tester);
     final client = _SearchClient(
       providers: const [_primaryProvider, _secondaryProvider],
@@ -43,6 +43,13 @@ void main() {
     final homeProjection = List<ConversationSummary>.from(session.conversations);
     await tester.pumpWidget(MaterialApp(home: _HomeHarness(session: session)));
 
+    expect(find.text('首页 A'), findsOneWidget);
+    expect(find.text('首页 B'), findsNothing);
+    await tester.tap(find.byKey(Key('provider-${_secondaryRoute.key}')));
+    await tester.pump();
+    expect(find.text('首页 A'), findsNothing);
+    expect(find.text('首页 B'), findsOneWidget);
+
     await tester.tap(find.byKey(const Key('home-search')));
     await _pumpAsync(tester);
     await tester.enterText(find.byKey(const Key('search-input')), 'needle');
@@ -50,19 +57,13 @@ void main() {
     await _pumpAsync(tester);
 
     expect(client.searchRequests.map((request) => request.route), [
-      _primaryRoute,
       _secondaryRoute,
     ]);
-    expect(find.text('3 个结果'), findsOneWidget);
+    expect(find.text('1 个结果'), findsOneWidget);
     expect(find.text('旧结果'), findsNothing);
-    expect(find.text('去重后的结果'), findsOneWidget);
+    expect(find.text('去重后的结果'), findsNothing);
+    expect(find.text('Beta'), findsOneWidget);
     expect(session.conversations, homeProjection);
-    final beta = _conversation(_secondaryRoute, 'beta', 'Beta', 3000);
-    final alpha = _conversation(_primaryRoute, 'alpha', 'Alpha', 2000);
-    expect(
-      tester.getTopLeft(find.byKey(Key('search-result-${conversationRoutingKey(beta)}'))).dy,
-      lessThan(tester.getTopLeft(find.byKey(Key('search-result-${conversationRoutingKey(alpha)}'))).dy),
-    );
 
     Navigator.of(tester.element(find.byType(ConversationSearchScreen))).pop();
     await _pumpAsync(tester);
@@ -431,6 +432,9 @@ class _SearchClient implements GatewayClient {
   }
 
   @override
+  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw UnimplementedError();
+
+  @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
 
   @override
@@ -456,7 +460,11 @@ const _primaryProvider = GatewayProvider(
   providerType: 'dev.codepet.codex',
   displayName: 'Codex Work',
   status: ProviderStatus.ready,
-  methods: ['conversation.list', 'conversation.search', 'conversation.get'],
+  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
+  capabilities: GatewayCapabilities(
+    revision: 'test-1',
+    methods: ['conversation.list', 'conversation.search', 'conversation.get'],
+  ),
 );
 
 const _secondaryProvider = GatewayProvider(
@@ -464,7 +472,11 @@ const _secondaryProvider = GatewayProvider(
   providerType: 'dev.codepet.claude',
   displayName: 'Claude Work',
   status: ProviderStatus.ready,
-  methods: ['conversation.list', 'conversation.search', 'conversation.get'],
+  harness: HarnessDescriptor(id: 'claude', displayName: 'Claude'),
+  capabilities: GatewayCapabilities(
+    revision: 'test-1',
+    methods: ['conversation.list', 'conversation.search', 'conversation.get'],
+  ),
 );
 
 const _listOnlyProvider = GatewayProvider(
@@ -472,5 +484,9 @@ const _listOnlyProvider = GatewayProvider(
   providerType: 'dev.codepet.codex',
   displayName: 'Codex Work',
   status: ProviderStatus.ready,
-  methods: ['conversation.list', 'conversation.get'],
+  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
+  capabilities: GatewayCapabilities(
+    revision: 'test-1',
+    methods: ['conversation.list', 'conversation.get'],
+  ),
 );

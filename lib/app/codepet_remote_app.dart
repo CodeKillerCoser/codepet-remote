@@ -5,15 +5,16 @@ import 'package:flutter/material.dart';
 
 import '../devices/device_models.dart';
 import '../devices/device_registry.dart';
-import '../devices/device_session.dart';
+import '../application/sessions/device_session.dart';
+import '../admission/lan_admission.dart';
+import '../channel/channel.dart';
+import '../core/domain/models.dart';
+import '../core/ports/gateway_client.dart';
 import '../devices/local_device_descriptor.dart';
 import '../features/connection/pair_device_screen.dart';
 import '../features/home/remote_home_screen.dart';
-import '../discovery/resolving_gateway_transport.dart';
 import '../gateway/demo_gateway_client.dart';
 import '../gateway/gateway_client.dart';
-import '../gateway/models.dart';
-import '../pairing/pairing_service.dart';
 
 typedef RestoredGatewayClientBuilder = GatewayClient Function({
   required PairedDevice device,

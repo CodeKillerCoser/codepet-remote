@@ -2,16 +2,22 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
-import '../../devices/device_session.dart';
-import '../../gateway/gateway_client.dart';
-import '../../gateway/models.dart';
-import '../../gateway/transport.dart';
+import '../../application/conversations/conversation_timeline.dart';
+import '../../application/sessions/device_session.dart';
+import '../../core/errors/gateway_failures.dart';
+import '../../core/ports/gateway_client.dart';
+import '../../core/domain/models.dart';
+import '../common/identity_icons.dart';
+import 'widgets/conversation_timeline_view.dart';
 
 const int _messagePageSize = 40;
 const double _nearBottomThreshold = 160;
 const String _unknownOutcomeMessage =
     '上次发送结果未知。请先刷新会话核对；确认后再次发送会创建新请求，仍可能产生重复任务。';
+const ConversationTimelineProjector _timelineProjector =
+    ConversationTimelineProjector();
 
 class ConversationDetailScreen extends StatefulWidget {
   const ConversationDetailScreen({
@@ -38,6 +44,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   _CapabilityBinding? _binding;
   GatewayProvider? _provider;
   ConversationDetail? _detail;
+  List<ConversationTimelineBlock> _timeline = const [];
+  int? _detailFrameCallbackId;
+  bool _followPendingDetailFrame = false;
   String? _error;
   String? _sendError;
   String? _accessModeId;
@@ -49,6 +58,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   bool _outcomeUnknown = false;
   bool _staleCapabilities = false;
   bool _refreshingTerminal = false;
+  bool _metadataExpanded = false;
   bool _messagesExpanded = true;
   int _hiddenMessageCount = 0;
   bool _showScrollToBottom = false;
@@ -83,6 +93,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   void dispose() {
     widget.session.removeListener(_sessionChanged);
     _runtimeEpoch++;
+    _cancelPendingDetailFrame();
     unawaited(_eventWindow?.close());
     _draftController.removeListener(_draftChanged);
     _draftController.dispose();
@@ -131,6 +142,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
 
   Future<void> _bindRuntime() async {
     final epoch = ++_runtimeEpoch;
+    _cancelPendingDetailFrame();
     final previousBinding = _binding;
     final previousWindow = _eventWindow;
     _eventWindow = null;
@@ -154,7 +166,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         _observedLease = lease;
         _binding = binding;
         _provider = provider;
-        _detail = null;
+        _replaceDetail(null);
         _error = null;
         _sendError = preserveUnknown ? _unknownOutcomeMessage : null;
         _accessModeId = null;
@@ -231,15 +243,16 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       }
       _eventWindow = window;
       setState(() {
-        _detail = detail;
+        _replaceDetail(detail);
         _provider = widget.session.providerForConversation(conversation);
         if (initializeSelection) _initializeSelection(detail.summary);
+        final timelineLength = _timeline.length;
         if (previous == null) {
-          _hiddenMessageCount = detail.messages.length > _messagePageSize
-              ? detail.messages.length - _messagePageSize
+          _hiddenMessageCount = timelineLength > _messagePageSize
+              ? timelineLength - _messagePageSize
               : 0;
         } else {
-          _convergeHiddenMessageCount(detail.messages.length);
+          _convergeHiddenMessageCount(timelineLength);
         }
       });
       window.install(
@@ -249,7 +262,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         onError: (Object error, StackTrace _) {
           if (_acceptsRuntime(epoch, lease, binding)) {
             setState(() {
-              _detail = null;
+              _replaceDetail(null);
               _error = '事件流异常：$error';
               _showScrollToBottom = false;
               _scrollRequest++;
@@ -270,7 +283,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         await _eventWindow?.close();
         _eventWindow = null;
         setState(() {
-          _detail = null;
+          _replaceDetail(null);
           _error = error.toString();
           _showScrollToBottom = false;
           _scrollRequest++;
@@ -288,6 +301,47 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       epoch == _runtimeEpoch &&
       _binding == binding &&
       widget.session.ownsRuntimeLease(lease);
+
+  void _replaceDetail(ConversationDetail? detail) {
+    _detail = detail;
+    _timeline = detail == null
+        ? const []
+        : _timelineProjector.project(detail);
+  }
+
+  void _scheduleDetailFrame({required bool followBottom}) {
+    _followPendingDetailFrame |= followBottom;
+    if (_detailFrameCallbackId != null) return;
+    final epoch = _runtimeEpoch;
+    _detailFrameCallbackId =
+        SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _detailFrameCallbackId = null;
+      final shouldFollowBottom = _followPendingDetailFrame;
+      _followPendingDetailFrame = false;
+      if (!mounted || epoch != _runtimeEpoch) return;
+      final detail = _detail;
+      setState(() {
+        _timeline = detail == null
+            ? const []
+            : _timelineProjector.project(detail);
+        _convergeHiddenMessageCount(_timeline.length);
+      });
+      if (shouldFollowBottom && _messagesExpanded) {
+        _followStreamingOutput();
+      } else {
+        _scheduleScrollStateUpdate();
+      }
+    });
+  }
+
+  void _cancelPendingDetailFrame() {
+    final callbackId = _detailFrameCallbackId;
+    if (callbackId != null) {
+      SchedulerBinding.instance.cancelFrameCallbackWithId(callbackId);
+      _detailFrameCallbackId = null;
+    }
+    _followPendingDetailFrame = false;
+  }
 
   void _initializeSelection(ConversationSummary summary) {
     final capabilities = _provider?.capabilities.turnSend;
@@ -342,15 +396,10 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     if (identical(next, detail)) {
       return;
     }
-    setState(() {
-      _detail = next;
-      _convergeHiddenMessageCount(next.messages.length);
-    });
-    if (event is TurnOutputDeltaEvent && wasNearBottom) {
-      _scrollToBottom();
-    } else {
-      _scheduleScrollStateUpdate();
-    }
+    _detail = next;
+    _scheduleDetailFrame(
+      followBottom: event is TurnOutputDeltaEvent && wasNearBottom,
+    );
     if (event is TurnUpsertedEvent &&
         event.turn.conversationId == detail.summary.id &&
         event.turn.status.isTerminal &&
@@ -387,11 +436,13 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       final detail = _detail;
       if (mounted && detail != null) {
         setState(() {
-          _detail = detail.installCommittedSnapshot(
-            detail,
-            completedTurnId: turnId,
+          _replaceDetail(
+            detail.installCommittedSnapshot(
+              detail,
+              completedTurnId: turnId,
+            ),
           );
-          _convergeHiddenMessageCount(_detail!.messages.length);
+          _convergeHiddenMessageCount(_timeline.length);
         });
       }
     } finally {
@@ -486,7 +537,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       );
       if (!_acceptsRuntime(epoch, lease, binding)) return;
       setState(() {
-        _detail = _detail?.accept(receipt);
+        _replaceDetail(_detail?.accept(receipt));
         _accessModeId = receipt.effectiveSelection.accessModeId;
         _reasoningEffortId = receipt.effectiveSelection.reasoningEffortId;
         _modelSelection = receipt.effectiveSelection.model;
@@ -579,39 +630,49 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     });
   }
 
-  void _scrollToBottom() {
+  void _followStreamingOutput() {
     final request = ++_scrollRequest;
-    _animateToBottom(request, retriesRemaining: 2);
-  }
-
-  void _animateToBottom(
-    int request, {
-    required int retriesRemaining,
-  }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           request != _scrollRequest ||
           !_scrollController.hasClients) {
         return;
       }
-      final animation = _scrollController.animateTo(
+      _scrollController.jumpTo(
         _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
       );
-      if (retriesRemaining == 0) return;
-      unawaited(animation.whenComplete(() {
-        if (!mounted ||
-            request != _scrollRequest ||
-            !_scrollController.hasClients ||
-            _scrollController.position.extentAfter <= 1) {
-          return;
-        }
-        _animateToBottom(
-          request,
-          retriesRemaining: retriesRemaining - 1,
-        );
-      }));
+      _handleScroll();
+    });
+  }
+
+  void _scrollToBottom() {
+    final request = ++_scrollRequest;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          request != _scrollRequest ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      unawaited(
+        _scrollController
+            .animateTo(
+              _scrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+            )
+            .then((_) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted ||
+                request != _scrollRequest ||
+                !_scrollController.hasClients) {
+              return;
+            }
+            _scrollController.jumpTo(
+              _scrollController.position.maxScrollExtent,
+            );
+          });
+        }),
+      );
     });
   }
 
@@ -668,16 +729,44 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final provider = _provider ??
+        widget.session.providerForConversation(
+          _detail?.summary ?? widget.conversation,
+        );
+    final providerIdentity = provider == null
+        ? widget.conversation.providerId
+        : provider.icon ?? provider.providerType;
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
-        title: Text(
-          _detail?.summary.title ?? widget.conversation.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        title: Row(
+          children: [
+            Icon(
+              providerIconData(providerIdentity),
+              key: const Key('conversation-provider-icon'),
+              size: 22,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _detail?.summary.title ?? widget.conversation.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
         ),
       ),
       body: _buildBody(),
-      bottomNavigationBar: _buildComposer(),
+      bottomNavigationBar: AnimatedPadding(
+        key: const Key('keyboard-aware-composer'),
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+        padding: EdgeInsets.only(bottom: keyboardInset),
+        child: _buildComposer(),
+      ),
       floatingActionButton: _showScrollToBottom
           ? FloatingActionButton.small(
               key: const Key('scroll-to-bottom'),
@@ -727,8 +816,8 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       );
     }
 
-    final messages = detail.messages;
-    final visibleMessageCount = messages.length - _hiddenMessageCount;
+    final timeline = _timeline;
+    final visibleMessageCount = timeline.length - _hiddenMessageCount;
     return NotificationListener<ScrollStartNotification>(
       onNotification: (notification) {
         if (notification.dragDetails != null) {
@@ -744,7 +833,13 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             sliver: SliverList(
               delegate: SliverChildListDelegate.fixed([
-                _ConversationMetadata(summary: detail.summary),
+                _ConversationMetadata(
+                  summary: detail.summary,
+                  expanded: _metadataExpanded,
+                  onTap: () => setState(() {
+                    _metadataExpanded = !_metadataExpanded;
+                  }),
+                ),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
                   MaterialBanner(
@@ -760,7 +855,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                 const SizedBox(height: 20),
                 _MessagesSectionHeader(
                   expanded: _messagesExpanded,
-                  count: messages.length,
+                  count: timeline.length,
                   onTap: _toggleMessages,
                 ),
                 if (_messagesExpanded && _hiddenMessageCount > 0) ...[
@@ -778,28 +873,34 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
               ]),
             ),
           ),
-          if (_messagesExpanded && messages.isEmpty)
+          if (_messagesExpanded && timeline.isEmpty)
             const SliverPadding(
               padding: EdgeInsets.fromLTRB(16, 0, 16, 28),
               sliver: SliverToBoxAdapter(child: _NoHistoryNotice()),
             ),
-          if (_messagesExpanded && messages.isNotEmpty)
+          if (_messagesExpanded && timeline.isNotEmpty)
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
               sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final message = messages[_hiddenMessageCount + index];
-                    return Padding(
-                      key: Key('message-${message.id}'),
-                      padding: EdgeInsets.only(
-                        bottom: index == visibleMessageCount - 1 ? 0 : 10,
-                      ),
-                      child: _MessageBubble(message: message),
-                    );
-                  },
-                  childCount: visibleMessageCount,
-                ),
+                // The visible window is deliberately bounded. Building it as
+                // a fixed list gives ScrollPosition an exact max extent and
+                // avoids animating into a lazy sliver's estimated blank area.
+                delegate: SliverChildListDelegate.fixed([
+                  for (var index = 0; index < visibleMessageCount; index++)
+                    Builder(builder: (context) {
+                      final block = timeline[_hiddenMessageCount + index];
+                      return Padding(
+                        key: Key('message-${block.id}'),
+                        padding: EdgeInsets.only(
+                          bottom: index == visibleMessageCount - 1 ? 0 : 10,
+                        ),
+                        child: ConversationTimelineBlockView(
+                          key: ValueKey(block.id),
+                          block: block,
+                        ),
+                      );
+                    }),
+                ]),
               ),
             ),
           if (!_messagesExpanded)
@@ -872,49 +973,58 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
               Row(
                 key: const Key('composer-toolbar'),
                 children: [
-                  if (capabilities?.accessMode != null)
-                    Flexible(
-                      child: _ChoiceSelector(
-                        key: const Key('access-mode-selector'),
-                        icon: Icons.shield_outlined,
-                        choices: capabilities!.accessMode!,
-                        selectedId: _accessModeId,
-                        enabled: selectorEnabled,
-                        onSelected: (value) {
-                          setState(() => _accessModeId = value);
-                        },
+                  Expanded(
+                    child: SingleChildScrollView(
+                      key: const Key('composer-options-scroll'),
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          if (capabilities?.accessMode != null)
+                            _ChoiceSelector(
+                              key: const Key('access-mode-selector'),
+                              icon: Icons.shield_outlined,
+                              labelPrefix: '访问',
+                              choices: capabilities!.accessMode!,
+                              selectedId: _accessModeId,
+                              enabled: selectorEnabled,
+                              onSelected: (value) {
+                                setState(() => _accessModeId = value);
+                              },
+                            ),
+                          if (capabilities?.accessMode != null &&
+                              capabilities?.reasoningEffort != null)
+                            const SizedBox(width: 4),
+                          if (capabilities?.reasoningEffort != null)
+                            _ChoiceSelector(
+                              key: const Key('reasoning-effort-selector'),
+                              icon: Icons.psychology_outlined,
+                              labelPrefix: '推理',
+                              choices: capabilities!.reasoningEffort!,
+                              selectedId: _reasoningEffortId,
+                              enabled: selectorEnabled,
+                              onSelected: (value) {
+                                setState(() => _reasoningEffortId = value);
+                              },
+                            ),
+                          if ((capabilities?.accessMode != null ||
+                                  capabilities?.reasoningEffort != null) &&
+                              capabilities?.modelCatalog != null)
+                            const SizedBox(width: 4),
+                          if (capabilities?.modelCatalog != null)
+                            _ModelSelector(
+                              key: const Key('model-selector'),
+                              catalog: capabilities!.modelCatalog!,
+                              selected: _modelSelection,
+                              enabled: selectorEnabled,
+                              onSelected: (value) {
+                                setState(() => _modelSelection = value);
+                              },
+                            ),
+                        ],
                       ),
                     ),
-                  const Spacer(),
-                  if (capabilities?.reasoningEffort != null)
-                    Flexible(
-                      child: _ChoiceSelector(
-                        key: const Key('reasoning-effort-selector'),
-                        icon: Icons.psychology_outlined,
-                        choices: capabilities!.reasoningEffort!,
-                        selectedId: _reasoningEffortId,
-                        enabled: selectorEnabled,
-                        onSelected: (value) {
-                          setState(() => _reasoningEffortId = value);
-                        },
-                      ),
-                    ),
-                  if (capabilities?.reasoningEffort != null &&
-                      capabilities?.modelCatalog != null)
-                    const SizedBox(width: 4),
-                  if (capabilities?.modelCatalog != null)
-                    Flexible(
-                      child: _ModelSelector(
-                        key: const Key('model-selector'),
-                        catalog: capabilities!.modelCatalog!,
-                        selected: _modelSelection,
-                        enabled: selectorEnabled,
-                        onSelected: (value) {
-                          setState(() => _modelSelection = value);
-                        },
-                      ),
-                    ),
-                  const SizedBox(width: 4),
+                  ),
+                  const SizedBox(width: 8),
                   IconButton.filled(
                     key: const Key('turn-send'),
                     tooltip: '发送',
@@ -991,6 +1101,7 @@ class _ChoiceSelector extends StatelessWidget {
   const _ChoiceSelector({
     super.key,
     required this.icon,
+    required this.labelPrefix,
     required this.choices,
     required this.selectedId,
     required this.enabled,
@@ -998,6 +1109,7 @@ class _ChoiceSelector extends StatelessWidget {
   });
 
   final IconData icon;
+  final String labelPrefix;
   final ProviderChoiceSet choices;
   final String? selectedId;
   final bool enabled;
@@ -1028,8 +1140,8 @@ class _ChoiceSelector extends StatelessWidget {
       ],
       child: _SelectorFace(
         icon: icon,
-        label: selected?.displayName ??
-            (available.isEmpty ? '无可用选项' : '请选择'),
+        label: '$labelPrefix · ${selected?.displayName ??
+            (available.isEmpty ? '无可用选项' : '请选择')}',
         enabled: canChoose,
       ),
     );
@@ -1062,8 +1174,8 @@ class _ModelSelector extends StatelessWidget {
       itemBuilder: _entries,
       child: _SelectorFace(
         icon: Icons.memory_outlined,
-        label: _selectionLabel ??
-            (available.isEmpty ? '无可用模型' : '请选择模型'),
+        label: '模型 · ${_selectionLabel ??
+            (available.isEmpty ? '无可用模型' : '请选择模型')}',
         enabled: canChoose,
       ),
     );
@@ -1147,7 +1259,7 @@ class _SelectorFace extends StatelessWidget {
         ? Theme.of(context).colorScheme.onSurface
         : Theme.of(context).colorScheme.onSurfaceVariant;
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 124),
+      constraints: const BoxConstraints(maxWidth: 180),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         child: Row(
@@ -1307,9 +1419,15 @@ class _MessagesSectionHeader extends StatelessWidget {
 }
 
 class _ConversationMetadata extends StatelessWidget {
-  const _ConversationMetadata({required this.summary});
+  const _ConversationMetadata({
+    required this.summary,
+    required this.expanded,
+    required this.onTap,
+  });
 
   final ConversationSummary summary;
+  final bool expanded;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1317,8 +1435,12 @@ class _ConversationMetadata extends StatelessWidget {
     return Card(
       margin: EdgeInsets.zero,
       elevation: 0,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: const Key('conversation-metadata-toggle'),
+        onTap: onTap,
+        child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1341,16 +1463,25 @@ class _ConversationMetadata extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  summary.permissionLevel.wireValue,
+                  summary.permissionLevel,
                   style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 20,
+                  semanticLabel: expanded ? '折叠会话详情' : '展开会话详情',
                 ),
               ],
             ),
-            if (summary.preview != null && summary.preview!.isNotEmpty) ...[
+            if (expanded &&
+                summary.preview != null &&
+                summary.preview!.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text(summary.preview!),
             ],
-            if (summary.model != null || summary.reasoningEffort != null) ...[
+            if (expanded &&
+                (summary.model != null || summary.reasoningEffort != null)) ...[
               const SizedBox(height: 10),
               Text(
                 [summary.model, summary.reasoningEffort]
@@ -1361,7 +1492,7 @@ class _ConversationMetadata extends StatelessWidget {
                     ),
               ),
             ],
-            if (summary.workspaceRoot != null) ...[
+            if (expanded && summary.workspaceRoot != null) ...[
               const SizedBox(height: 6),
               Row(
                 children: [
@@ -1380,6 +1511,7 @@ class _ConversationMetadata extends StatelessWidget {
             ],
           ],
         ),
+      ),
       ),
     );
   }
@@ -1413,151 +1545,6 @@ class _NoHistoryNotice extends StatelessWidget {
     );
   }
 }
-
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
-
-  final GatewayMessage message;
-
-  @override
-  Widget build(BuildContext context) {
-    if (message.role == MessageRole.system) {
-      return _ActivityCard(message: message);
-    }
-    final isUser = message.role == MessageRole.user;
-    final colorScheme = Theme.of(context).colorScheme;
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.84,
-        ),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-          decoration: BoxDecoration(
-            color: isUser
-                ? colorScheme.primaryContainer
-                : colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(isUser ? 16 : 4),
-              bottomRight: Radius.circular(isUser ? 4 : 16),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                isUser ? '你' : 'Host',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-              const SizedBox(height: 4),
-              Text(message.content),
-              if (message.isStreaming) ...[
-                const SizedBox(height: 8),
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ActivityCard extends StatelessWidget {
-  const _ActivityCard({required this.message});
-
-  final GatewayMessage message;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final title = message.title ?? _historyKindLabel(message.kind);
-    final status = message.approvalStatus ?? message.status;
-    return Container(
-      key: Key('history-${message.id}'),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(_historyKindIcon(message.kind), size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-              if (status != null)
-                Text(
-                  _historyStatusLabel(status),
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                ),
-            ],
-          ),
-          if (message.content.isNotEmpty && message.content != title) ...[
-            const SizedBox(height: 8),
-            Text(message.content),
-          ],
-          if (message.isStreaming) ...[
-            const SizedBox(height: 8),
-            const LinearProgressIndicator(),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-String _historyKindLabel(String kind) => switch (kind) {
-      'reasoning' => '推理摘要',
-      'command' => '命令',
-      'file-change' => '文件变更',
-      'tool' => '工具',
-      'approval' => '审批',
-      'unknown' => '活动',
-      _ => '活动',
-    };
-
-IconData _historyKindIcon(String kind) => switch (kind) {
-      'reasoning' => Icons.psychology_outlined,
-      'command' => Icons.terminal_outlined,
-      'file-change' => Icons.edit_document,
-      'tool' => Icons.build_outlined,
-      'approval' => Icons.approval_outlined,
-      _ => Icons.info_outline,
-    };
-
-String _historyStatusLabel(String status) => switch (status) {
-      'pending' => '等待中',
-      'running' => '进行中',
-      'completed' => '已完成',
-      'failed' => '失败',
-      'interrupted' => '已中断',
-      'declined' => '已拒绝',
-      'approved' => '已批准',
-      'denied' => '已拒绝',
-      'expired' => '已过期',
-      _ => status,
-    };
 
 String _statusLabel(ConversationStatus status) {
   return switch (status) {

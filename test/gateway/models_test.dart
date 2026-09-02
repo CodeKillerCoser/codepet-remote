@@ -1,8 +1,8 @@
-import 'package:codepet_remote/gateway/models.dart';
+import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('device descriptor encodes and decodes the Gateway v1 shape', () {
+  test('device descriptor encodes and decodes the Gateway shape', () {
     const descriptor = DeviceDescriptor(
       deviceName: 'Alice phone',
       operatingSystem: 'Android',
@@ -25,31 +25,24 @@ void main() {
 
   group('Provider turn.send capabilities', () {
     test('decodes flat catalog display metadata and default selection', () {
-      final provider = GatewayProvider.fromJson(
-        _providerJson({
-          'kind': 'flat',
-          'models': [
-            {
-              'id': 'fast',
-              'displayName': 'Fast model',
-              'description': 'Low latency',
-            },
-            {
-              'id': 'retired',
-              'displayName': 'Retired model',
-              'enabled': false,
-              'disabledReason': 'No longer available',
-            },
-          ],
-          'defaultSelection': {'kind': 'flat', 'modelId': 'fast'},
-        }),
-      );
+      final catalog = ModelCatalog.fromJson({
+        'kind': 'flat',
+        'models': [
+          {
+            'id': 'fast',
+            'displayName': 'Fast model',
+            'description': 'Low latency',
+          },
+          {
+            'id': 'retired',
+            'displayName': 'Retired model',
+            'enabled': false,
+            'disabledReason': 'No longer available',
+          },
+        ],
+        'defaultSelection': {'kind': 'flat', 'modelId': 'fast'},
+      }) as FlatModelCatalog;
 
-      expect(provider.harness.id, 'codex');
-      expect(provider.harness.displayName, 'Codex');
-      expect(provider.capabilities.revision, 'catalog-7');
-      final catalog = provider.capabilities.turnSend!.modelCatalog
-          as FlatModelCatalog;
       expect(catalog.models.first.displayName, 'Fast model');
       expect(catalog.models.first.description, 'Low latency');
       expect(catalog.availableSelections, [
@@ -62,36 +55,32 @@ void main() {
     });
 
     test('decodes grouped catalog without treating inner provider as route', () {
-      final provider = GatewayProvider.fromJson(
-        _providerJson({
-          'kind': 'grouped',
-          'providers': [
-            {
-              'id': 'inference-a',
-              'displayName': 'Inference A',
-              'description': 'First model provider',
-              'models': [
-                {'id': 'shared', 'displayName': 'Shared A'},
-              ],
-            },
-            {
-              'id': 'inference-b',
-              'displayName': 'Inference B',
-              'models': [
-                {'id': 'shared', 'displayName': 'Shared B'},
-              ],
-            },
-          ],
-          'defaultSelection': {
-            'kind': 'grouped',
-            'providerId': 'inference-b',
-            'modelId': 'shared',
+      final catalog = ModelCatalog.fromJson({
+        'kind': 'grouped',
+        'providers': [
+          {
+            'id': 'inference-a',
+            'displayName': 'Inference A',
+            'description': 'First model provider',
+            'models': [
+              {'id': 'shared', 'displayName': 'Shared A'},
+            ],
           },
-        }),
-      );
+          {
+            'id': 'inference-b',
+            'displayName': 'Inference B',
+            'models': [
+              {'id': 'shared', 'displayName': 'Shared B'},
+            ],
+          },
+        ],
+        'defaultSelection': {
+          'kind': 'grouped',
+          'providerId': 'inference-b',
+          'modelId': 'shared',
+        },
+      }) as GroupedModelCatalog;
 
-      final catalog = provider.capabilities.turnSend!.modelCatalog
-          as GroupedModelCatalog;
       expect(catalog.providers.map((item) => item.displayName), [
         'Inference A',
         'Inference B',
@@ -106,7 +95,6 @@ void main() {
           modelId: 'shared',
         ),
       ]);
-      expect(provider.route.providerInstanceId, 'outer-provider');
       expect(catalog.defaultSelection?.toJson(), {
         'kind': 'grouped',
         'providerId': 'inference-b',
@@ -116,47 +104,47 @@ void main() {
 
     test('rejects malformed kinds, empty controls and invalid defaults', () {
       expect(
-        () => GatewayProvider.fromJson(_providerJson({
+        () => ModelCatalog.fromJson({
           'models': [
             {'id': 'model', 'displayName': 'Model'},
           ],
-        })),
+        }),
         throwsFormatException,
       );
       expect(
-        () => GatewayProvider.fromJson(_providerJson({
+        () => ModelCatalog.fromJson({
           'kind': 'flat',
           'models': <Object>[],
-        })),
+        }),
         throwsFormatException,
       );
-      final invalidChoice = _providerJson({
-        'kind': 'flat',
-        'models': [
-          {'id': 'model', 'displayName': 'Model'},
-        ],
-      });
-      final capabilities = invalidChoice['capabilities'] as Map<String, dynamic>;
-      final turnSend = capabilities['turnSend'] as Map<String, dynamic>;
-      turnSend['accessMode'] = {
-        'options': [
-          {
-            'id': 'disabled',
-            'displayName': 'Disabled',
-            'enabled': false,
-          },
-        ],
-        'defaultId': 'disabled',
-      };
       expect(
-        () => GatewayProvider.fromJson(invalidChoice),
+        () => ProviderChoiceSet.fromJson({
+          'options': [
+            {
+              'id': 'disabled',
+              'displayName': 'Disabled',
+              'enabled': false,
+            },
+          ],
+          'defaultId': 'disabled',
+        }),
         throwsFormatException,
       );
     });
   });
 
   group('ConversationDetail event projection', () {
-    final summary = ConversationSummary.fromJson(_conversationJson());
+    final summary = ConversationSummary(
+      id: 'conversation-1',
+      providerId: 'codex',
+      title: 'Test conversation',
+      preview: 'Preview',
+      status: ConversationStatus.running,
+      permissionLevel: PermissionLevel.workspaceWrite,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(2000, isUtc: true),
+    );
 
     test('merges output deltas by routed content id', () {
       var detail = ConversationDetail(summary: summary);
@@ -336,49 +324,4 @@ void main() {
     });
   });
 
-}
-
-Map<String, dynamic> _providerJson(Map<String, dynamic> modelCatalog) => {
-      'route': {
-        'deviceId': 'host',
-        'providerPluginId': 'plugin',
-        'providerInstanceId': 'outer-provider',
-      },
-      'pluginId': 'plugin',
-      'displayName': 'Provider instance',
-      'harness': {
-        'id': 'codex',
-        'displayName': 'Codex',
-        'version': '1.0.0',
-      },
-      'status': 'ready',
-      'capabilities': {
-        'revision': 'catalog-7',
-        'methods': ['conversation.get', 'turn.send'],
-        'turnSend': {
-          'accessMode': {
-            'options': [
-              {
-                'id': 'workspace-write',
-                'displayName': 'Workspace write',
-              },
-            ],
-            'defaultId': 'workspace-write',
-          },
-          'modelCatalog': modelCatalog,
-        },
-      },
-    };
-
-Map<String, dynamic> _conversationJson() {
-  return {
-    'id': 'conversation-1',
-    'providerId': 'codex',
-    'title': 'Test conversation',
-    'preview': 'Preview',
-    'status': 'running',
-    'permissionLevel': 'workspace-write',
-    'createdAt': 1000,
-    'updatedAt': 2000,
-  };
 }

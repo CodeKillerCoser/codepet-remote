@@ -4,8 +4,8 @@ import 'package:codepet_remote/app/codepet_remote_app.dart';
 import 'package:codepet_remote/devices/device_models.dart';
 import 'package:codepet_remote/devices/device_registry.dart';
 import 'package:codepet_remote/devices/local_device_descriptor.dart';
-import 'package:codepet_remote/gateway/gateway_client.dart';
-import 'package:codepet_remote/gateway/models.dart';
+import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -46,7 +46,7 @@ void main() {
 
       expect(find.byKey(const Key('device-host-persisted')), findsOneWidget);
       expect(find.text('Real Host Name'), findsOneWidget);
-      expect(find.textContaining('TestOS 1 · 在线'), findsOneWidget);
+      expect(find.text('TestOS 1'), findsOneWidget);
       expect(restoredCredentials, ['restored-credential']);
       expect(connections, 1);
 
@@ -250,6 +250,9 @@ class _GatewayClient implements GatewayClient {
         detail: ConversationDetail(summary: conversation),
         snapshotCursor: 'handshake',
       );
+
+  @override
+  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw UnimplementedError();
 
   @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();

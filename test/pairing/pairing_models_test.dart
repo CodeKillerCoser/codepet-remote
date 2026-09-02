@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   // Fixture copied from CodePet@7c06e05 protocol/gateway/v1/fixtures.
-  test('parses the Gateway v1 QR fixture with strict fields', () {
+  test('parses the Gateway QR fixture with generated strict fields', () {
     final source = File('test/fixtures/gateway_v1/pairing-qr-payload.json').readAsStringSync();
     final qr = PairingQrPayload.parse(source, now: DateTime.utc(2026, 1, 1));
     expect(qr.hostDeviceId, 'device-macbook-1');
@@ -21,6 +21,17 @@ void main() {
     expect(() => PairingQrPayload.parse(payload(',"extra":true', 'https://host:1', 'b' * 64, 9999999999999)), throwsFormatException);
     expect(() => PairingQrPayload.parse(payload('', 'http://host:1', 'b' * 64, 9999999999999)), throwsFormatException);
     expect(() => PairingQrPayload.parse(payload('', 'https://host:1', 'B' * 64, 9999999999999)), throwsFormatException);
+  });
+
+  test('does not confuse the Gateway version with the LAN QR version', () {
+    final source = File('test/fixtures/gateway_v1/pairing-qr-payload.json')
+        .readAsStringSync()
+        .replaceFirst('"version": 1', '"version": 2');
+
+    expect(
+      () => PairingQrPayload.parse(source, now: DateTime.utc(2026, 1, 1)),
+      throwsFormatException,
+    );
   });
 
   test('certificate fingerprint comparison is constant-work and exact', () {

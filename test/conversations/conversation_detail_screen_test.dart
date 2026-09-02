@@ -1,15 +1,50 @@
 import 'dart:async';
 
 import 'package:codepet_remote/devices/device_models.dart';
-import 'package:codepet_remote/devices/device_session.dart';
+import 'package:codepet_remote/application/sessions/device_session.dart';
 import 'package:codepet_remote/features/conversations/conversation_detail_screen.dart';
-import 'package:codepet_remote/gateway/gateway_client.dart';
-import 'package:codepet_remote/gateway/models.dart';
-import 'package:codepet_remote/gateway/transport.dart';
+import 'package:codepet_remote/core/errors/gateway_failures.dart';
+import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 void main() {
+  testWidgets('shows Provider icon and keeps conversation details collapsed',
+      (tester) async {
+    final client = _DetailClient();
+    final conversation = ConversationSummary(
+      id: _conversation.id,
+      providerId: _conversation.providerId,
+      title: _conversation.title,
+      preview: '默认隐藏的会话摘要',
+      status: ConversationStatus.idle,
+      permissionLevel: PermissionLevel.workspaceWrite,
+      model: 'test-model',
+      reasoningEffort: 'high',
+      workspaceRoot: '/workspace/project',
+      createdAt: _conversation.createdAt,
+      updatedAt: _conversation.updatedAt,
+      wireResource: _conversation.wireResource,
+    );
+
+    await _pumpDetail(tester, client, conversation: conversation);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('conversation-provider-icon')), findsOneWidget);
+    expect(find.text('默认隐藏的会话摘要'), findsNothing);
+    expect(find.text('test-model · high'), findsNothing);
+    expect(find.text('/workspace/project'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('conversation-metadata-toggle')));
+    await tester.pump();
+
+    expect(find.text('默认隐藏的会话摘要'), findsOneWidget);
+    expect(find.text('test-model · high'), findsOneWidget);
+    expect(find.text('/workspace/project'), findsOneWidget);
+  });
+
   testWidgets('shows the latest history page and reveals earlier messages', (tester) async {
     final client = _DetailClient(
       committedMessages: [
@@ -120,6 +155,37 @@ void main() {
     expect(find.text('第二条'), findsOneWidget);
     expect(find.text('折叠期间的新消息'), findsOneWidget);
 
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('coalesces live output within a frame without dropping deltas',
+      (tester) async {
+    final client = _DetailClient();
+    await _pumpDetail(tester, client);
+    await tester.pumpAndSettle();
+
+    for (var index = 0; index < 20; index++) {
+      client.emit(TurnOutputDeltaEvent(
+        eventCursor: 'burst-$index',
+        providerId: 'provider',
+        conversationId: 'conversation',
+        turnId: 'burst-turn',
+        itemId: 'burst-item',
+        contentId: 'burst-item:text',
+        kind: 'text',
+        delta: '$index ',
+      ));
+    }
+    await tester.pump();
+    await tester.pump();
+
+    final liveMarkdown = tester
+        .widgetList<MarkdownBody>(find.byType(MarkdownBody))
+        .map((body) => body.data)
+        .where((data) => data.startsWith('0 1 2 '));
+    expect(liveMarkdown,
+        contains('0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 '));
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
@@ -261,6 +327,42 @@ void main() {
     await client.close();
   });
 
+  testWidgets('renders conversational text as Markdown', (tester) async {
+    final client = _DetailClient(
+      committedMessages: [
+        _history('user-markdown', MessageRole.user, 'message', '**user bold**'),
+        _history(
+          'assistant-markdown',
+          MessageRole.assistant,
+          'message',
+          '**assistant bold**',
+        ),
+      ],
+    );
+    await _pumpDetail(tester, client);
+    await tester.pumpAndSettle();
+
+    final markdownBodies = tester
+        .widgetList<MarkdownBody>(find.byType(MarkdownBody))
+        .map((body) => body.data)
+        .toList(growable: false);
+    expect(markdownBodies, containsAll(['**user bold**', '**assistant bold**']));
+    final assistantBodyBefore = tester
+        .widgetList<MarkdownBody>(find.byType(MarkdownBody))
+        .singleWhere((body) => body.data == '**assistant bold**');
+    await tester.tap(find.byKey(const Key('conversation-metadata-toggle')));
+    await tester.pump();
+    final assistantBodyAfter = tester
+        .widgetList<MarkdownBody>(find.byType(MarkdownBody))
+        .singleWhere((body) => body.data == '**assistant bold**');
+    expect(identical(assistantBodyBefore, assistantBodyAfter), isTrue);
+    expect(find.text('**assistant bold**', findRichText: true), findsNothing);
+    expect(find.text('assistant bold', findRichText: true), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('does not duplicate a committed body when its delta replays after the snapshot', (tester) async {
     final committed = GatewayMessage(
       id: 'item',
@@ -337,9 +439,9 @@ void main() {
       tester.getCenter(find.byKey(const Key('access-mode-selector'))).dx,
       lessThan(tester.getCenter(find.byKey(const Key('reasoning-effort-selector'))).dx),
     );
-    expect(find.text('Read only'), findsOneWidget);
-    expect(find.text('High'), findsOneWidget);
-    expect(find.text('Deep'), findsOneWidget);
+    expect(find.text('访问 · Read only'), findsOneWidget);
+    expect(find.text('推理 · High'), findsOneWidget);
+    expect(find.text('模型 · Deep'), findsOneWidget);
     final reasoningPopup = tester.widget<PopupMenuButton<String>>(
       find.descendant(
         of: find.byKey(const Key('reasoning-effort-selector')),
@@ -374,7 +476,43 @@ void main() {
       'modelId': 'deep',
     });
     expect(find.byKey(const Key('turn-input')), findsOneWidget);
-    expect(find.text('original text'), findsNothing);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('turn-input')))
+          .controller
+          ?.text,
+      isEmpty,
+    );
+    expect(find.text('original text'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('raises the composer above the software keyboard', (tester) async {
+    final client = _DetailClient();
+    await _pumpDetail(
+      tester,
+      client,
+      conversation: _idleConversation(),
+    );
+    await tester.pumpAndSettle();
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final logicalHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    final logicalKeyboardInset = 300 / tester.view.devicePixelRatio;
+    final composerBottom = tester
+        .getBottomLeft(find.byKey(const Key('conversation-composer')))
+        .dy;
+    expect(
+      composerBottom,
+      lessThanOrEqualTo(logicalHeight - logicalKeyboardInset),
+    );
+
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
@@ -799,18 +937,18 @@ void main() {
         ))
         .map((text) => text.data)
         .toList();
-    expect(accessLabels, contains('New mode'));
+    expect(accessLabels, contains('访问 · New mode'));
     expect(
       find.descendant(
         of: find.byKey(const Key('reasoning-effort-selector')),
-        matching: find.text('New effort'),
+        matching: find.text('推理 · New effort'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: find.byKey(const Key('model-selector')),
-        matching: find.text('New model'),
+        matching: find.text('模型 · New model'),
       ),
       findsOneWidget,
     );
@@ -1023,6 +1161,7 @@ class _DetailClient implements GatewayClient {
   @override Future<GatewayHandshake> connect() async => GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: [provider], eventCursor: _cursor);
   @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
+  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw UnimplementedError();
   @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) {
     final call = _SendCall(

@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:codepet_remote/devices/device_models.dart';
-import 'package:codepet_remote/devices/device_session.dart';
-import 'package:codepet_remote/gateway/gateway_client.dart';
-import 'package:codepet_remote/gateway/models.dart';
-import 'package:codepet_remote/gateway/transport.dart';
+import 'package:codepet_remote/application/sessions/device_session.dart';
+import 'package:codepet_remote/core/errors/gateway_failures.dart';
+import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -426,6 +426,156 @@ void main() {
       session.conversations.single.updatedAt,
       DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
     );
+    session.dispose();
+  });
+
+  test('turn events keep the conversation list running state live', () async {
+    final conversation = _routedConversation(
+      nativeId: 'live-thread',
+      providerPluginId: _primaryRoute.providerPluginId,
+      providerInstanceId: _primaryRoute.providerInstanceId,
+      workspaceRoot: '/repo',
+      updatedAt: 1000,
+    );
+    final client = _FakeClient([conversation]);
+    final session = DeviceSession(
+      device: _device('live-turn'),
+      clientFactory: () => client,
+    );
+    await session.connect();
+
+    client.emit(TurnUpsertedEvent(
+      eventCursor: 'running',
+      turn: _turnFor(conversation, TurnStatus.running, 2000),
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.conversations.single.status, ConversationStatus.running);
+    expect(session.conversations.single.activeTurn?.status, TurnStatus.running);
+
+    client.emit(TurnOutputDeltaEvent(
+      eventCursor: 'delta-1',
+      providerId: conversation.providerId,
+      conversationId: conversationRoutingKey(conversation),
+      turnId: 'turn-live',
+      itemId: 'assistant',
+      contentId: 'assistant:text',
+      kind: 'text',
+      delta: '实时',
+    ));
+    client.emit(TurnOutputDeltaEvent(
+      eventCursor: 'delta-2',
+      providerId: conversation.providerId,
+      conversationId: conversationRoutingKey(conversation),
+      turnId: 'turn-live',
+      itemId: 'assistant',
+      contentId: 'assistant:text',
+      kind: 'text',
+      delta: '内容',
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.conversations.single.preview, '实时内容');
+
+    client.emit(TurnUpsertedEvent(
+      eventCursor: 'completed',
+      turn: _turnFor(conversation, TurnStatus.completed, 3000),
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.conversations.single.status, ConversationStatus.idle);
+    expect(session.conversations.single.activeTurn, isNull);
+    expect(
+      session.conversations.single.updatedAt,
+      DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
+    );
+    session.dispose();
+  });
+
+  testWidgets('coalesces a burst of output deltas into one frame notification',
+      (tester) async {
+    final conversation = _routedConversation(
+      nativeId: 'coalesced-thread',
+      providerPluginId: _primaryRoute.providerPluginId,
+      providerInstanceId: _primaryRoute.providerInstanceId,
+      workspaceRoot: '/repo',
+      updatedAt: 1000,
+    );
+    final client = _FakeClient([conversation]);
+    final session = DeviceSession(
+      device: _device('coalesced-deltas'),
+      clientFactory: () => client,
+    );
+    await session.connect();
+    var sessionNotifications = 0;
+    var rowNotifications = 0;
+    session.addListener(() => sessionNotifications++);
+    session.conversationListenable(conversation).addListener(
+          () => rowNotifications++,
+        );
+
+    for (var index = 0; index < 20; index++) {
+      client.emit(TurnOutputDeltaEvent(
+        eventCursor: 'delta-$index',
+        providerId: conversation.providerId,
+        conversationId: conversationRoutingKey(conversation),
+        turnId: 'turn-live',
+        itemId: 'assistant',
+        contentId: 'assistant:text',
+        kind: 'text',
+        delta: '$index',
+      ));
+    }
+    await tester.pump();
+    await tester.pump();
+
+    expect(sessionNotifications, 0);
+    expect(rowNotifications, 1);
+    expect(session.conversations.single.preview, contains('19'));
+    session.dispose();
+  });
+
+  test('an unknown turn event refreshes its Provider conversation list', () async {
+    late ConversationSummary discovered;
+    var listCalls = 0;
+    final client = _FakeClient(
+      const [],
+      onListConversations: ({required GatewayProviderRoute route, required String? cursor, required int limit}) async {
+        listCalls++;
+        if (listCalls == 1) {
+          return const ConversationPage(
+            conversations: [],
+            snapshotCursor: 'handshake',
+          );
+        }
+        return ConversationPage(
+          conversations: [discovered],
+          snapshotCursor: 'running',
+        );
+      },
+    );
+    final session = DeviceSession(
+      device: _device('discover-from-turn'),
+      clientFactory: () => client,
+    );
+    await session.connect();
+    discovered = _routedConversation(
+      nativeId: 'new-thread',
+      providerPluginId: _primaryRoute.providerPluginId,
+      providerInstanceId: _primaryRoute.providerInstanceId,
+      workspaceRoot: '/repo',
+      updatedAt: 1000,
+    );
+
+    client.emit(TurnUpsertedEvent(
+      eventCursor: 'running',
+      turn: _turnFor(discovered, TurnStatus.running, 2000),
+    ));
+    await pumpEventQueue();
+
+    expect(listCalls, 2);
+    expect(session.conversations.single.id, discovered.id);
+    expect(session.conversations.single.status, ConversationStatus.running);
     session.dispose();
   });
 
@@ -867,6 +1017,25 @@ ConversationSummary _routedConversation({
   );
 }
 
+TurnTask _turnFor(
+  ConversationSummary conversation,
+  TurnStatus status,
+  int updatedAt,
+) {
+  final conversationResource = conversation.wireResource!;
+  final turnResource = Map<String, dynamic>.from(conversationResource)
+    ..['nativeResourceId'] = 'turn-live';
+  return TurnTask(
+    id: turnResource.values.join('\u0000'),
+    providerId: conversation.providerId,
+    conversationId: conversationRoutingKey(conversation),
+    status: status,
+    updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt, isUtc: true),
+    wireResource: turnResource,
+    conversationWireResource: conversationResource,
+  );
+}
+
 typedef _ListConversationsHandler = Future<ConversationPage> Function({
   required GatewayProviderRoute route,
   required String? cursor,
@@ -928,6 +1097,7 @@ class _FakeClient implements GatewayClient {
   }
   @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: _cursor);
+  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw UnimplementedError();
   @override Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
   @override Future<void> close() async { closed = true; await controller.close(); }
 }
@@ -946,6 +1116,7 @@ class _FailingClient implements GatewayClient {
   @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) => throw StateError('not reached');
   @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw StateError('not reached');
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) => throw StateError('not reached');
+  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot}) => throw StateError('not reached');
   @override Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw StateError('not reached');
   @override Future<void> close() async {
     closeCalled = true;
@@ -976,7 +1147,11 @@ const _listProvider = GatewayProvider(
   providerType: 'dev.codepet.codex',
   displayName: 'Codex Work',
   status: ProviderStatus.ready,
-  methods: ['conversation.list', 'conversation.get'],
+  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
+  capabilities: GatewayCapabilities(
+    revision: 'test-1',
+    methods: ['conversation.list', 'conversation.get'],
+  ),
 );
 
 const _secondaryRoute = GatewayProviderRoute(
@@ -990,7 +1165,11 @@ const _secondaryListProvider = GatewayProvider(
   providerType: 'dev.codepet.claude',
   displayName: 'Claude Work',
   status: ProviderStatus.ready,
-  methods: ['conversation.list', 'conversation.get'],
+  harness: HarnessDescriptor(id: 'claude', displayName: 'Claude'),
+  capabilities: GatewayCapabilities(
+    revision: 'test-1',
+    methods: ['conversation.list', 'conversation.get'],
+  ),
 );
 
 class _NonRetryableClient extends _FailingClient {

@@ -1,11 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 
-import '../gateway/gateway_client.dart';
-import '../gateway/models.dart';
-import '../gateway/transport.dart';
-import 'device_models.dart';
+import '../../core/domain/models.dart';
+import '../../core/errors/gateway_failures.dart';
+import '../../core/ports/gateway_client.dart';
+import '../../devices/device_models.dart';
 
 enum DeviceConnectionState { offline, connecting, online, failed }
 
@@ -43,12 +44,19 @@ class DeviceSession extends ChangeNotifier {
   GatewayEventWindow? _eventWindow;
   Timer? _reconnectTimer;
   final Map<GatewayProviderRoute, String?> _conversationCursors = {};
+  final Set<GatewayProviderRoute> _conversationRefreshes = {};
+  final Map<String, String> _livePreviewByContent = {};
+  final Map<String, ValueNotifier<ConversationSummary>>
+      _conversationNotifiers = {};
+  final Set<String> _pendingConversationNotifications = {};
   bool _isLoadingMoreConversations = false;
   String? _loadMoreError;
   int _runtimeGeneration = 0;
   int _reconnectAttempt = 0;
   bool _reconnectEnabled = false;
   bool _disposed = false;
+  int? _conversationNotificationCallbackId;
+  GatewayProviderRoute? _selectedProviderRoute;
   DeviceConnectionState connectionState = DeviceConnectionState.offline;
   GatewayHandshake? handshake;
   String? error;
@@ -77,6 +85,46 @@ class DeviceSession extends ChangeNotifier {
           .where((provider) => provider.methods.contains('conversation.search'))
           .toList(growable: false) ??
       const [];
+  GatewayProvider? get selectedProvider {
+    final providers = handshake?.providers ?? const <GatewayProvider>[];
+    if (providers.isEmpty) return null;
+    final selectedRoute = _selectedProviderRoute;
+    if (selectedRoute != null) {
+      for (final provider in providers) {
+        if (provider.route == selectedRoute) return provider;
+      }
+    }
+    return providers.first;
+  }
+  List<ConversationSummary> get selectedProviderConversations {
+    final provider = selectedProvider;
+    if (provider == null) return conversations;
+    return conversations
+        .where((conversation) => conversationBelongsToProvider(
+              conversation,
+              provider,
+            ))
+        .toList(growable: false);
+  }
+  bool get canLoadMoreSelectedProviderConversations {
+    final provider = selectedProvider;
+    return provider == null
+        ? canLoadMoreConversations
+        : connectionState == DeviceConnectionState.online &&
+            _conversationCursors[provider.route] != null;
+  }
+  String get selectedProviderConversationCountLabel =>
+      '${selectedProviderConversations.length}'
+      '${canLoadMoreSelectedProviderConversations ? '+' : ''}';
+
+  void selectProvider(GatewayProvider provider) {
+    final providers = handshake?.providers ?? const <GatewayProvider>[];
+    if (!providers.any((item) => item.route == provider.route)) return;
+    if (_selectedProviderRoute == provider.route) return;
+    _selectedProviderRoute = provider.route;
+    _loadMoreError = null;
+    _notifyListenersImmediately();
+  }
   GatewayProvider? providerForConversation(ConversationSummary conversation) {
     final resource = conversation.wireResource;
     final deviceId = resource?['deviceId'];
@@ -98,6 +146,14 @@ class DeviceSession extends ChangeNotifier {
     }
     return null;
   }
+  bool conversationBelongsToProvider(
+    ConversationSummary conversation,
+    GatewayProvider provider,
+  ) {
+    final routedProvider = providerForConversation(conversation);
+    return routedProvider?.route == provider.route ||
+        routedProvider == null && conversation.providerId == provider.id;
+  }
   bool get canLoadMoreConversations =>
       connectionState == DeviceConnectionState.online &&
       _conversationCursors.values.any((cursor) => cursor != null);
@@ -105,6 +161,18 @@ class DeviceSession extends ChangeNotifier {
       '${conversations.length}${canLoadMoreConversations ? '+' : ''}';
   bool get isLoadingMoreConversations => _isLoadingMoreConversations;
   String? get loadMoreError => _loadMoreError;
+
+  ValueListenable<ConversationSummary> conversationListenable(
+    ConversationSummary fallback,
+  ) {
+    final key = conversationRoutingKey(fallback);
+    final current = _conversationForKey(key) ?? fallback;
+    final notifier = _conversationNotifiers.putIfAbsent(
+      key,
+      () => ValueNotifier(current),
+    );
+    return notifier;
+  }
 
   Future<void> connect() {
     _reconnectEnabled = autoReconnect;
@@ -123,7 +191,7 @@ class DeviceSession extends ChangeNotifier {
     _resetConversationPagination();
     connectionState = DeviceConnectionState.connecting;
     error = null;
-    notifyListeners();
+    _notifyListenersImmediately();
     try {
       await oldWindow?.close();
     } catch (_) {}
@@ -139,6 +207,10 @@ class DeviceSession extends ChangeNotifier {
       final connectedHandshake = await client.connect();
       if (!_ownsRuntime(generation, client)) return;
       handshake = connectedHandshake;
+      final providers = connectedHandshake.providers;
+      if (!providers.any((provider) => provider.route == _selectedProviderRoute)) {
+        _selectedProviderRoute = providers.isEmpty ? null : providers.first.route;
+      }
       final hostDescriptor = connectedHandshake.deviceDescriptor;
       if (hostDescriptor != null) {
         device = device.withDescriptor(hostDescriptor);
@@ -182,7 +254,7 @@ class DeviceSession extends ChangeNotifier {
       );
       connectionState = DeviceConnectionState.online;
       _reconnectAttempt = 0;
-      notifyListeners();
+      _notifyListenersImmediately();
     } catch (value) {
       if (generation != _runtimeGeneration) return;
       final connectionError = value.toString();
@@ -195,7 +267,7 @@ class DeviceSession extends ChangeNotifier {
       _resetConversationPagination();
       error = connectionError;
       connectionState = DeviceConnectionState.failed;
-      notifyListeners();
+      _notifyListenersImmediately();
       try {
         await window?.close();
       } catch (_) {}
@@ -231,10 +303,11 @@ class DeviceSession extends ChangeNotifier {
     if (resetAttempt) _reconnectAttempt = 0;
   }
 
-  Future<void> loadMoreConversations() async {
+  Future<void> loadMoreConversations({GatewayProviderRoute? route}) async {
     final client = _client;
     final pendingRoutes = _conversationCursors.entries
-        .where((entry) => entry.value != null)
+        .where((entry) =>
+            entry.value != null && (route == null || entry.key == route))
         .toList(growable: false);
     if (connectionState != DeviceConnectionState.online ||
         client == null ||
@@ -246,7 +319,7 @@ class DeviceSession extends ChangeNotifier {
     final generation = _runtimeGeneration;
     _isLoadingMoreConversations = true;
     _loadMoreError = null;
-    notifyListeners();
+    _notifyListenersImmediately();
     try {
       final pages = await Future.wait([
         for (final entry in pendingRoutes)
@@ -272,9 +345,58 @@ class DeviceSession extends ChangeNotifier {
     } finally {
       if (_ownsRuntime(generation, client)) {
         _isLoadingMoreConversations = false;
-        notifyListeners();
+        _notifyListenersImmediately();
       }
     }
+  }
+
+  Future<void> loadMoreSelectedProviderConversations() =>
+      loadMoreConversations(route: selectedProvider?.route);
+
+  Future<ConversationSummary> createConversation({
+    required GatewayProvider provider,
+    String? title,
+    String? workspaceRoot,
+  }) async {
+    final lease = runtimeLease;
+    if (lease == null ||
+        provider.status != ProviderStatus.ready ||
+        !provider.methods.contains('conversation.create')) {
+      throw StateError('当前 Provider 不支持新建会话');
+    }
+    final capabilities = provider.capabilities.turnSend;
+    final accessMode = capabilities?.accessMode;
+    final permissionLevel = accessMode?.defaultId ??
+        (accessMode?.availableOptions.isNotEmpty == true
+            ? accessMode!.availableOptions.first.id
+            : PermissionLevel.workspaceWrite);
+    final reasoning = capabilities?.reasoningEffort;
+    final reasoningEffort = reasoning?.defaultId ??
+        (reasoning?.availableOptions.isNotEmpty == true
+            ? reasoning!.availableOptions.first.id
+            : null);
+    final modelCatalog = capabilities?.modelCatalog;
+    final modelSelection = modelCatalog?.defaultSelection ??
+        (modelCatalog?.availableSelections.isNotEmpty == true
+            ? modelCatalog!.availableSelections.first
+            : null);
+    final model = modelCatalog?.modelFor(modelSelection)?.id;
+    final conversation = await lease.client.createConversation(
+      route: provider.route,
+      title: title?.trim().isEmpty == true ? null : title?.trim(),
+      permissionLevel: permissionLevel,
+      model: model,
+      reasoningEffort: reasoningEffort,
+      workspaceRoot: workspaceRoot?.trim().isEmpty == true
+          ? null
+          : workspaceRoot?.trim(),
+    );
+    if (!ownsRuntimeLease(lease)) {
+      throw StateError('连接已变化，请重新新建会话');
+    }
+    _upsertEventConversation(conversation);
+    _notifyListenersImmediately();
+    return conversation;
   }
 
   bool _ownsRuntime(int generation, GatewayClient client) =>
@@ -283,6 +405,8 @@ class DeviceSession extends ChangeNotifier {
   void _resetConversationPagination() {
     conversations = const [];
     _conversationCursors.clear();
+    _conversationRefreshes.clear();
+    _livePreviewByContent.clear();
     _isLoadingMoreConversations = false;
     _loadMoreError = null;
   }
@@ -302,7 +426,7 @@ class DeviceSession extends ChangeNotifier {
     _resetConversationPagination();
     error = message;
     connectionState = DeviceConnectionState.failed;
-    notifyListeners();
+    _notifyListenersImmediately();
     try {
       await window?.close();
     } catch (_) {}
@@ -325,15 +449,167 @@ class DeviceSession extends ChangeNotifier {
       if (index == -1) return;
       providers[index] = event.provider;
       handshake = currentHandshake.withProviders(providers);
-      notifyListeners();
+      _notifyListenersImmediately();
       return;
     }
-    if (event is! ConversationUpsertedEvent) return;
-    conversations = mergeRoutedConversations(
-      conversations,
-      [event.conversation],
+    if (event is ConversationUpsertedEvent) {
+      _upsertEventConversation(event.conversation);
+      _notifyListenersImmediately();
+      return;
+    }
+    if (event is TurnOutputDeltaEvent) {
+      if (_applyDeltaToConversation(event)) {
+        _scheduleConversationNotification();
+      }
+      return;
+    }
+    if (event is! TurnUpsertedEvent) return;
+    if (_applyTurnToConversation(event.turn)) {
+      _notifyListenersImmediately();
+      return;
+    }
+    final route = _routeForTurn(event.turn);
+    if (route != null) {
+      unawaited(_refreshConversationsForEvent(route, event.turn));
+    }
+  }
+
+  void _upsertEventConversation(ConversationSummary incoming) {
+    final key = conversationRoutingKey(incoming);
+    ConversationSummary? current;
+    for (final conversation in conversations) {
+      if (conversationRoutingKey(conversation) == key) {
+        current = conversation;
+        break;
+      }
+    }
+    if (current != null && current.updatedAt.isAfter(incoming.updatedAt)) return;
+    conversations = sortRecentConversations([
+      for (final conversation in conversations)
+        if (conversationRoutingKey(conversation) != key) conversation,
+      incoming,
+    ]);
+  }
+
+  bool _applyTurnToConversation(TurnTask turn) {
+    final turnConversationKey = _resourceKey(turn.conversationWireResource);
+    final index = conversations.indexWhere(
+      (conversation) =>
+          conversationRoutingKey(conversation) == turn.conversationId ||
+          conversation.id == turn.conversationId ||
+          turnConversationKey != null &&
+              _resourceKey(conversation.wireResource) == turnConversationKey,
     );
-    notifyListeners();
+    if (index == -1) return false;
+    final current = conversations[index];
+    if (current.updatedAt.isAfter(turn.updatedAt)) return true;
+    final next = ConversationSummary(
+      id: current.id,
+      providerId: current.providerId,
+      title: current.title,
+      preview: current.preview,
+      status: switch (turn.status) {
+        TurnStatus.queued || TurnStatus.running => ConversationStatus.running,
+        TurnStatus.waitingApproval => ConversationStatus.waitingApproval,
+        TurnStatus.failed => ConversationStatus.error,
+        TurnStatus.completed || TurnStatus.interrupted => ConversationStatus.idle,
+      },
+      permissionLevel: current.permissionLevel,
+      model: current.model,
+      reasoningEffort: current.reasoningEffort,
+      workspaceRoot: current.workspaceRoot,
+      createdAt: current.createdAt,
+      updatedAt: turn.updatedAt,
+      activeTurn: turn.status.isTerminal ? null : turn,
+      turnSendSelection: current.turnSendSelection,
+      wireResource: current.wireResource,
+    );
+    conversations = sortRecentConversations([
+      for (var itemIndex = 0; itemIndex < conversations.length; itemIndex++)
+        if (itemIndex == index) next else conversations[itemIndex],
+    ]);
+    return true;
+  }
+
+  bool _applyDeltaToConversation(TurnOutputDeltaEvent event) {
+    if (event.kind != 'text' || event.delta.isEmpty) return false;
+    final index = conversations.indexWhere(
+      (conversation) =>
+          conversationRoutingKey(conversation) == event.conversationId ||
+          conversation.id == event.conversationId,
+    );
+    if (index == -1) return false;
+    final contentKey = '${event.conversationId}\u0000${event.contentId}';
+    final complete = '${_livePreviewByContent[contentKey] ?? ''}${event.delta}';
+    _livePreviewByContent[contentKey] = _tailRunes(complete, 4096);
+    final current = conversations[index];
+    final preview = _tailRunes(complete, 240);
+    final next = ConversationSummary(
+      id: current.id,
+      providerId: current.providerId,
+      title: current.title,
+      preview: preview,
+      status: current.status,
+      permissionLevel: current.permissionLevel,
+      model: current.model,
+      reasoningEffort: current.reasoningEffort,
+      workspaceRoot: current.workspaceRoot,
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+      activeTurn: current.activeTurn,
+      turnSendSelection: current.turnSendSelection,
+      wireResource: current.wireResource,
+    );
+    conversations = [
+      for (var itemIndex = 0; itemIndex < conversations.length; itemIndex++)
+        if (itemIndex == index) next else conversations[itemIndex],
+    ];
+    _pendingConversationNotifications.add(conversationRoutingKey(next));
+    return true;
+  }
+
+  GatewayProviderRoute? _routeForTurn(TurnTask turn) {
+    final resource = turn.conversationWireResource ?? turn.wireResource;
+    final deviceId = resource?['deviceId'];
+    final providerPluginId = resource?['providerPluginId'];
+    final providerInstanceId = resource?['providerInstanceId'];
+    if (deviceId is! String ||
+        providerPluginId is! String ||
+        providerInstanceId is! String) {
+      return null;
+    }
+    return GatewayProviderRoute(
+      deviceId: deviceId,
+      providerPluginId: providerPluginId,
+      providerInstanceId: providerInstanceId,
+    );
+  }
+
+  Future<void> _refreshConversationsForEvent(
+    GatewayProviderRoute route,
+    TurnTask turn,
+  ) async {
+    final client = _client;
+    final generation = _runtimeGeneration;
+    if (client == null || !_conversationRefreshes.add(route)) return;
+    try {
+      final page = await client.listConversations(
+        route: route,
+        limit: conversationPageSize,
+      );
+      if (!_ownsRuntime(generation, client)) return;
+      conversations = mergeRoutedConversations(
+        conversations,
+        page.conversations,
+      );
+      _applyTurnToConversation(turn);
+      _notifyListenersImmediately();
+    } catch (_) {
+      // A push event must not tear down an otherwise healthy session. A later
+      // conversation event or manual reload can reconcile the projection.
+    } finally {
+      _conversationRefreshes.remove(route);
+    }
   }
 
   Future<void> disconnect() async {
@@ -348,7 +624,7 @@ class DeviceSession extends ChangeNotifier {
     error = null;
     _resetConversationPagination();
     connectionState = DeviceConnectionState.offline;
-    notifyListeners();
+    _notifyListenersImmediately();
     try {
       await window?.close();
     } catch (_) {}
@@ -357,8 +633,69 @@ class DeviceSession extends ChangeNotifier {
     } catch (_) {}
   }
 
+  void _scheduleConversationNotification() {
+    if (_disposed || _conversationNotificationCallbackId != null) return;
+    _conversationNotificationCallbackId =
+        SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _conversationNotificationCallbackId = null;
+      if (!_disposed) _flushConversationNotifications();
+    });
+  }
+
+  void _notifyListenersImmediately() {
+    if (_disposed) return;
+    _synchronizeConversationNotifiers();
+    _flushConversationNotifications();
+    _cancelConversationNotification();
+    super.notifyListeners();
+  }
+
+  void _flushConversationNotifications() {
+    if (_pendingConversationNotifications.isEmpty) return;
+    final pending = _pendingConversationNotifications.toList(growable: false);
+    _pendingConversationNotifications.clear();
+    for (final key in pending) {
+      final conversation = _conversationForKey(key);
+      final notifier = _conversationNotifiers[key];
+      if (conversation != null && notifier != null) {
+        notifier.value = conversation;
+      }
+    }
+  }
+
+  void _synchronizeConversationNotifiers() {
+    if (_conversationNotifiers.isEmpty) return;
+    for (final conversation in conversations) {
+      final notifier =
+          _conversationNotifiers[conversationRoutingKey(conversation)];
+      if (notifier != null && !identical(notifier.value, conversation)) {
+        notifier.value = conversation;
+      }
+    }
+  }
+
+  ConversationSummary? _conversationForKey(String key) {
+    for (final conversation in conversations) {
+      if (conversationRoutingKey(conversation) == key) return conversation;
+    }
+    return null;
+  }
+
+  void _cancelConversationNotification() {
+    final callbackId = _conversationNotificationCallbackId;
+    if (callbackId == null) return;
+    SchedulerBinding.instance.cancelFrameCallbackWithId(callbackId);
+    _conversationNotificationCallbackId = null;
+  }
+
   @override
   void dispose() {
+    _cancelConversationNotification();
+    _pendingConversationNotifications.clear();
+    for (final notifier in _conversationNotifiers.values) {
+      notifier.dispose();
+    }
+    _conversationNotifiers.clear();
     _disposed = true;
     _reconnectEnabled = false;
     _cancelReconnect(resetAttempt: true);
@@ -474,6 +811,26 @@ String conversationRoutingKey(ConversationSummary conversation) {
     return '$deviceId\u0000$providerPluginId\u0000$providerInstanceId\u0000$nativeResourceId';
   }
   return '${conversation.providerId}\u0000${conversation.id}';
+}
+
+String? _resourceKey(JsonMap? resource) {
+  final deviceId = resource?['deviceId'];
+  final providerPluginId = resource?['providerPluginId'];
+  final providerInstanceId = resource?['providerInstanceId'];
+  final nativeResourceId = resource?['nativeResourceId'];
+  if (deviceId is! String ||
+      providerPluginId is! String ||
+      providerInstanceId is! String ||
+      nativeResourceId is! String) {
+    return null;
+  }
+  return '$deviceId\u0000$providerPluginId\u0000$providerInstanceId\u0000$nativeResourceId';
+}
+
+String _tailRunes(String value, int limit) {
+  final runes = value.runes.toList(growable: false);
+  if (runes.length <= limit) return value;
+  return String.fromCharCodes(runes.skip(runes.length - limit));
 }
 
 Future<int> replaceDeviceSession(

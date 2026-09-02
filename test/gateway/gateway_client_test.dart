@@ -2,15 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:codepet_remote/discovery/resolving_gateway_transport.dart';
+import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
+import 'package:codepet_remote/core/errors/gateway_failures.dart';
+import 'package:codepet_remote/core/ports/gateway_client.dart';
 import 'package:codepet_remote/gateway/gateway_client.dart';
-import 'package:codepet_remote/gateway/models.dart';
+import 'package:codepet_remote/gateway/generated_gateway_mapper.dart';
+import 'package:codepet_remote/core/domain/models.dart';
 import 'package:codepet_remote/gateway/transport.dart';
-import 'package:codepet_remote/gateway/v1_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('performs the v1 handshake, subscribe, list and get sequence', () async {
+  test('performs the generated v2 handshake, subscribe, list and get sequence', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _handshakeJson(),
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
@@ -38,6 +40,8 @@ void main() {
     expect(handshake.protocolVersion, gatewayProtocolVersion);
     expect(handshake.providers.single.id, 'codex-work');
     expect(handshake.providers.single.route, _route);
+    expect(handshake.providers.single.displayName, 'Codex');
+    expect(handshake.providers.single.icon, 'codex');
     expect(transport.requests[0].method, 'protocol.handshake');
     expect(transport.requests[0].params['device'], _clientDevice.toJson());
     expect(transport.requests[0].params, isNot(contains('clientName')));
@@ -53,6 +57,17 @@ void main() {
 
     await client.close();
     expect(transport.closed, isTrue);
+  });
+
+  test('preserves a Provider-defined permission level', () {
+    final json = _conversationJson();
+    json['permissionLevel'] = 'opencode-default';
+
+    final conversation = const GeneratedGatewayMapper().conversation(
+      sdk.Conversation.fromJson(json),
+    );
+
+    expect(conversation.permissionLevel, 'opencode-default');
   });
 
   test('sends original text with route, revision and flat selection', () async {
@@ -84,7 +99,7 @@ void main() {
       expectedIdentityFingerprint: _fingerprint,
     );
     await client.connect();
-    final conversation = V1Conversation.fromJson(_conversationJson()).toDomain();
+    final conversation = _domainConversation();
     const selection = TurnSendSelection(
       model: FlatModelSelection(modelId: 'model-a'),
     );
@@ -130,7 +145,7 @@ void main() {
       expectedIdentityFingerprint: _fingerprint,
     );
     await client.connect();
-    final conversation = V1Conversation.fromJson(_conversationJson()).toDomain();
+    final conversation = _domainConversation();
 
     final receipt = await client.sendTurn(
       route: _route,
@@ -145,8 +160,52 @@ void main() {
     expect(receipt.turn.status, TurnStatus.queued);
     final missingUserItem = {...response}..remove('userItem');
     expect(
-      () => V1TurnSendResponse.fromJson(missingUserItem),
-      throwsFormatException,
+      () => sdk.TurnSendResponse.fromJson(missingUserItem),
+      throwsA(isA<sdk.ProtocolCodecException>()),
+    );
+    await client.close();
+  });
+
+  test('creates a routed conversation through the generated SDK', () async {
+    final handshake = _handshakeJson();
+    final provider = (handshake['providers'] as List).single
+        as Map<String, dynamic>;
+    final capabilities = provider['capabilities'] as Map<String, dynamic>;
+    (capabilities['methods'] as List).add('conversation.create');
+    final transport = _FakeTransport({
+      'protocol.handshake': handshake,
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'conversation.create': {'conversation': _conversationJson()},
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+
+    final conversation = await client.createConversation(
+      route: _route,
+      title: 'New task',
+      permissionLevel: PermissionLevel.workspaceWrite,
+      model: 'model-a',
+      reasoningEffort: 'high',
+      workspaceRoot: '/workspace/project',
+    );
+
+    expect(conversation.title, 'Test conversation');
+    expect(
+      transport.requests.last.params,
+      {
+        'route': _route.toJson(),
+        'title': 'New task',
+        'permissionLevel': 'workspace-write',
+        'model': 'model-a',
+        'reasoningEffort': 'high',
+        'workspaceRoot': '/workspace/project',
+      },
     );
     await client.close();
   });
@@ -195,7 +254,7 @@ void main() {
       expectedIdentityFingerprint: _fingerprint,
     );
     await client.connect();
-    final conversation = V1Conversation.fromJson(_conversationJson()).toDomain();
+    final conversation = _domainConversation();
 
     await expectLater(
       client.sendTurn(
@@ -257,6 +316,10 @@ void main() {
     expect(history[1].content, 'Inspecting the stored thread items.');
     expect(history[2].kind, 'command');
     expect(history[2].title, 'Run git status --short');
+    expect(
+      history[2].contents.map((content) => content.kind),
+      ['command', 'output'],
+    );
     expect(history[3].kind, 'approval');
     expect(history[3].approvalStatus, 'approved');
     expect(history[4].role, MessageRole.assistant);
@@ -309,7 +372,7 @@ void main() {
       expectedIdentityFingerprint: _fingerprint,
     );
     await client.connect();
-    final requested = V1Conversation.fromJson(_conversationJson()).toDomain();
+    final requested = _domainConversation();
 
     final snapshot = await client.getConversation(requested);
 
@@ -985,6 +1048,7 @@ JsonMap _handshakeJson() {
         'route': {'deviceId': 'device-test', 'providerPluginId': 'dev.codepet.codex', 'providerInstanceId': 'codex-work'},
         'pluginId': 'dev.codepet.codex',
         'displayName': 'Codex',
+        'icon': 'codex',
         'harness': {
           'id': 'codex',
           'displayName': 'Codex',
@@ -1056,6 +1120,11 @@ JsonMap _turnSendResult({required JsonMap selection}) {
     'effectiveSelection': selection,
   };
 }
+
+ConversationSummary _domainConversation() =>
+    const GeneratedGatewayMapper().conversation(
+      sdk.Conversation.fromJson(_conversationJson()),
+    );
 
 const _fingerprint = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 

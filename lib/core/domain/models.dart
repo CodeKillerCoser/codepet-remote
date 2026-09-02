@@ -2,18 +2,6 @@ typedef JsonMap = Map<String, dynamic>;
 
 const gatewayProtocolVersion = 2;
 
-class DeviceConnection {
-  const DeviceConnection({
-    required this.deviceName,
-    required this.gatewayUri,
-    required this.pairingToken,
-  });
-
-  final String deviceName;
-  final Uri gatewayUri;
-  final String pairingToken;
-}
-
 class DeviceDescriptor {
   const DeviceDescriptor({
     required this.deviceName,
@@ -26,7 +14,7 @@ class DeviceDescriptor {
     if (json.keys.toSet().difference(fields).isNotEmpty ||
         fields.difference(json.keys.toSet()).isNotEmpty) {
       throw const FormatException(
-        'Device descriptor fields do not match Gateway v1',
+        'Device descriptor fields do not match the Gateway schema',
       );
     }
     return DeviceDescriptor(
@@ -86,21 +74,10 @@ enum ConversationStatus {
   }
 }
 
-enum PermissionLevel {
-  readOnly('read-only'),
-  workspaceWrite('workspace-write'),
-  fullAccess('full-access');
-
-  const PermissionLevel(this.wireValue);
-
-  final String wireValue;
-
-  static PermissionLevel fromWire(Object? value) {
-    return PermissionLevel.values.firstWhere(
-      (level) => level.wireValue == value,
-      orElse: () => throw FormatException('Unknown permission level: $value'),
-    );
-  }
+abstract final class PermissionLevel {
+  static const String readOnly = 'read-only';
+  static const String workspaceWrite = 'workspace-write';
+  static const String fullAccess = 'full-access';
 }
 
 enum TurnStatus {
@@ -130,6 +107,24 @@ enum TurnStatus {
 
 enum MessageRole { user, assistant, system }
 
+class GatewayMessageContent {
+  const GatewayMessageContent({
+    required this.id,
+    required this.kind,
+    required this.text,
+  });
+
+  final String id;
+  final String kind;
+  final String text;
+
+  GatewayMessageContent copyWith({String? text}) => GatewayMessageContent(
+        id: id,
+        kind: kind,
+        text: text ?? this.text,
+      );
+}
+
 class GatewayProviderRoute {
   const GatewayProviderRoute({
     required this.deviceId,
@@ -146,7 +141,7 @@ class GatewayProviderRoute {
     if (json.keys.toSet().difference(fields).isNotEmpty ||
         fields.difference(json.keys.toSet()).isNotEmpty) {
       throw const FormatException(
-        'Provider route fields do not match Gateway v1',
+        'Provider route fields do not match the Gateway schema',
       );
     }
     return GatewayProviderRoute(
@@ -687,65 +682,21 @@ class GatewayProvider {
     required this.providerType,
     required this.displayName,
     required this.status,
-    HarnessDescriptor? harness,
-    GatewayCapabilities? capabilities,
-    List<String>? methods,
+    required this.harness,
+    required this.capabilities,
     this.version,
-  })  : assert(capabilities == null || methods == null),
-        // ignore: prefer_initializing_formals
-        _harness = harness,
-        _capabilities = capabilities,
-        _legacyMethods = methods;
-
-  factory GatewayProvider.fromJson(JsonMap json) {
-    _validateJsonFields(
-      json,
-      required: const {
-        'route',
-        'pluginId',
-        'displayName',
-        'harness',
-        'status',
-        'capabilities',
-      },
-      optional: const {'version'},
-      name: 'Gateway provider',
-    );
-    final capabilities = _requiredMap(json, 'capabilities');
-    final route = GatewayProviderRoute.fromJson(
-      _requiredMap(json, 'route'),
-    );
-    final providerType = _requiredString(json, 'pluginId');
-    if (route.providerPluginId != providerType) {
-      throw const FormatException('Provider plugin route mismatch');
-    }
-    return GatewayProvider(
-      route: route,
-      providerType: providerType,
-      displayName: _requiredString(json, 'displayName'),
-      version: _optionalString(json, 'version'),
-      harness: HarnessDescriptor.fromJson(_requiredMap(json, 'harness')),
-      status: ProviderStatus.fromWire(json['status']),
-      capabilities: GatewayCapabilities.fromJson(capabilities),
-    );
-  }
+    this.icon,
+  });
 
   final GatewayProviderRoute route;
   String get id => route.providerInstanceId;
   final String providerType;
   final String displayName;
   final String? version;
-  final HarnessDescriptor? _harness;
-  HarnessDescriptor get harness => _harness ??
-      HarnessDescriptor(id: providerType, displayName: displayName);
+  final String? icon;
+  final HarnessDescriptor harness;
   final ProviderStatus status;
-  final GatewayCapabilities? _capabilities;
-  final List<String>? _legacyMethods;
-  GatewayCapabilities get capabilities => _capabilities ??
-      GatewayCapabilities(
-        revision: 'legacy-constructor',
-        methods: _legacyMethods ?? const [],
-      );
+  final GatewayCapabilities capabilities;
   List<String> get methods => capabilities.methods;
 }
 
@@ -760,18 +711,6 @@ class GatewayHandshake {
     this.identityFingerprint,
     this.deviceDescriptor,
   });
-
-  factory GatewayHandshake.fromJson(JsonMap json) {
-    return GatewayHandshake(
-      protocolVersion: _requiredInt(json, 'protocolVersion'),
-      serverName: _requiredString(json, 'serverName'),
-      serverVersion: _requiredString(json, 'serverVersion'),
-      providers: _mapList(json, 'providers')
-          .map(GatewayProvider.fromJson)
-          .toList(growable: false),
-      eventCursor: _requiredString(json, 'eventCursor'),
-    );
-  }
 
   final int protocolVersion;
   final String serverName;
@@ -810,20 +749,6 @@ class TurnTask {
     this.conversationWireResource,
   });
 
-  factory TurnTask.fromJson(JsonMap json) {
-    return TurnTask(
-      id: _requiredString(json, 'id'),
-      providerId: _requiredString(json, 'providerId'),
-      conversationId: _requiredString(json, 'conversationId'),
-      status: TurnStatus.fromWire(json['status']),
-      displaySummary: _optionalString(json, 'displaySummary'),
-      startedAt: _optionalDateTime(json, 'startedAt'),
-      updatedAt: _requiredDateTime(json, 'updatedAt'),
-      completedAt: _optionalDateTime(json, 'completedAt'),
-      clientRequestId: _optionalString(json, 'clientRequestId'),
-    );
-  }
-
   final String id;
   final String providerId;
   final String conversationId;
@@ -855,38 +780,14 @@ class ConversationSummary {
     this.wireResource,
   });
 
-  factory ConversationSummary.fromJson(JsonMap json) {
-    final activeTurn = json['activeTurn'];
-    final turnSendSelection = json['turnSendSelection'];
-    return ConversationSummary(
-      id: _requiredString(json, 'id'),
-      providerId: _requiredString(json, 'providerId'),
-      title: _requiredString(json, 'title'),
-      preview: _optionalString(json, 'preview'),
-      status: ConversationStatus.fromWire(json['status']),
-      permissionLevel: PermissionLevel.fromWire(json['permissionLevel']),
-      model: _optionalString(json, 'model'),
-      reasoningEffort: _optionalString(json, 'reasoningEffort'),
-      workspaceRoot: _optionalString(json, 'workspaceRoot'),
-      createdAt: _requiredDateTime(json, 'createdAt'),
-      updatedAt: _requiredDateTime(json, 'updatedAt'),
-      activeTurn: activeTurn == null
-          ? null
-          : TurnTask.fromJson(_asMap(activeTurn, 'activeTurn')),
-      turnSendSelection: turnSendSelection == null
-          ? null
-          : TurnSendSelection.fromJson(
-              _asMap(turnSendSelection, 'turnSendSelection'),
-            ),
-    );
-  }
-
   final String id;
   final String providerId;
   final String title;
   final String? preview;
   final ConversationStatus status;
-  final PermissionLevel permissionLevel;
+  /// Provider-defined permission mode. Gateway v2 intentionally leaves this
+  /// value open so each Provider can expose its native permission policy.
+  final String permissionLevel;
   final String? model;
   final String? reasoningEffort;
   final String? workspaceRoot;
@@ -924,9 +825,13 @@ class GatewayMessage {
     this.itemId,
     this.contentId,
     this.contentIds = const [],
+    this.contents = const [],
     this.title,
     this.status,
     this.approvalStatus,
+    this.approvalDescription,
+    this.relatedItemId,
+    this.sequence,
   });
 
   final String id;
@@ -940,13 +845,19 @@ class GatewayMessage {
   final String? itemId;
   final String? contentId;
   final List<String> contentIds;
+  final List<GatewayMessageContent> contents;
   final String? title;
   final String? status;
   final String? approvalStatus;
+  final String? approvalDescription;
+  final String? relatedItemId;
+  final int? sequence;
 
   GatewayMessage copyWith({
     String? content,
     bool? isStreaming,
+    List<String>? contentIds,
+    List<GatewayMessageContent>? contents,
   }) {
     return GatewayMessage(
       id: id,
@@ -959,10 +870,14 @@ class GatewayMessage {
       isLiveOutput: isLiveOutput,
       itemId: itemId,
       contentId: contentId,
-      contentIds: contentIds,
+      contentIds: contentIds ?? this.contentIds,
+      contents: contents ?? this.contents,
       title: title,
       status: status,
       approvalStatus: approvalStatus,
+      approvalDescription: approvalDescription,
+      relatedItemId: relatedItemId,
+      sequence: sequence,
     );
   }
 }
@@ -1059,10 +974,11 @@ class ConversationDetail {
         );
       }
       final nextMessages = [...liveOutputMessages];
-      final liveKey =
-          '${event.turnId}\u0000${event.itemId}\u0000${event.contentId}';
+      final liveKey = '${event.turnId}\u0000${event.itemId}';
       final messageIndex = nextMessages.indexWhere(
-        (message) => message.id == liveKey,
+        (message) =>
+            message.turnId == event.turnId &&
+            message.itemId == event.itemId,
       );
       if (messageIndex == -1) {
         nextMessages.add(
@@ -1070,7 +986,7 @@ class ConversationDetail {
             id: liveKey,
             turnId: event.turnId,
             role: MessageRole.assistant,
-            kind: event.kind,
+            kind: _itemKindForContentKind(event.kind),
             content: event.delta,
             createdAt: DateTime.now().toUtc(),
             isStreaming: true,
@@ -1078,13 +994,53 @@ class ConversationDetail {
             itemId: event.itemId,
             contentId: event.contentId,
             contentIds: [event.contentId],
+            contents: [
+              GatewayMessageContent(
+                id: event.contentId,
+                kind: event.kind,
+                text: event.delta,
+              ),
+            ],
           ),
         );
       } else {
         final current = nextMessages[messageIndex];
+        final nextContents = current.contents.isEmpty
+            ? [
+                GatewayMessageContent(
+                  id: current.contentId ?? current.id,
+                  kind: _contentKindForLegacyMessage(current),
+                  text: current.content,
+                ),
+              ]
+            : [...current.contents];
+        final contentIndex = nextContents.indexWhere(
+          (content) => content.id == event.contentId,
+        );
+        if (contentIndex == -1) {
+          nextContents.add(
+            GatewayMessageContent(
+              id: event.contentId,
+              kind: event.kind,
+              text: event.delta,
+            ),
+          );
+        } else {
+          final content = nextContents[contentIndex];
+          nextContents[contentIndex] = content.copyWith(
+            text: '${content.text}${event.delta}',
+          );
+        }
         nextMessages[messageIndex] = current.copyWith(
-          content: '${current.content}${event.delta}',
+          content: nextContents
+              .map((content) => content.text)
+              .where((text) => text.isNotEmpty)
+              .join('\n'),
           isStreaming: true,
+          contentIds: nextContents
+              .map((content) => content.id)
+              .toList(growable: false),
+          contents: nextContents,
         );
       }
       return ConversationDetail(
@@ -1122,6 +1078,22 @@ class ConversationDetail {
   }
 }
 
+String _itemKindForContentKind(String kind) => switch (kind) {
+      'text' => 'message',
+      'reasoning-summary' => 'reasoning',
+      'command' || 'output' => 'command',
+      'activity-summary' => 'tool',
+      _ => 'unknown',
+    };
+
+String _contentKindForLegacyMessage(GatewayMessage message) =>
+    switch (message.kind) {
+      'reasoning' => 'reasoning-summary',
+      'command' => 'command',
+      'tool' || 'file-change' || 'approval' => 'activity-summary',
+      _ => 'text',
+    };
+
 List<TurnTask> _upsertTurn(List<TurnTask> turns, TurnTask incoming) {
   final next = [...turns];
   final index = next.indexWhere((turn) => turn.id == incoming.id);
@@ -1156,16 +1128,6 @@ class ConversationPage {
     this.nextCursor,
   });
 
-  factory ConversationPage.fromJson(JsonMap json) {
-    return ConversationPage(
-      conversations: _mapList(json, 'conversations')
-          .map(ConversationSummary.fromJson)
-          .toList(growable: false),
-      nextCursor: _optionalString(json, 'nextCursor'),
-      snapshotCursor: _requiredString(json, 'snapshotCursor'),
-    );
-  }
-
   final List<ConversationSummary> conversations;
   final String? nextCursor;
   final String snapshotCursor;
@@ -1173,45 +1135,6 @@ class ConversationPage {
 
 sealed class GatewayEvent {
   const GatewayEvent({required this.eventCursor});
-
-  factory GatewayEvent.fromJson(JsonMap json) {
-    final eventCursor = _requiredString(json, 'eventCursor');
-    final eventName = _requiredString(json, 'event');
-    final payload = _requiredMap(json, 'payload');
-    return switch (eventName) {
-      'provider.statusChanged' => GatewayProviderChangedEvent(
-          eventCursor: eventCursor,
-          provider: GatewayProvider.fromJson(
-            _requiredMap(payload, 'provider'),
-          ),
-        ),
-      'conversation.upserted' => ConversationUpsertedEvent(
-          eventCursor: eventCursor,
-          conversation: ConversationSummary.fromJson(
-            _requiredMap(payload, 'conversation'),
-          ),
-        ),
-      'turn.upserted' => TurnUpsertedEvent(
-          eventCursor: eventCursor,
-          turn: TurnTask.fromJson(_requiredMap(payload, 'turn')),
-        ),
-      'turn.outputDelta' => TurnOutputDeltaEvent(
-          eventCursor: eventCursor,
-          providerId: _requiredString(payload, 'providerId'),
-          conversationId: _requiredString(payload, 'conversationId'),
-          turnId: _requiredString(payload, 'turnId'),
-          itemId: _requiredString(payload, 'itemId'),
-          contentId: _requiredString(payload, 'contentId'),
-          kind: _requiredString(payload, 'kind'),
-          delta: _requiredString(payload, 'delta', allowEmpty: true),
-        ),
-      _ => UnknownGatewayEvent(
-          eventCursor: eventCursor,
-          name: eventName,
-          payload: payload,
-        ),
-    };
-  }
 
   final String eventCursor;
 }
@@ -1326,32 +1249,6 @@ String? _optionalString(JsonMap json, String field) {
   return value;
 }
 
-int _requiredInt(JsonMap json, String field) {
-  final value = json[field];
-  if (value is! int) {
-    throw FormatException('Expected integer for "$field"');
-  }
-  return value;
-}
-
-DateTime _requiredDateTime(JsonMap json, String field) {
-  return DateTime.fromMillisecondsSinceEpoch(
-    _requiredInt(json, field),
-    isUtc: true,
-  );
-}
-
-DateTime? _optionalDateTime(JsonMap json, String field) {
-  final value = json[field];
-  if (value == null) {
-    return null;
-  }
-  if (value is! int) {
-    throw FormatException('Expected integer for "$field"');
-  }
-  return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
-}
-
 void _validateJsonFields(
   JsonMap json, {
   Set<String> required = const {},
@@ -1361,7 +1258,7 @@ void _validateJsonFields(
   final actual = json.keys.toSet();
   if (required.difference(actual).isNotEmpty ||
       actual.difference({...required, ...optional}).isNotEmpty) {
-    throw FormatException('$name fields do not match Gateway v1');
+    throw FormatException('$name fields do not match the Gateway schema');
   }
 }
 

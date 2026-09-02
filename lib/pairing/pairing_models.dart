@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:codepet_lan_channel_sdk/codepet_lan_channel_sdk.dart' as sdk;
 
-import '../gateway/models.dart';
+import '../core/domain/models.dart';
 
 /// App-facing view of the generated LAN admission QR model.
 class PairingQrPayload {

@@ -1,7 +1,7 @@
 import 'dart:io';
 
+import 'package:codepet_remote/core/errors/gateway_failures.dart';
 import 'package:codepet_remote/gateway/pinned_web_socket_transport.dart';
-import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -12,6 +12,7 @@ void main() {
       certSha256: '0' * 64,
     );
     expect(transport.connectTimeout, const Duration(seconds: 8));
+    expect(transport.keepAliveInterval, const Duration(seconds: 20));
 
     await expectLater(
       transport.connect(),

@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:codepet_remote/devices/device_registry.dart';
 import 'package:codepet_remote/devices/local_device_descriptor.dart';
-import 'package:codepet_remote/gateway/models.dart';
+import 'package:codepet_remote/core/domain/models.dart';
 import 'package:codepet_remote/pairing/pairing_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 

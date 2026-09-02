@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../../admission/lan_admission.dart';
 import '../../devices/device_models.dart';
-import '../../pairing/pairing_service.dart';
 
 class PairDeviceScreen extends StatefulWidget {
   const PairDeviceScreen({super.key, required this.pairingService, required this.onPaired, this.onAddDemo});
