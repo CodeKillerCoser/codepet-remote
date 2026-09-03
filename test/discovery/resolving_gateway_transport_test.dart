@@ -13,7 +13,7 @@ void main() {
       DiscoveredCodePetHost(instanceName: 'CodePet._codepet._tcp.local.', host: 'host.local.', port: 4321, txt: txt);
   const valid = {'id': trustedId, 'name': 'Host', 'vmin': '1', 'vmax': '1', 'pair': '1'};
 
-  test('accepts only the trusted id and a Gateway v2 compatible range', () {
+  test('accepts only the trusted id and a Gateway v1 compatible range', () {
     expect(isTrustedDiscoveryCandidate(host(valid), trustedId), isTrue);
     expect(isTrustedDiscoveryCandidate(host({...valid, 'id': 'other'}), trustedId), isFalse);
     expect(isTrustedDiscoveryCandidate(host({...valid, 'vmin': '2'}), trustedId), isFalse);

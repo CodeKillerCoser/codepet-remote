@@ -404,7 +404,7 @@ void main() {
     await client.close();
   });
 
-  testWidgets('keeps a running command collapsed until the user expands it',
+  testWidgets('opens command details in a sheet without expanding the timeline',
       (tester) async {
     final client = _DetailClient(
       committedMessages: [
@@ -415,6 +415,28 @@ void main() {
           'find lib -type f',
           title: '命令执行',
           status: 'running',
+          tool: GatewayToolInvocation(
+            callId: 'running-command',
+            name: 'shell',
+            category: 'command',
+            originKind: 'builtin',
+            originName: 'codex',
+            input: const {
+              'command': 'find lib -type f',
+              'cwd': '/workspace',
+            },
+            resultContent: const [
+              GatewayToolContent(
+                id: 'running-command:output',
+                kind: 'text',
+                text: 'lib/main.dart',
+              ),
+            ],
+            durationMs: 18,
+            command: 'find lib -type f',
+            cwd: '/workspace',
+            exitCode: 0,
+          ),
         ),
       ],
     );
@@ -433,22 +455,30 @@ void main() {
       findsOneWidget,
     );
     expect(
-      tester.widget<AnimatedCrossFade>(
-        find.descendant(of: command, matching: find.byType(AnimatedCrossFade)),
-      ).crossFadeState,
-      CrossFadeState.showFirst,
+      find.descendant(of: command, matching: find.byType(AnimatedCrossFade)),
+      findsNothing,
     );
+    expect(find.text('find lib -type f'), findsNothing);
+    final timelineHeight = tester.getSize(command).height;
 
     await tester.tap(
       find.descendant(of: command, matching: find.text('命令执行')),
     );
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byKey(const Key('tool-detail-sheet')), findsOneWidget);
+    expect(find.byKey(const Key('tool-detail-command')), findsOneWidget);
+    expect(find.text('工具详情'), findsOneWidget);
+    expect(find.text('find lib -type f'), findsOneWidget);
+    expect(find.textContaining('调用：shell'), findsOneWidget);
+    expect(find.textContaining('目录：/workspace'), findsOneWidget);
+    expect(find.text('lib/main.dart'), findsOneWidget);
     expect(
-      tester.widget<AnimatedCrossFade>(
-        find.descendant(of: command, matching: find.byType(AnimatedCrossFade)),
-      ).crossFadeState,
-      CrossFadeState.showSecond,
+      find.descendant(of: command, matching: find.byType(AnimatedCrossFade)),
+      findsNothing,
     );
+    expect(tester.getSize(command).height, timelineHeight);
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
@@ -1331,6 +1361,7 @@ GatewayMessage _history(
   String? title,
   String? status,
   String? approvalStatus,
+  GatewayToolInvocation? tool,
   int createdMilliseconds = 0,
 }) =>
     GatewayMessage(
@@ -1347,6 +1378,7 @@ GatewayMessage _history(
       title: title,
       status: status,
       approvalStatus: approvalStatus,
+      tool: tool,
     );
 
 List<GatewayMessage> _longHistory() => [

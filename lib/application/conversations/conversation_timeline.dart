@@ -90,6 +90,7 @@ final class CommandBlock extends ConversationTimelineBlock {
     required this.title,
     required this.command,
     required this.output,
+    this.tool,
     this.approval,
     super.status,
   });
@@ -97,6 +98,7 @@ final class CommandBlock extends ConversationTimelineBlock {
   final String title;
   final String command;
   final String output;
+  final GatewayToolInvocation? tool;
   final TimelineApproval? approval;
 }
 
@@ -109,6 +111,7 @@ final class ToolBlock extends ConversationTimelineBlock {
     required this.title,
     required this.summary,
     required this.detail,
+    this.tool,
     this.approval,
     super.status,
   });
@@ -116,6 +119,7 @@ final class ToolBlock extends ConversationTimelineBlock {
   final String title;
   final String summary;
   final String detail;
+  final GatewayToolInvocation? tool;
   final TimelineApproval? approval;
 }
 
@@ -251,6 +255,7 @@ final class ConversationTimelineProjector {
             message.approvalDescription ?? current.approvalDescription,
         relatedItemId: current.relatedItemId ?? message.relatedItemId,
         sequence: current.sequence ?? message.sequence,
+        tool: message.tool ?? current.tool,
       );
     }
     return [for (final key in order) byKey[key]!];
@@ -308,8 +313,10 @@ final class ConversationTimelineProjector {
           sourceItemIds: common.sourceItemIds,
           isStreaming: common.isStreaming,
           title: item.title ?? '命令执行',
-          command: _textFor(contents, const {'command'}),
-          output: _textFor(contents, const {'output', 'activity-summary'}),
+          command: item.tool?.command ?? _textFor(contents, const {'command'}),
+          output: _toolResultText(item.tool) ??
+              _textFor(contents, const {'output', 'activity-summary'}),
+          tool: item.tool,
           approval: approval,
           status: common.status,
         );
@@ -322,6 +329,7 @@ final class ConversationTimelineProjector {
           title: item.title ?? '工具调用',
           summary: _textFor(contents, const {'activity-summary', 'text'}),
           detail: _textFor(contents, const {'command', 'output'}),
+          tool: item.tool,
           approval: approval,
           status: common.status,
         );
@@ -399,6 +407,15 @@ final class ConversationTimelineProjector {
           .map((content) => content.text)
           .where((text) => text.trim().isNotEmpty)
           .join('\n\n');
+
+  String? _toolResultText(GatewayToolInvocation? tool) {
+    if (tool == null) return null;
+    final text = tool.resultContent
+        .map((content) => content.text ?? content.uri ?? '')
+        .where((value) => value.isNotEmpty)
+        .join('\n\n');
+    return text.isEmpty ? null : text;
+  }
 
   String _legacyContentKind(String itemKind) => switch (itemKind) {
         'reasoning' => 'reasoning-summary',

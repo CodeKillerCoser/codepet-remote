@@ -10,12 +10,12 @@ CodePet Remote 是面向 CodePet Host 的独立 Remote Client。客户端只通�
 - 双向 `DeviceDescriptor` pairing/handshake，随后建立一次 `event.subscribe`
 - `conversation.list` 的 Host 逻辑项目投影
 - `conversation.get` 的有序 committed history
-- Gateway v2 JSON-RPC 2.0 typed client 与 opaque-cursor server event stream
+- Gateway v1 JSON-RPC 2.0 typed client 与 opaque-cursor server event stream
 - 会话列表与会话详情
 - `turn.outputDelta` 增量消息投影及 snapshot content 去重
 - 无 Host 时可使用本地演示数据检查完整 UI 链路
 
-Gateway v2 的事实来源是 CodePet `protocol/gateway/v2` 与 `protocol/core/v1`；pairing DTO 来自 `protocol/channel/lan/v1`。`sdk/gateway` 和 `sdk/lan` 是 `cp-sdk-gen` 的签入输出，不手改。Remote 使用四段 `RoutedResourceId` 处理 wire 身份，再映射为 UI 所需的最小领域投影。
+Gateway v1 的事实来源是 CodePet `protocol/gateway/v1` 与 `protocol/core/v1`；pairing DTO 来自 `protocol/channel/lan/v1`。`sdk/gateway` 和 `sdk/lan` 是 `cp-sdk-gen` 的签入输出，不手改。Remote 使用四段 `RoutedResourceId` 处理 wire 身份，再映射为 UI 所需的最小领域投影。
 
 ## 目录
 

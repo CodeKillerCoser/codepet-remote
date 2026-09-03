@@ -3,7 +3,7 @@
   "generatorVersion": "0.1.0",
   "package": "gateway",
   "role": "client",
-  "protocolVersion": 2,
-  "protocolDigest": "sha256:972f2c527d9083d19a82c60fd2c085fffe2b262764599fa53e696de185c81749",
+  "protocolVersion": 1,
+  "protocolDigest": "sha256:38082fd7571529e69875918451df6c6467675be786ddebeeadeafb0004be5a80",
   "language": "dart"
 }

@@ -1,6 +1,6 @@
 typedef JsonMap = Map<String, dynamic>;
 
-const gatewayProtocolVersion = 2;
+const gatewayProtocolVersion = 1;
 
 /// Stable, protocol-independent identity for a resource owned by a Provider.
 ///
@@ -149,6 +149,102 @@ class GatewayMessageContent {
         kind: kind,
         text: text ?? this.text,
       );
+}
+
+class GatewayToolContent {
+  const GatewayToolContent({
+    required this.id,
+    required this.kind,
+    this.text,
+    this.uri,
+    this.mimeType,
+    this.name,
+    this.truncated = false,
+    this.totalBytes,
+  });
+
+  final String id;
+  final String kind;
+  final String? text;
+  final String? uri;
+  final String? mimeType;
+  final String? name;
+  final bool truncated;
+  final int? totalBytes;
+}
+
+class GatewayToolCommandAction {
+  const GatewayToolCommandAction({
+    required this.kind,
+    required this.command,
+    this.name,
+    this.path,
+    this.query,
+  });
+
+  final String kind;
+  final String command;
+  final String? name;
+  final String? path;
+  final String? query;
+}
+
+class GatewayToolInvocation {
+  const GatewayToolInvocation({
+    required this.callId,
+    required this.name,
+    required this.category,
+    required this.originKind,
+    required this.input,
+    this.namespace,
+    this.originName,
+    this.rawInput,
+    this.resultContent = const [],
+    this.structuredContent,
+    this.errorCode,
+    this.errorMessage,
+    this.errorRetryable,
+    this.errorDetails,
+    this.startedAt,
+    this.completedAt,
+    this.durationMs,
+    this.command,
+    this.cwd,
+    this.exitCode,
+    this.processId,
+    this.commandActions = const [],
+    this.readOnly,
+    this.destructive,
+    this.idempotent,
+    this.openWorld,
+  });
+
+  final String callId;
+  final String name;
+  final String? namespace;
+  final String category;
+  final String originKind;
+  final String? originName;
+  final JsonMap input;
+  final String? rawInput;
+  final List<GatewayToolContent> resultContent;
+  final JsonMap? structuredContent;
+  final String? errorCode;
+  final String? errorMessage;
+  final bool? errorRetryable;
+  final JsonMap? errorDetails;
+  final DateTime? startedAt;
+  final DateTime? completedAt;
+  final int? durationMs;
+  final String? command;
+  final String? cwd;
+  final int? exitCode;
+  final String? processId;
+  final List<GatewayToolCommandAction> commandActions;
+  final bool? readOnly;
+  final bool? destructive;
+  final bool? idempotent;
+  final bool? openWorld;
 }
 
 class GatewayProviderRoute {
@@ -868,7 +964,7 @@ class ConversationSummary {
   final String title;
   final String? preview;
   final ConversationStatus status;
-  /// Provider-defined permission mode. Gateway v2 intentionally leaves this
+  /// Provider-defined permission mode. Gateway v1 intentionally leaves this
   /// value open so each Provider can expose its native permission policy.
   final String permissionLevel;
   final String? model;
@@ -990,6 +1086,7 @@ class GatewayMessage {
     this.approvalDescription,
     this.relatedItemId,
     this.sequence,
+    this.tool,
   });
 
   final String id;
@@ -1010,6 +1107,7 @@ class GatewayMessage {
   final String? approvalDescription;
   final String? relatedItemId;
   final int? sequence;
+  final GatewayToolInvocation? tool;
 
   GatewayMessage copyWith({
     String? turnId,
@@ -1037,6 +1135,7 @@ class GatewayMessage {
       approvalDescription: approvalDescription,
       relatedItemId: relatedItemId,
       sequence: sequence,
+      tool: tool,
     );
   }
 }
@@ -1146,6 +1245,35 @@ class ConversationDetail {
         )),
         committedMessages: committedMessages,
         liveOutputMessages: liveOutputMessages,
+        turns: turns,
+        lastEventCursor: event.eventCursor,
+      );
+    }
+
+    if (event is ConversationItemUpsertedEvent &&
+        event.conversationId == summary.id) {
+      final nextMessages = [...committedMessages];
+      final index = nextMessages.indexWhere(
+        (message) =>
+            message.turnId == event.item.turnId &&
+            (message.itemId ?? message.id) ==
+                (event.item.itemId ?? event.item.id),
+      );
+      if (index == -1) {
+        nextMessages.add(event.item);
+      } else {
+        nextMessages[index] = event.item;
+      }
+      final nextLiveOutput = liveOutputMessages
+          .where((message) =>
+              message.turnId != event.item.turnId ||
+              (message.itemId ?? message.id) !=
+                  (event.item.itemId ?? event.item.id))
+          .toList(growable: false);
+      return ConversationDetail(
+        summary: summary,
+        committedMessages: nextMessages,
+        liveOutputMessages: nextLiveOutput,
         turns: turns,
         lastEventCursor: event.eventCursor,
       );
@@ -1429,6 +1557,17 @@ class ConversationUpsertedEvent extends GatewayEvent {
   });
 
   final ConversationSummary conversation;
+}
+
+class ConversationItemUpsertedEvent extends GatewayEvent {
+  const ConversationItemUpsertedEvent({
+    required super.eventCursor,
+    required this.conversationId,
+    required this.item,
+  });
+
+  final String conversationId;
+  final GatewayMessage item;
 }
 
 class ConversationActivityChangedEvent extends GatewayEvent {

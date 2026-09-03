@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import '../../../application/conversations/conversation_timeline.dart';
+import '../../../core/domain/models.dart';
 import '../../common/app_toast.dart';
 
 class ConversationTimelineBlockView extends StatelessWidget {
@@ -130,68 +133,396 @@ class _ReasoningActivityState extends State<_ReasoningActivity> {
       );
 }
 
-class _CommandActivity extends StatefulWidget {
+class _CommandActivity extends StatelessWidget {
   const _CommandActivity({required this.block});
 
   final CommandBlock block;
 
   @override
-  State<_CommandActivity> createState() => _CommandActivityState();
-}
-
-class _CommandActivityState extends State<_CommandActivity> {
-  bool _expanded = false;
-
-  @override
   Widget build(BuildContext context) {
-    final block = widget.block;
-    final content = [
-      if (block.command.isNotEmpty) block.command,
-      if (block.output.isNotEmpty) block.output,
-    ].join('\n\n');
-    return _ExpandableActivity(
+    return _ToolActivityLauncher(
       key: Key('timeline-command-${block.id}'),
       icon: Icons.terminal_outlined,
       title: block.title,
       status: block.status,
       running: block.isRunning,
-      expanded: _expanded,
-      onToggle: () => setState(() => _expanded = !_expanded),
+      onOpen: () => _showToolDetails(
+        context,
+        icon: Icons.terminal_outlined,
+        title: block.title,
+        status: block.status,
+        running: block.isRunning,
+        child: _CommandDetails(block: block),
+      ),
       approval: block.approval,
-      child: _CodePanel(text: content),
     );
   }
 }
 
-class _ToolActivity extends StatefulWidget {
+class _ToolActivity extends StatelessWidget {
   const _ToolActivity({required this.block});
 
   final ToolBlock block;
 
   @override
-  State<_ToolActivity> createState() => _ToolActivityState();
-}
-
-class _ToolActivityState extends State<_ToolActivity> {
-  late bool _expanded = widget.block.isRunning;
-
-  @override
   Widget build(BuildContext context) {
-    final block = widget.block;
-    final detail = [block.summary, block.detail]
-        .where((part) => part.isNotEmpty)
-        .join('\n\n');
-    return _ExpandableActivity(
+    return _ToolActivityLauncher(
       icon: Icons.build_outlined,
       title: block.title,
       status: block.status,
       running: block.isRunning,
-      expanded: _expanded,
-      onToggle: () => setState(() => _expanded = !_expanded),
+      onOpen: () => _showToolDetails(
+        context,
+        icon: Icons.build_outlined,
+        title: block.title,
+        status: block.status,
+        running: block.isRunning,
+        child: _ToolInvocationDetails(
+          tool: block.tool,
+          fallback: [block.summary, block.detail]
+              .where((part) => part.isNotEmpty)
+              .join('\n\n'),
+        ),
+      ),
       approval: block.approval,
-      child: _MarkdownContent(data: detail),
     );
   }
+}
+
+class _ToolActivityLauncher extends StatelessWidget {
+  const _ToolActivityLauncher({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.status,
+    required this.running,
+    required this.onOpen,
+    this.approval,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? status;
+  final bool running;
+  final VoidCallback onOpen;
+  final TimelineApproval? approval;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _ActivityHeader(
+            icon: icon,
+            title: title,
+            status: status,
+            running: running,
+            onTap: onOpen,
+            expanded: false,
+          ),
+          if (approval != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
+              child: _AttachedApproval(approval: approval!),
+            ),
+        ],
+      );
+}
+
+void _showToolDetails(
+  BuildContext context, {
+  required IconData icon,
+  required String title,
+  required String? status,
+  required bool running,
+  required Widget child,
+}) {
+  showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (context) => DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.68,
+      minChildSize: 0.32,
+      maxChildSize: 0.94,
+      snap: true,
+      snapSizes: const [0.68, 0.94],
+      builder: (context, scrollController) => _ToolDetailSheet(
+        icon: icon,
+        title: title,
+        status: status,
+        running: running,
+        scrollController: scrollController,
+        child: child,
+      ),
+    ),
+  );
+}
+
+class _ToolDetailSheet extends StatelessWidget {
+  const _ToolDetailSheet({
+    required this.icon,
+    required this.title,
+    required this.status,
+    required this.running,
+    required this.scrollController,
+    required this.child,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? status;
+  final bool running;
+  final ScrollController scrollController;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Column(
+      key: const Key('tool-detail-sheet'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 8, 12),
+          child: Row(
+            children: [
+              Icon(icon, size: 22, color: colors.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '工具详情',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              if (running)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else if (status != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: _StatusLabel(status: status!),
+                ),
+              IconButton(
+                tooltip: '关闭',
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: SingleChildScrollView(
+            controller: scrollController,
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+            child: child,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CommandDetails extends StatelessWidget {
+  const _CommandDetails({required this.block});
+
+  final CommandBlock block;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (block.tool != null) ...[
+            _ToolInvocationSummary(tool: block.tool!),
+            const SizedBox(height: 18),
+          ],
+          if (block.command.isNotEmpty)
+            _ToolDetailSection(label: '命令', text: block.command),
+          if (block.command.isNotEmpty && block.output.isNotEmpty)
+            const SizedBox(height: 18),
+          if (block.output.isNotEmpty)
+            _ToolDetailSection(label: '输出', text: block.output),
+          if (block.tool?.commandActions.isNotEmpty == true) ...[
+            const SizedBox(height: 18),
+            _ToolDetailSection(
+              label: '命令动作',
+              text: block.tool!.commandActions
+                  .map((action) => [
+                        action.kind,
+                        action.path ?? action.query ?? action.name,
+                        action.command,
+                      ].whereType<String>().join(' · '))
+                  .join('\n'),
+            ),
+          ],
+          if (block.tool?.errorMessage case final String error) ...[
+            if (block.output.isNotEmpty || block.command.isNotEmpty)
+              const SizedBox(height: 18),
+            _ToolDetailSection(label: '错误', text: error),
+          ],
+          if (block.command.isEmpty && block.output.isEmpty)
+            Text(
+              '暂无详情',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+        ],
+      );
+}
+
+class _ToolInvocationDetails extends StatelessWidget {
+  const _ToolInvocationDetails({required this.tool, required this.fallback});
+
+  final GatewayToolInvocation? tool;
+  final String fallback;
+
+  @override
+  Widget build(BuildContext context) {
+    final tool = this.tool;
+    if (tool == null) {
+      return fallback.isEmpty
+          ? Text(
+              '暂无详情',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            )
+          : _MarkdownContent(data: fallback);
+    }
+    final input = tool.input.isEmpty
+        ? tool.rawInput
+        : const JsonEncoder.withIndent('  ').convert(tool.input);
+    final result = tool.resultContent
+        .map((content) {
+          final value = content.text ?? content.uri ?? '';
+          if (!content.truncated) return value;
+          final size = content.totalBytes == null
+              ? ''
+              : '，原始 ${content.totalBytes} bytes';
+          return '$value\n[内容已截断$size]';
+        })
+        .where((value) => value.isNotEmpty)
+        .join('\n\n');
+    final structured = tool.structuredContent == null
+        ? null
+        : const JsonEncoder.withIndent('  ').convert(tool.structuredContent);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _ToolInvocationSummary(tool: tool),
+        if (input != null && input.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          _ToolDetailSection(label: '参数', text: input),
+        ],
+        if (result.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          _ToolDetailSection(label: '结果', text: result),
+        ],
+        if (structured != null && structured.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          _ToolDetailSection(label: '结构化结果', text: structured),
+        ],
+        if (tool.errorMessage case final String error) ...[
+          const SizedBox(height: 18),
+          _ToolDetailSection(label: '错误', text: error),
+        ],
+        if (tool.errorDetails != null) ...[
+          const SizedBox(height: 18),
+          _ToolDetailSection(
+            label: '错误详情',
+            text: const JsonEncoder.withIndent('  ').convert(tool.errorDetails),
+          ),
+        ],
+        if (input == null &&
+            result.isEmpty &&
+            structured == null &&
+            tool.errorMessage == null &&
+            fallback.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          _MarkdownContent(data: fallback),
+        ],
+      ],
+    );
+  }
+}
+
+class _ToolInvocationSummary extends StatelessWidget {
+  const _ToolInvocationSummary({required this.tool});
+
+  final GatewayToolInvocation tool;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = [tool.originKind, tool.originName]
+        .whereType<String>()
+        .where((value) => value.isNotEmpty)
+        .join(' · ');
+    final duration = tool.durationMs == null ? null : '${tool.durationMs} ms';
+    final details = <String>[
+      '调用：${tool.namespace == null ? tool.name : '${tool.namespace}/${tool.name}'}',
+      '来源：$source',
+      '类别：${tool.category}',
+      if (tool.cwd != null) '目录：${tool.cwd}',
+      if (tool.exitCode != null) '退出码：${tool.exitCode}',
+      if (tool.processId != null) '进程：${tool.processId}',
+      if (duration != null) '耗时：$duration',
+      if (tool.readOnly != null) '只读：${tool.readOnly! ? '是' : '否'}',
+      if (tool.destructive != null) '破坏性：${tool.destructive! ? '是' : '否'}',
+      if (tool.idempotent != null) '幂等：${tool.idempotent! ? '是' : '否'}',
+      if (tool.openWorld != null) '访问外部世界：${tool.openWorld! ? '是' : '否'}',
+    ];
+    return _ToolDetailSection(label: '概览', text: details.join('\n'));
+  }
+}
+
+class _ToolDetailSection extends StatelessWidget {
+  const _ToolDetailSection({required this.label, required this.text});
+
+  final String label;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        key: Key(
+          'tool-detail-${label == '命令' ? 'command' : label == '输出' ? 'output' : label}',
+        ),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 8),
+          _CodePanel(text: text),
+        ],
+      );
 }
 
 class _FileChangesActivity extends StatelessWidget {
@@ -385,7 +716,6 @@ class _MarkdownContentState extends State<_MarkdownContent> {
 
 class _ExpandableActivity extends StatelessWidget {
   const _ExpandableActivity({
-    super.key,
     required this.icon,
     required this.title,
     required this.status,
@@ -393,7 +723,6 @@ class _ExpandableActivity extends StatelessWidget {
     required this.expanded,
     required this.onToggle,
     required this.child,
-    this.approval,
   });
 
   final IconData icon;
@@ -403,54 +732,19 @@ class _ExpandableActivity extends StatelessWidget {
   final bool expanded;
   final VoidCallback? onToggle;
   final Widget child;
-  final TimelineApproval? approval;
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        InkWell(
-          borderRadius: BorderRadius.circular(10),
+        _ActivityHeader(
+          icon: icon,
+          title: title,
+          status: status,
+          running: running,
           onTap: onToggle,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            child: Row(
-              children: [
-                Icon(icon, size: 19, color: colors.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: colors.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                ),
-                if (running)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 8),
-                    child: SizedBox.square(
-                      dimension: 13,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                else if (status != null)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: _StatusLabel(status: status!),
-                  ),
-                if (onToggle != null)
-                  Icon(
-                    expanded ? Icons.expand_more : Icons.chevron_right,
-                    size: 20,
-                    color: colors.onSurfaceVariant,
-                  ),
-              ],
-            ),
-          ),
+          expanded: expanded,
         ),
         AnimatedCrossFade(
           duration: const Duration(milliseconds: 160),
@@ -463,12 +757,71 @@ class _ExpandableActivity extends StatelessWidget {
             child: child,
           ),
         ),
-        if (approval != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
-            child: _AttachedApproval(approval: approval!),
-          ),
       ],
+    );
+  }
+}
+
+class _ActivityHeader extends StatelessWidget {
+  const _ActivityHeader({
+    required this.icon,
+    required this.title,
+    required this.status,
+    required this.running,
+    required this.onTap,
+    required this.expanded,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? status;
+  final bool running;
+  final VoidCallback? onTap;
+  final bool expanded;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        child: Row(
+          children: [
+            Icon(icon, size: 19, color: colors.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: colors.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
+            if (running)
+              const Padding(
+                padding: EdgeInsets.only(right: 8),
+                child: SizedBox.square(
+                  dimension: 13,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else if (status != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: _StatusLabel(status: status!),
+              ),
+            if (onTap != null)
+              Icon(
+                expanded ? Icons.expand_more : Icons.chevron_right,
+                size: 20,
+                color: colors.onSurfaceVariant,
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

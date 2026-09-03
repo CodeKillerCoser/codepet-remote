@@ -129,8 +129,64 @@ final class GeneratedGatewayMapper {
           ? null
           : resourceKey(value.relatedItem!),
       sequence: index,
+      tool: value.tool == null ? null : tool(value.tool!),
     );
   }
+
+  GatewayToolInvocation tool(sdk.ToolInvocation value) =>
+      GatewayToolInvocation(
+        callId: value.callId,
+        name: value.name,
+        namespace: value.namespace,
+        category: value.category.wireValue,
+        originKind: value.origin.kind.wireValue,
+        originName: value.origin.name,
+        input: Map<String, dynamic>.from(value.input),
+        rawInput: value.rawInput,
+        resultContent: value.result?.content
+                .map((content) => GatewayToolContent(
+                      id: content.contentId,
+                      kind: content.kind.wireValue,
+                      text: content.text,
+                      uri: content.uri,
+                      mimeType: content.mimeType,
+                      name: content.name,
+                      truncated: content.truncated ?? false,
+                      totalBytes: content.totalBytes,
+                    ))
+                .toList(growable: false) ??
+            const [],
+        structuredContent: value.result?.structuredContent == null
+            ? null
+            : Map<String, dynamic>.from(value.result!.structuredContent!),
+        errorCode: value.result?.error?.code,
+        errorMessage: value.result?.error?.message,
+        errorRetryable: value.result?.error?.retryable,
+        errorDetails: value.result?.error?.details == null
+            ? null
+            : Map<String, dynamic>.from(value.result!.error!.details!),
+        startedAt: _time(value.timing?.startedAt),
+        completedAt: _time(value.timing?.completedAt),
+        durationMs: value.timing?.durationMs,
+        command: value.command?.command,
+        cwd: value.command?.cwd,
+        exitCode: value.command?.exitCode,
+        processId: value.command?.processId,
+        commandActions: value.command?.actions
+                ?.map((action) => GatewayToolCommandAction(
+                      kind: action.kind.wireValue,
+                      command: action.command,
+                      name: action.name,
+                      path: action.path,
+                      query: action.query,
+                    ))
+                .toList(growable: false) ??
+            const [],
+        readOnly: value.annotations?.readOnly,
+        destructive: value.annotations?.destructive,
+        idempotent: value.annotations?.idempotent,
+        openWorld: value.annotations?.openWorld,
+      );
 
   TurnSendSelection selection(sdk.TurnSelection value) =>
       TurnSendSelection.fromJson(
@@ -166,6 +222,20 @@ final class GeneratedGatewayMapper {
         return ConversationUpsertedEvent(
           eventCursor: cursor,
           conversation: conversation(payload.conversation),
+        );
+      case sdk.ProtocolEventName.conversationItemUpserted:
+        final payload = envelope.payload as sdk.ConversationItemUpsertedEvent;
+        _requireSameRoute(payload.item.resource, payload.item.turn);
+        _requireSameRoute(payload.item.resource, payload.item.conversation);
+        _requireResourceRoute(
+          payload.item.resource,
+          expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: expectedProviderRouteKeys,
+        );
+        return ConversationItemUpsertedEvent(
+          eventCursor: cursor,
+          conversationId: resourceKey(payload.item.conversation),
+          item: message(payload.item, 0),
         );
       case sdk.ProtocolEventName.conversationActivityChanged:
         final payload = envelope.payload as sdk.ConversationActivityChangedEvent;

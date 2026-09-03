@@ -231,6 +231,42 @@ void main() {
       expect(detail.liveOutputMessages, isEmpty);
     });
 
+    test('item upsert replaces matching live output without waiting for refresh', () {
+      var detail = ConversationDetail(summary: summary).apply(
+        const TurnOutputDeltaEvent(
+          eventCursor: 'delta',
+          providerId: 'codex',
+          conversationId: 'conversation-1',
+          turnId: 'turn-1',
+          itemId: 'command-1',
+          contentId: 'command-1:output',
+          kind: 'output',
+          delta: 'partial',
+        ),
+      );
+      final completed = GatewayMessage(
+        id: 'routed-command-1',
+        itemId: 'command-1',
+        turnId: 'turn-1',
+        role: MessageRole.system,
+        kind: 'command',
+        content: 'done',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        isStreaming: false,
+        status: 'completed',
+      );
+
+      detail = detail.apply(ConversationItemUpsertedEvent(
+        eventCursor: 'item-completed',
+        conversationId: 'conversation-1',
+        item: completed,
+      ));
+
+      expect(detail.committedMessages, [completed]);
+      expect(detail.liveOutputMessages, isEmpty);
+      expect(detail.lastEventCursor, 'item-completed');
+    });
+
     test('upserts approval lifecycle events instead of dropping them', () {
       var detail = ConversationDetail(summary: summary).apply(
         ApprovalChangedEvent(

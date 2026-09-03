@@ -48,7 +48,7 @@ void main() {
     expect(transport.requests[0].method, 'protocol.handshake');
     expect(transport.requests[0].params['device'], _clientDevice.toJson());
     expect(transport.requests[0].params, isNot(contains('clientName')));
-    expect(transport.requests[0].params['supportedVersions'], {'minVersion': 2, 'maxVersion': 2});
+    expect(transport.requests[0].params['supportedVersions'], {'minVersion': 1, 'maxVersion': 1});
     expect(transport.requests[1].method, 'event.subscribe');
     expect(transport.requests[1].params['afterCursor'], 'opaque-handshake');
     expect(transport.requests[2].method, 'conversation.list');
@@ -418,6 +418,12 @@ void main() {
       history[2].contents.map((content) => content.kind),
       ['command', 'output'],
     );
+    expect(history[2].tool?.name, 'shell');
+    expect(history[2].tool?.command, 'git status --short');
+    expect(history[2].tool?.cwd, '/workspace');
+    expect(history[2].tool?.exitCode, 0);
+    expect(history[2].tool?.durationMs, 24);
+    expect(history[2].tool?.resultContent.single.text, 'working tree clean');
     expect(history[3].kind, 'approval');
     expect(history[3].approvalStatus, 'approved');
     expect(history[4].role, MessageRole.assistant);
@@ -995,6 +1001,59 @@ void main() {
     await client.close();
   });
 
+  test('projects typed conversation item upserts', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    final received = <GatewayEvent>[];
+    final subscription = client.events.listen(received.add);
+    await client.connect();
+
+    transport.emit({
+      'protocolVersion': 1,
+      'eventCursor': 'cursor-item',
+      'event': 'conversation.itemUpserted',
+      'payload': {
+        'item': {
+          'resource': {..._route.toJson(), 'nativeResourceId': 'command-live'},
+          'turn': {..._route.toJson(), 'nativeResourceId': 'turn-1'},
+          'conversation': {
+            ..._route.toJson(),
+            'nativeResourceId': 'conversation-1',
+          },
+          'kind': 'command',
+          'status': 'completed',
+          'title': 'git status --short',
+          'contents': const [],
+          'tool': {
+            'callId': 'command-live',
+            'name': 'shell',
+            'category': 'command',
+            'origin': {'kind': 'builtin', 'name': 'codex'},
+            'input': {'command': 'git status --short'},
+            'command': {'command': 'git status --short', 'exitCode': 0},
+          },
+        },
+      },
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    final event = received.single as ConversationItemUpsertedEvent;
+    expect(event.item.tool?.name, 'shell');
+    expect(event.item.tool?.exitCode, 0);
+    expect(event.conversationId, contains('conversation-1'));
+    await subscription.cancel();
+    await client.close();
+  });
+
   test('projects approval requested and resolved events', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _handshakeJson(),
@@ -1269,7 +1328,7 @@ class _FakeTransport
     }
     if (method == 'protocol.handshake') {
       response = Map<String, dynamic>.from(response);
-      response['selectedVersion'] = 2;
+      response['selectedVersion'] = 1;
       final device = Map<String, dynamic>.from(response['device'] as Map);
       device.remove('identityFingerprint');
       response['device'] = device;
@@ -1308,7 +1367,7 @@ class _RequestRecord {
 
 JsonMap _handshakeJson() {
   return {
-    'selectedVersion': 2,
+    'selectedVersion': 1,
     'serverName': 'CodePet Host',
     'serverVersion': '0.1.0',
     'device': {

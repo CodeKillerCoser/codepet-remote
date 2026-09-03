@@ -40,7 +40,7 @@
           "kind": "message",
           "status": "completed",
           "role": "user",
-          "contents": [
+      "contents": [
             {
               "contentId": "message-user-01:input:0",
               "kind": "text",
@@ -108,10 +108,33 @@
             {
               "contentId": "command-01:output",
               "kind": "output",
-              "text": ""
+          "text": ""
+        }
+      ],
+      "tool": {
+        "callId": "command-01",
+        "name": "shell",
+        "category": "command",
+        "origin": { "kind": "builtin", "name": "codex" },
+        "input": { "command": "git status --short", "cwd": "/workspace" },
+        "result": {
+          "content": [
+            {
+              "contentId": "command-01:output",
+              "kind": "text",
+              "text": "working tree clean",
+              "mimeType": "text/plain"
             }
           ]
         },
+        "timing": { "durationMs": 24 },
+        "command": {
+          "command": "git status --short",
+          "cwd": "/workspace",
+          "exitCode": 0
+        }
+      }
+    },
         {
           "resource": {
             "deviceId": "device-macbook-1",
