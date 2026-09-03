@@ -192,6 +192,30 @@ void main() {
     session.dispose();
   });
 
+  testWidgets('project screen creates a conversation with its routed project',
+      (tester) async {
+    _useTallSurface(tester);
+    final project = _homeProject();
+    final client = _ProjectConversationCreateClient(project);
+    final session = _sessionForClient('project-create-conversation', client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    await tester.tap(find.byKey(Key('project-${project.key}')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('project-new')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-new-conversation')));
+    await tester.pumpAndSettle();
+
+    expect(client.createdProject, project.resource);
+    expect(client.createdWorkspaceRoot, project.roots.single.path);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
   testWidgets('shows Provider identity from the Host handshake', (tester) async {
     _useTallSurface(tester);
     final client = _PagedClient(
@@ -638,6 +662,96 @@ class _PagedClient implements GatewayClient {
   Future<void> close() => controller.close();
 }
 
+class _ProjectConversationCreateClient extends _PagedClient
+    implements ProjectGatewayClient {
+  _ProjectConversationCreateClient(this.project)
+      : super(
+          ({required cursor, required limit}) async =>
+              const ConversationPage(
+            conversations: [],
+            snapshotCursor: 'handshake',
+          ),
+        );
+
+  final GatewayProject project;
+  RoutedResourceId? createdProject;
+  String? createdWorkspaceRoot;
+
+  @override
+  Future<GatewayHandshake> connect() async => const GatewayHandshake(
+        protocolVersion: 1,
+        serverName: 'Test',
+        serverVersion: '1',
+        providers: [_homeProjectProvider],
+        eventCursor: 'handshake',
+      );
+
+  @override
+  Future<ProjectPage> listProjects({
+    required GatewayProviderRoute route,
+    String? cursor,
+    int limit = 50,
+  }) async => ProjectPage(
+        projects: [project],
+        snapshotCursor: 'handshake',
+      );
+
+  @override
+  Future<ConversationSummary> createConversation({
+    required GatewayProviderRoute route,
+    String? title,
+    required String permissionLevel,
+    String? model,
+    String? reasoningEffort,
+    String? workspaceRoot,
+    String? workspaceMode,
+    RoutedResourceId? project,
+  }) async {
+    createdProject = project;
+    createdWorkspaceRoot = workspaceRoot;
+    return ConversationSummary(
+      id: 'created-conversation',
+      providerId: route.providerInstanceId,
+      title: 'Created conversation',
+      status: ConversationStatus.idle,
+      permissionLevel: permissionLevel,
+      workspaceRoot: workspaceRoot,
+      project: project,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
+      resource: RoutedResourceId(
+        route: route,
+        nativeResourceId: 'created-conversation',
+      ),
+    );
+  }
+
+  @override
+  Future<GatewayProject> getProject(RoutedResourceId project) async =>
+      this.project;
+
+  @override
+  Future<GatewayProject> createProject({
+    required GatewayProviderRoute route,
+    required String idempotencyKey,
+    required String name,
+    required List<ProjectRoot> roots,
+    Map<String, String> metadata = const {},
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<GatewayProject> updateProject({
+    required RoutedResourceId project,
+    String? name,
+    List<ProjectRoot>? roots,
+    Map<String, String>? metadata,
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<void> deleteProject(RoutedResourceId project) async =>
+      throw UnimplementedError();
+}
+
 const _homeRoute = GatewayProviderRoute(
   deviceId: 'home-host',
   providerPluginId: 'dev.codepet.codex',
@@ -682,6 +796,38 @@ const _homeListProvider = GatewayProvider(
           ProviderChoice(id: 'worktree', displayName: 'Worktree'),
         ],
         defaultId: 'main',
+      ),
+    ),
+  ),
+);
+
+const _homeProjectProvider = GatewayProvider(
+  route: _homeRoute,
+  providerType: 'dev.codepet.codex',
+  displayName: 'Codex Work',
+  icon: 'codex',
+  status: ProviderStatus.ready,
+  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
+  capabilities: GatewayCapabilities(
+    revision: 'test-project-create-1',
+    methods: [
+      'project.list',
+      'conversation.list',
+      'conversation.get',
+      'conversation.create',
+    ],
+    conversationCreate: ConversationCreateCapabilities(
+      supportsTitle: false,
+      selection: TurnSendCapabilities(
+        accessMode: ProviderChoiceSet(
+          options: [
+            ProviderChoice(
+              id: 'workspace-write',
+              displayName: 'Workspace write',
+            ),
+          ],
+          defaultId: 'workspace-write',
+        ),
       ),
     ),
   ),

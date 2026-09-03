@@ -935,6 +935,20 @@ class TurnTask {
   final String? clientRequestId;
   final RoutedResourceId? resource;
   final RoutedResourceId? conversationResource;
+
+  TurnTask withClientRequestId(String value) => TurnTask(
+        id: id,
+        providerId: providerId,
+        conversationId: conversationId,
+        status: status,
+        updatedAt: updatedAt,
+        displaySummary: displaySummary,
+        startedAt: startedAt,
+        completedAt: completedAt,
+        clientRequestId: value,
+        resource: resource,
+        conversationResource: conversationResource,
+      );
 }
 
 class ProjectRoot {
@@ -1139,6 +1153,7 @@ class GatewayMessage {
     this.relatedItemId,
     this.sequence,
     this.tool,
+    this.clientRequestId,
   });
 
   final String id;
@@ -1160,6 +1175,7 @@ class GatewayMessage {
   final String? relatedItemId;
   final int? sequence;
   final GatewayToolInvocation? tool;
+  final String? clientRequestId;
 
   GatewayMessage copyWith({
     String? turnId,
@@ -1188,6 +1204,7 @@ class GatewayMessage {
       relatedItemId: relatedItemId,
       sequence: sequence,
       tool: tool,
+      clientRequestId: clientRequestId,
     );
   }
 }
@@ -1256,12 +1273,38 @@ class ConversationDetail {
     ConversationDetail snapshot, {
     String? completedTurnId,
   }) {
+    final nextCommittedMessages = [...snapshot.committedMessages];
+    for (final pending in committedMessages.where(_isPendingUserMessage)) {
+      final hasCanonicalUserItem = nextCommittedMessages.any(
+        (message) =>
+            message.turnId == pending.turnId &&
+            message.role == MessageRole.user &&
+            !_isPendingUserMessage(message),
+      );
+      if (!hasCanonicalUserItem &&
+          !nextCommittedMessages.any((message) => message.id == pending.id)) {
+        nextCommittedMessages.add(pending);
+      }
+    }
+    var nextSummary = snapshot.summary;
+    var nextTurns = snapshot.turns;
+    final completedTurn = completedTurnId == null
+        ? null
+        : _turnById(completedTurnId);
+    if (completedTurn != null && completedTurn.status.isTerminal) {
+      nextTurns = _upsertTerminalTurn(nextTurns, completedTurn);
+      final snapshotActiveTurn = snapshot.summary.activeTurn;
+      if (snapshotActiveTurn == null ||
+          snapshotActiveTurn.id == completedTurn.id) {
+        nextSummary = snapshot.summary.withTurn(completedTurn);
+      }
+    }
     final committedContentIds = snapshot.committedMessages
         .expand((message) => message.contentIds)
         .toSet();
     return ConversationDetail(
-      summary: snapshot.summary,
-      committedMessages: snapshot.committedMessages,
+      summary: nextSummary,
+      committedMessages: nextCommittedMessages,
       liveOutputMessages: liveOutputMessages
           .where((message) =>
               message.contentId == null ||
@@ -1269,10 +1312,24 @@ class ConversationDetail {
           .where((message) =>
               completedTurnId == null || message.turnId != completedTurnId)
           .toList(growable: false),
-      turns: snapshot.turns,
+      turns: nextTurns,
       lastEventCursor: snapshot.lastEventCursor,
     );
   }
+
+  TurnTask? _turnById(String id) {
+    TurnTask? result;
+    final summaryTurn = summary.activeTurn;
+    if (summaryTurn != null && summaryTurn.id == id) result = summaryTurn;
+    for (final turn in turns) {
+      if (turn.id != id) continue;
+      result = result == null ? turn : _newerTurn(result, turn);
+    }
+    return result;
+  }
+
+  String? _clientRequestIdForTurn(String turnId) =>
+      _turnById(turnId)?.clientRequestId;
 
   ConversationDetail apply(GatewayEvent event) {
     if (event is ConversationUpsertedEvent &&
@@ -1305,12 +1362,23 @@ class ConversationDetail {
     if (event is ConversationItemUpsertedEvent &&
         event.conversationId == summary.id) {
       final nextMessages = [...committedMessages];
-      final index = nextMessages.indexWhere(
+      var index = nextMessages.indexWhere(
         (message) =>
             message.turnId == event.item.turnId &&
             (message.itemId ?? message.id) ==
                 (event.item.itemId ?? event.item.id),
       );
+      if (index == -1 && event.item.role == MessageRole.user) {
+        final clientRequestId =
+            _clientRequestIdForTurn(event.item.turnId);
+        if (clientRequestId != null) {
+          index = nextMessages.indexWhere(
+            (message) =>
+                message.id == _pendingUserMessageId(clientRequestId) &&
+                message.turnId == event.item.turnId,
+          );
+        }
+      }
       if (index == -1) {
         nextMessages.add(event.item);
       } else {
@@ -1460,10 +1528,16 @@ class ConversationDetail {
     final nextMessages = [...committedMessages];
     final pendingId = _pendingUserMessageId(receipt.clientRequestId);
     final inputItem = receipt.inputItem;
+    final acceptedTurn = receipt.turn.withClientRequestId(
+      receipt.clientRequestId,
+    );
     if (inputItem != null) {
       nextMessages.removeWhere((message) => message.id == pendingId);
       final messageIndex = nextMessages.indexWhere(
-        (message) => message.id == inputItem.id,
+        (message) =>
+            message.turnId == inputItem.turnId &&
+            (message.itemId ?? message.id) ==
+                (inputItem.itemId ?? inputItem.id),
       );
       if (messageIndex == -1) {
         nextMessages.add(inputItem);
@@ -1475,16 +1549,26 @@ class ConversationDetail {
         (message) => message.id == pendingId,
       );
       if (pendingIndex != -1) {
-        nextMessages[pendingIndex] = nextMessages[pendingIndex].copyWith(
-          turnId: receipt.turn.id,
+        final canonicalArrivedFirst = nextMessages.any(
+          (message) =>
+              message.turnId == acceptedTurn.id &&
+              message.role == MessageRole.user &&
+              !_isPendingUserMessage(message),
         );
+        if (canonicalArrivedFirst) {
+          nextMessages.removeAt(pendingIndex);
+        } else {
+          nextMessages[pendingIndex] = nextMessages[pendingIndex].copyWith(
+            turnId: acceptedTurn.id,
+          );
+        }
       }
     }
     return ConversationDetail(
       summary: summary,
       committedMessages: nextMessages,
       liveOutputMessages: liveOutputMessages,
-      turns: _upsertTurn(turns, receipt.turn),
+      turns: _upsertTurn(turns, acceptedTurn),
       lastEventCursor: lastEventCursor,
     );
   }
@@ -1508,6 +1592,7 @@ class ConversationDetail {
           content: text,
           createdAt: createdAt,
           isStreaming: false,
+          clientRequestId: clientRequestId,
         ),
       ],
       liveOutputMessages: liveOutputMessages,
@@ -1531,6 +1616,13 @@ class ConversationDetail {
 
 String _pendingUserMessageId(String clientRequestId) =>
     'pending-user:$clientRequestId';
+
+bool _isPendingUserMessage(GatewayMessage message) {
+  final clientRequestId = message.clientRequestId;
+  return clientRequestId != null &&
+      message.role == MessageRole.user &&
+      message.id == _pendingUserMessageId(clientRequestId);
+}
 
 String _itemKindForContentKind(String kind) => switch (kind) {
       'text' => 'message',
@@ -1561,11 +1653,44 @@ List<TurnTask> _upsertTurn(List<TurnTask> turns, TurnTask incoming) {
 
 TurnTask _newerTurn(TurnTask current, TurnTask incoming) {
   final comparison = incoming.updatedAt.compareTo(current.updatedAt);
-  if (comparison > 0) return incoming;
-  if (comparison < 0) return current;
-  return _turnStatusRank(incoming.status) >= _turnStatusRank(current.status)
-      ? incoming
-      : current;
+  late final TurnTask newer;
+  if (current.status.isTerminal && !incoming.status.isTerminal) {
+    newer = current;
+  } else if (!current.status.isTerminal && incoming.status.isTerminal) {
+    newer = incoming;
+  } else if (comparison > 0) {
+    newer = incoming;
+  } else if (comparison < 0) {
+    newer = current;
+  } else if (_turnStatusRank(incoming.status) >=
+      _turnStatusRank(current.status)) {
+    newer = incoming;
+  } else {
+    newer = current;
+  }
+  final clientRequestId = current.clientRequestId ?? incoming.clientRequestId;
+  return clientRequestId == null || newer.clientRequestId == clientRequestId
+      ? newer
+      : newer.withClientRequestId(clientRequestId);
+}
+
+List<TurnTask> _upsertTerminalTurn(
+  List<TurnTask> turns,
+  TurnTask terminal,
+) {
+  final next = [...turns];
+  final index = next.indexWhere((turn) => turn.id == terminal.id);
+  if (index == -1) {
+    next.add(terminal);
+  } else {
+    final clientRequestId =
+        terminal.clientRequestId ?? next[index].clientRequestId;
+    next[index] = clientRequestId == null ||
+            terminal.clientRequestId == clientRequestId
+        ? terminal
+        : terminal.withClientRequestId(clientRequestId);
+  }
+  return next;
 }
 
 int _turnStatusRank(TurnStatus status) => switch (status) {

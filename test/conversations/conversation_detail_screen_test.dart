@@ -354,6 +354,53 @@ void main() {
     await client.close();
   });
 
+  for (final terminalStatus in [TurnStatus.interrupted, TurnStatus.failed]) {
+    testWidgets(
+        '$terminalStatus clears a stale running turn and re-enables the composer',
+        (tester) async {
+      final client = _DetailClient();
+      final running = TurnTask(
+        id: 'terminal-turn',
+        providerId: 'provider',
+        conversationId: 'conversation',
+        status: TurnStatus.running,
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(1, isUtc: true),
+      );
+      await _pumpDetail(
+        tester,
+        client,
+        conversation: _idleConversation(activeTurn: running),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
+        isFalse,
+      );
+
+      client.emit(TurnUpsertedEvent(
+        eventCursor: 'terminal-$terminalStatus',
+        turn: TurnTask(
+          id: running.id,
+          providerId: running.providerId,
+          conversationId: running.conversationId,
+          status: terminalStatus,
+          updatedAt: running.updatedAt,
+          completedAt: running.updatedAt,
+        ),
+      ));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(client.getCalls, 2);
+      expect(
+        tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
+        isTrue,
+      );
+      await tester.pumpWidget(const SizedBox());
+      await client.close();
+    });
+  }
+
   testWidgets('event stream failure discards stale detail and live output', (tester) async {
     final client = _DetailClient();
     await _pumpDetail(tester, client);
