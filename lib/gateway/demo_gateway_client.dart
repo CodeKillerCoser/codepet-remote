@@ -4,7 +4,7 @@ import '../core/domain/models.dart';
 import '../application/ports/gateway_client.dart';
 import '../application/sync/gateway_event_window.dart';
 
-class DemoGatewayClient implements GatewayClient {
+class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
   DemoGatewayClient({this.profileId = 'studio'}) : _now = DateTime.now().toUtc();
 
   final String profileId;
@@ -24,6 +24,26 @@ class DemoGatewayClient implements GatewayClient {
         providerInstanceId: 'codex-demo',
       );
 
+  late final List<GatewayProject> _projects = [
+    GatewayProject(
+      resource: _projectResource(
+        profileId == 'laptop' ? 'mobile-client' : 'codepet-remote',
+      ),
+      name: profileId == 'laptop' ? 'mobile-client' : 'codepet-remote',
+      roots: [
+        ProjectRoot(
+          path: profileId == 'laptop'
+              ? '/workspace/mobile-client'
+              : '/projects/codepet-remote',
+        ),
+      ],
+      metadata: const {},
+      position: 0,
+      createdAt: _now.subtract(const Duration(days: 30)),
+      updatedAt: _now.subtract(const Duration(minutes: 1)),
+    ),
+  ];
+
   @override
   String? get latestEventCursor => _cursor;
 
@@ -40,6 +60,7 @@ class DemoGatewayClient implements GatewayClient {
             status: ConversationStatus.idle,
             permissionLevel: PermissionLevel.readOnly,
             workspaceRoot: '/workspace/mobile-client',
+            project: _projects.first.resource,
             createdAt: _now.subtract(const Duration(days: 2)),
             updatedAt: _now.subtract(const Duration(days: 1)),
             resource: _conversationResource('laptop-review'),
@@ -66,6 +87,7 @@ class DemoGatewayClient implements GatewayClient {
       model: 'demo-model',
       reasoningEffort: 'medium',
       workspaceRoot: '/projects/codepet-remote',
+      project: _projects.first.resource,
       createdAt: _now.subtract(const Duration(hours: 1)),
       updatedAt: _now.subtract(const Duration(minutes: 1)),
       activeTurn: TurnTask(
@@ -116,6 +138,11 @@ class DemoGatewayClient implements GatewayClient {
           capabilities: const GatewayCapabilities(
             revision: 'demo-capabilities-1',
             methods: [
+              'project.list',
+              'project.get',
+              'project.create',
+              'project.update',
+              'project.delete',
               'conversation.list',
               'conversation.search',
               'conversation.get',
@@ -177,6 +204,7 @@ class DemoGatewayClient implements GatewayClient {
   @override
   Future<ConversationPage> listConversations({
     required GatewayProviderRoute route,
+    required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) async {
@@ -185,6 +213,12 @@ class DemoGatewayClient implements GatewayClient {
     }
     await Future<void>.delayed(const Duration(milliseconds: 180));
     final conversations = _conversations
+        .where((conversation) => switch (projectFilter) {
+              AllConversationFilter() => true,
+              StandaloneConversationFilter() => conversation.project == null,
+              ProjectConversationFilter(:final project) =>
+                conversation.project == project,
+            })
         .take(limit)
         .toList(growable: false);
     return ConversationPage(
@@ -296,6 +330,7 @@ class DemoGatewayClient implements GatewayClient {
     String? reasoningEffort,
     String? workspaceRoot,
     String? workspaceMode,
+    RoutedResourceId? project,
   }) async {
     if (route != _route) {
       throw const FormatException('Unknown demo Provider route');
@@ -311,6 +346,7 @@ class DemoGatewayClient implements GatewayClient {
       model: model,
       reasoningEffort: reasoningEffort,
       workspaceRoot: workspaceRoot,
+      project: project,
       createdAt: now,
       updatedAt: now,
       resource: _conversationResource(id),
@@ -502,6 +538,11 @@ class DemoGatewayClient implements GatewayClient {
         nativeResourceId: id,
       );
 
+  RoutedResourceId _projectResource(String id) => RoutedResourceId(
+        route: _route,
+        nativeResourceId: id,
+      );
+
   ConversationSummary _withoutActiveTurn(ConversationSummary conversation) =>
       ConversationSummary(
         id: conversation.id,
@@ -513,9 +554,96 @@ class DemoGatewayClient implements GatewayClient {
         model: conversation.model,
         reasoningEffort: conversation.reasoningEffort,
         workspaceRoot: conversation.workspaceRoot,
+        project: conversation.project,
         createdAt: conversation.createdAt,
         updatedAt: DateTime.now().toUtc(),
         turnSendSelection: conversation.turnSendSelection,
         resource: conversation.resource,
       );
+
+  @override
+  Future<ProjectPage> listProjects({
+    required GatewayProviderRoute route,
+    String? cursor,
+    int limit = 50,
+  }) async {
+    if (route != _route) {
+      throw const FormatException('Unknown demo Provider route');
+    }
+    return ProjectPage(
+      projects: _projects.take(limit).toList(growable: false),
+      snapshotCursor: _cursor,
+    );
+  }
+
+  @override
+  Future<GatewayProject> getProject(RoutedResourceId project) async =>
+      _projects.firstWhere((candidate) => candidate.resource == project);
+
+  @override
+  Future<GatewayProject> createProject({
+    required GatewayProviderRoute route,
+    required String idempotencyKey,
+    required String name,
+    required List<ProjectRoot> roots,
+    Map<String, String> metadata = const {},
+  }) async {
+    if (route != _route) {
+      throw const FormatException('Unknown demo Provider route');
+    }
+    final now = DateTime.now().toUtc();
+    final project = GatewayProject(
+      resource: _projectResource('demo-project-${++_sequence}'),
+      name: name,
+      roots: roots,
+      metadata: metadata,
+      position: _projects.length,
+      createdAt: now,
+      updatedAt: now,
+    );
+    _projects.add(project);
+    _emitProjectChange(project.resource, ProjectChangeType.created);
+    return project;
+  }
+
+  @override
+  Future<GatewayProject> updateProject({
+    required RoutedResourceId project,
+    String? name,
+    List<ProjectRoot>? roots,
+    Map<String, String>? metadata,
+  }) async {
+    final index = _projects.indexWhere((item) => item.resource == project);
+    if (index == -1) throw StateError('Unknown demo project');
+    final current = _projects[index];
+    final updated = GatewayProject(
+      resource: current.resource,
+      name: name ?? current.name,
+      roots: roots ?? current.roots,
+      metadata: metadata ?? current.metadata,
+      position: current.position,
+      createdAt: current.createdAt,
+      updatedAt: DateTime.now().toUtc(),
+    );
+    _projects[index] = updated;
+    _emitProjectChange(project, ProjectChangeType.updated);
+    return updated;
+  }
+
+  @override
+  Future<void> deleteProject(RoutedResourceId project) async {
+    _projects.removeWhere((item) => item.resource == project);
+    _emitProjectChange(project, ProjectChangeType.deleted);
+  }
+
+  void _emitProjectChange(
+    RoutedResourceId project,
+    ProjectChangeType changeType,
+  ) {
+    _events.add(ProjectChangedEvent(
+      eventCursor: 'demo-${++_sequence}',
+      project: project,
+      changeType: changeType,
+    ));
+  }
 }

@@ -32,6 +32,7 @@ void main() {
     final handshake = await client.connect();
     final page = await client.listConversations(
       route: handshake.providers.single.route,
+      projectFilter: const AllConversationFilter(),
       limit: 25,
     );
     final detail = await client.getConversation(page.conversations.single);
@@ -53,6 +54,7 @@ void main() {
     expect(transport.requests[1].params['afterCursor'], 'opaque-handshake');
     expect(transport.requests[2].method, 'conversation.list');
     expect(transport.requests[2].params['route'], _route.toJson());
+    expect(transport.requests[2].params['projectFilter'], {'kind': 'all'});
     expect(transport.requests[2].params['limit'], 25);
     expect(transport.requests[3].method, 'conversation.get');
     expect(detail.detail.summary.resource!.nativeResourceId, 'conversation-1');
@@ -290,6 +292,10 @@ void main() {
       reasoningEffort: 'high',
       workspaceRoot: '/workspace/project',
       workspaceMode: 'worktree',
+      project: const RoutedResourceId(
+        route: _route,
+        nativeResourceId: 'project-1',
+      ),
     );
 
     expect(conversation.title, 'Test conversation');
@@ -303,8 +309,99 @@ void main() {
         'reasoningEffort': 'high',
         'workspaceRoot': '/workspace/project',
         'workspaceMode': 'worktree',
+        'project': {
+          ..._route.toJson(),
+          'nativeResourceId': 'project-1',
+        },
       },
     );
+    await client.close();
+  });
+
+  test('maps project CRUD and explicit conversation project filters', () async {
+    final handshake = _handshakeJson();
+    final provider = (handshake['providers'] as List).single
+        as Map<String, dynamic>;
+    final capabilities = provider['capabilities'] as Map<String, dynamic>;
+    (capabilities['methods'] as List<String>).addAll(const <String>[
+      'project.list',
+      'project.get',
+      'project.create',
+      'project.update',
+      'project.delete',
+    ]);
+    final projectJson = _projectJson();
+    final transport = _FakeTransport({
+      'protocol.handshake': handshake,
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'project.list': {
+        'projects': [projectJson],
+        'pageInfo': {'nextCursor': 'project-page-2'},
+        'snapshotCursor': 'project-snapshot',
+      },
+      'project.get': {'project': projectJson},
+      'project.create': {'project': projectJson},
+      'project.update': {'project': projectJson},
+      'project.delete': <String, dynamic>{},
+      'conversation.list': {
+        'conversations': [_conversationJson()],
+        'pageInfo': <String, dynamic>{},
+        'snapshotCursor': 'conversation-snapshot',
+      },
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+
+    final page = await client.listProjects(route: _route, limit: 20);
+    final project = page.projects.single;
+    expect(project.name, 'codepet-remote');
+    expect(project.roots.single.path, '/workspace/codepet-remote');
+    expect(project.metadata, {'team': 'remote'});
+    expect(page.nextCursor, 'project-page-2');
+
+    await client.listConversations(
+      route: _route,
+      projectFilter: const StandaloneConversationFilter(),
+    );
+    expect(transport.requests.last.params['projectFilter'], {
+      'kind': 'standalone',
+    });
+
+    await client.listConversations(
+      route: _route,
+      projectFilter: ProjectConversationFilter(project.resource),
+    );
+    expect(transport.requests.last.params['projectFilter'], {
+      'kind': 'project',
+      'project': _resourceJson(project.resource),
+    });
+
+    await client.getProject(project.resource);
+    await client.createProject(
+      route: _route,
+      idempotencyKey: 'create-project-1',
+      name: 'codepet-remote',
+      roots: const [ProjectRoot(path: '/workspace/codepet-remote')],
+      metadata: const {'team': 'remote'},
+    );
+    expect(transport.requests.last.params['idempotencyKey'], 'create-project-1');
+    await client.updateProject(
+      project: project.resource,
+      roots: const [],
+      metadata: const {},
+    );
+    expect(transport.requests.last.params['roots'], isEmpty);
+    expect(transport.requests.last.params['metadata'], isEmpty);
+    await client.deleteProject(project.resource);
+    expect(transport.requests.last.params, {
+      'project': _resourceJson(project.resource),
+    });
     await client.close();
   });
 
@@ -401,6 +498,7 @@ void main() {
     final handshake = await client.connect();
     final page = await client.listConversations(
       route: handshake.providers.single.route,
+      projectFilter: const AllConversationFilter(),
     );
     final snapshot = await client.getConversation(page.conversations.single);
     final history = snapshot.detail.committedMessages;
@@ -580,6 +678,7 @@ void main() {
     final handshake = await client.connect();
     final page = await client.listConversations(
       route: handshake.providers.single.route,
+      projectFilter: const AllConversationFilter(),
     );
 
     expect(
@@ -895,6 +994,37 @@ void main() {
     final event = await eventFuture;
     expect(event, isA<ConversationUpsertedEvent>());
     expect((event as ConversationUpsertedEvent).conversation.resource!.nativeResourceId, 'conversation-1');
+    await client.close();
+  });
+
+  test('projects project.changed with routed identity and change type',
+      () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+    final eventFuture = client.events.first;
+
+    transport.emit({
+      'eventCursor': 'opaque-project-event',
+      'event': 'project.changed',
+      'payload': {
+        'project': _projectJson()['resource'],
+        'changeType': 'updated',
+      },
+    });
+
+    final event = await eventFuture as ProjectChangedEvent;
+    expect(event.project.nativeResourceId, 'project-1');
+    expect(event.changeType, ProjectChangeType.updated);
     await client.close();
   });
 
@@ -1410,6 +1540,7 @@ JsonMap _handshakeJson() {
 JsonMap _conversationJson() {
   return {
     'resource': {'deviceId': 'device-test', 'providerPluginId': 'dev.codepet.codex', 'providerInstanceId': 'codex-work', 'nativeResourceId': 'conversation-1'},
+    'project': null,
     'title': 'Test conversation',
     'status': 'idle',
     'permissionLevel': 'read-only',
@@ -1417,6 +1548,21 @@ JsonMap _conversationJson() {
     'updatedAt': 2000,
   };
 }
+
+JsonMap _projectJson() => {
+      'resource': {
+        ..._route.toJson(),
+        'nativeResourceId': 'project-1',
+      },
+      'name': 'codepet-remote',
+      'roots': [
+        {'path': '/workspace/codepet-remote'},
+      ],
+      'metadata': {'team': 'remote'},
+      'position': 0,
+      'createdAt': 1000,
+      'updatedAt': 2000,
+    };
 
 JsonMap _historyItemJson(String itemId, String text) {
   final conversation = {

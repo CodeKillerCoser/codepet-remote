@@ -12,11 +12,11 @@ class ConversationSearchScreen extends StatefulWidget {
   const ConversationSearchScreen({
     super.key,
     required this.session,
-    this.workspaceRoot,
+    this.project,
   });
 
   final DeviceSession session;
-  final String? workspaceRoot;
+  final RoutedResourceId? project;
 
   @override
   State<ConversationSearchScreen> createState() =>
@@ -42,7 +42,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     super.initState();
     _controller = ConversationSearchController(
       session: widget.session,
-      workspaceRoot: widget.workspaceRoot,
+      project: widget.project,
     )..addListener(_changed);
   }
 
@@ -50,7 +50,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
   void didUpdateWidget(ConversationSearchScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.session == widget.session &&
-        oldWidget.workspaceRoot == widget.workspaceRoot) {
+        oldWidget.project == widget.project) {
       return;
     }
     _controller
@@ -58,7 +58,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
       ..dispose();
     _controller = ConversationSearchController(
       session: widget.session,
-      workspaceRoot: widget.workspaceRoot,
+      project: widget.project,
     )..addListener(_changed);
   }
 
@@ -138,7 +138,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
               textInputAction: TextInputAction.search,
               autofocus: supported,
               decoration: InputDecoration(
-                labelText: widget.workspaceRoot == null
+                labelText: widget.project == null
                     ? '搜索 Host 上的会话'
                     : '搜索当前项目的会话',
                 hintText: '输入标题或会话内容关键词',

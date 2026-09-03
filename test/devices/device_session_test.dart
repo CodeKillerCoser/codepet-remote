@@ -9,86 +9,25 @@ import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('groups workspaces and sorts projects and recents', () {
+  test('sorts recent conversations without treating cwd as project identity', () {
     final old = _conversation('old', '/repo/a', 1000);
     final recent = _conversation('recent', '/repo/a', 3000);
     final other = _conversation('other', '/repo/b', 2000);
     final unscoped = _conversation('unscoped', null, 4000);
-    final groups = groupConversationsByWorkspace([old, unscoped, other, recent]);
-    expect(groups.keys, ['/repo/a', '/repo/b']);
-    expect(groups['/repo/a']!.map((item) => item.id), ['recent', 'old']);
-    expect(sortRecentConversations([old, recent, other]).map((item) => item.id), ['recent', 'other', 'old']);
+    expect(
+      sortRecentConversations([old, unscoped, other, recent])
+          .map((item) => item.id),
+      ['unscoped', 'recent', 'other', 'old'],
+    );
   });
 
-  test('uses stable routed tie-breakers for conversations and projects', () {
+  test('uses stable routed tie-breakers for conversations', () {
     final beta = _conversation('beta', '/repo/a', 3000);
     final alpha = _conversation('alpha', '/repo/a', 3000);
-    final otherProject = _conversation('other', '/repo/b', 3000);
 
     expect(
       sortRecentConversations([beta, alpha]).map((item) => item.id),
       ['alpha', 'beta'],
-    );
-
-    final groups = groupConversationsByWorkspace([
-      otherProject,
-      beta,
-      alpha,
-    ]);
-    expect(groups.keys, ['/repo/a', '/repo/b']);
-    expect(groups['/repo/a']!.map((item) => item.id), ['alpha', 'beta']);
-  });
-
-  test('groups only by the Host project projection and preserves routed conversations', () {
-    final codex = _routedConversation(
-      domainId: 'shared-domain-id',
-      nativeId: 'shared-thread',
-      providerPluginId: 'dev.codepet.codex',
-      providerInstanceId: 'codex-work',
-      workspaceRoot: '/logical/project',
-      updatedAt: 2000,
-    );
-    final claude = _routedConversation(
-      domainId: 'shared-domain-id',
-      nativeId: 'shared-thread',
-      providerPluginId: 'dev.codepet.claude',
-      providerInstanceId: 'claude-work',
-      workspaceRoot: '/logical/project',
-      updatedAt: 1000,
-    );
-    final duplicate = _routedConversation(
-      domainId: 'shared-domain-id',
-      nativeId: 'shared-thread',
-      providerPluginId: 'dev.codepet.codex',
-      providerInstanceId: 'codex-work',
-      workspaceRoot: '/logical/project',
-      updatedAt: 1500,
-    );
-    final otherHost = _routedConversation(
-      domainId: 'shared-domain-id',
-      hostDeviceId: 'host-two',
-      nativeId: 'shared-thread',
-      providerPluginId: 'dev.codepet.codex',
-      providerInstanceId: 'codex-work',
-      workspaceRoot: '/logical/project',
-      updatedAt: 1000,
-    );
-
-    final projects = groupConversationsByProject(
-      hostDeviceId: 'host-one',
-      values: [claude, duplicate, codex],
-    );
-
-    expect(projects, hasLength(1));
-    expect(projects.single.workspaceRoot, '/logical/project');
-    expect(projects.single.key, 'host-one\u0000/logical/project');
-    expect(
-      projects.single.conversations.map((item) => item.id),
-      [codex.id, claude.id],
-    );
-    expect(
-      deduplicateRoutedConversations([codex, claude, otherHost]),
-      hasLength(3),
     );
   });
 
@@ -114,6 +53,147 @@ void main() {
       deduplicateRoutedConversations([earlier, later]).single.title,
       '新标题',
     );
+  });
+
+  test('loads projects independently and uses explicit conversation scopes',
+      () async {
+    final project = _gatewayProject();
+    final standalone = _routedConversation(
+      nativeId: 'standalone',
+      providerPluginId: _primaryRoute.providerPluginId,
+      providerInstanceId: _primaryRoute.providerInstanceId,
+      workspaceRoot: '/same/cwd',
+      updatedAt: 3000,
+    );
+    final projectConversation = _routedConversation(
+      nativeId: 'project-conversation',
+      providerPluginId: _primaryRoute.providerPluginId,
+      providerInstanceId: _primaryRoute.providerInstanceId,
+      workspaceRoot: '/same/cwd',
+      updatedAt: 2000,
+      project: project.resource,
+    );
+    final client = _ProjectFakeClient(
+      projects: [project],
+      conversations: [standalone, projectConversation],
+    );
+    final session = DeviceSession(
+      device: _device('projects'),
+      clientFactory: () => client,
+    );
+
+    await session.connect();
+
+    expect(session.selectedProviderSupportsProjects, isTrue);
+    expect(session.selectedProviderProjects, [project]);
+    expect(session.selectedProviderRecentConversations, [standalone]);
+    expect(client.listRequests.single.projectFilter,
+        isA<StandaloneConversationFilter>());
+
+    await session.ensureProjectConversations(project);
+
+    expect(session.conversationsForProject(project), [projectConversation]);
+    expect(client.listRequests.last.projectFilter,
+        isA<ProjectConversationFilter>());
+    expect(
+      (client.listRequests.last.projectFilter as ProjectConversationFilter)
+          .project,
+      project.resource,
+    );
+    session.dispose();
+  });
+
+  test('project changed refreshes created and updated values and removes deletes',
+      () async {
+    final initial = _gatewayProject();
+    final client = _ProjectFakeClient(
+      projects: [initial],
+      conversations: const [],
+    );
+    final session = DeviceSession(
+      device: _device('project-events'),
+      clientFactory: () => client,
+    );
+    await session.connect();
+
+    final updated = GatewayProject(
+      resource: initial.resource,
+      name: 'Renamed',
+      roots: initial.roots,
+      metadata: initial.metadata,
+      position: initial.position,
+      createdAt: initial.createdAt,
+      updatedAt: initial.updatedAt.add(const Duration(seconds: 1)),
+    );
+    client.projects[0] = updated;
+    client.emit(ProjectChangedEvent(
+      eventCursor: 'project-updated',
+      project: initial.resource,
+      changeType: ProjectChangeType.updated,
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.selectedProviderProjects.single.name, 'Renamed');
+
+    client.projects.clear();
+    client.emit(ProjectChangedEvent(
+      eventCursor: 'project-deleted',
+      project: initial.resource,
+      changeType: ProjectChangeType.deleted,
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.selectedProviderProjects, isEmpty);
+    expect(client.projectListCalls, 3);
+    session.dispose();
+  });
+
+  test('project changes arriving during refresh are drained', () async {
+    final initial = _gatewayProject();
+    final client = _ProjectFakeClient(
+      projects: [initial],
+      conversations: const [],
+    );
+    final session = DeviceSession(
+      device: _device('project-event-drain'),
+      clientFactory: () => client,
+    );
+    await session.connect();
+
+    final firstRefresh = Completer<ProjectPage>();
+    client.nextProjectPage = firstRefresh;
+    client.emit(ProjectChangedEvent(
+      eventCursor: 'project-first',
+      project: initial.resource,
+      changeType: ProjectChangeType.updated,
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    final newest = GatewayProject(
+      resource: initial.resource,
+      name: 'Newest',
+      roots: initial.roots,
+      metadata: initial.metadata,
+      position: initial.position,
+      createdAt: initial.createdAt,
+      updatedAt: initial.updatedAt.add(const Duration(seconds: 2)),
+    );
+    client.projects[0] = newest;
+    client.emit(ProjectChangedEvent(
+      eventCursor: 'project-second',
+      project: initial.resource,
+      changeType: ProjectChangeType.updated,
+    ));
+    firstRefresh.complete(ProjectPage(
+      projects: [initial],
+      snapshotCursor: 'project-first',
+    ));
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.selectedProviderProjects.single.name, 'Newest');
+    expect(client.projectListCalls, 3);
+    session.dispose();
   });
 
   test('loads two cursor pages with an explicit small page limit', () async {
@@ -1176,6 +1256,7 @@ ConversationSummary _routedConversation({
   required String workspaceRoot,
   required int updatedAt,
   String? title,
+  RoutedResourceId? project,
 }) {
   final route = GatewayProviderRoute(
     deviceId: hostDeviceId,
@@ -1191,6 +1272,7 @@ ConversationSummary _routedConversation({
     status: ConversationStatus.idle,
     permissionLevel: PermissionLevel.readOnly,
     workspaceRoot: workspaceRoot,
+    project: project,
     createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
     updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt, isUtc: true),
     resource: resource,
@@ -1227,11 +1309,13 @@ typedef _ListConversationsHandler = Future<ConversationPage> Function({
 class _ConversationListRequest {
   const _ConversationListRequest({
     required this.route,
+    required this.projectFilter,
     required this.cursor,
     required this.limit,
   });
 
   final GatewayProviderRoute route;
+  final ConversationProjectFilter projectFilter;
   final String? cursor;
   final int limit;
 }
@@ -1259,11 +1343,13 @@ class _FakeClient implements GatewayClient {
   @override
   Future<ConversationPage> listConversations({
     required GatewayProviderRoute route,
+    required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) async {
     listRequests.add(_ConversationListRequest(
       route: route,
+      projectFilter: projectFilter,
       cursor: cursor,
       limit: limit,
     ));
@@ -1280,9 +1366,120 @@ class _FakeClient implements GatewayClient {
   @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: _cursor);
   @override Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async => const ConversationInteraction(selection: TurnSendSelection());
-  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
+  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
   @override Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
   @override Future<void> close() async { closed = true; await controller.close(); }
+}
+
+class _ProjectFakeClient extends _FakeClient implements ProjectGatewayClient {
+  _ProjectFakeClient({
+    required List<GatewayProject> projects,
+    required List<ConversationSummary> conversations,
+  })  : projects = List.of(projects),
+        super(conversations, providers: const [_projectProvider]);
+
+  final List<GatewayProject> projects;
+  int projectListCalls = 0;
+  Completer<ProjectPage>? nextProjectPage;
+
+  @override
+  Future<ConversationPage> listConversations({
+    required GatewayProviderRoute route,
+    required ConversationProjectFilter projectFilter,
+    String? cursor,
+    int limit = 50,
+  }) async {
+    listRequests.add(_ConversationListRequest(
+      route: route,
+      projectFilter: projectFilter,
+      cursor: cursor,
+      limit: limit,
+    ));
+    final filtered = values.where((conversation) => switch (projectFilter) {
+          AllConversationFilter() => true,
+          StandaloneConversationFilter() => conversation.project == null,
+          ProjectConversationFilter(:final project) =>
+            conversation.project == project,
+        });
+    return ConversationPage(
+      conversations: filtered.take(limit).toList(growable: false),
+      snapshotCursor: 'handshake',
+    );
+  }
+
+  @override
+  Future<ProjectPage> listProjects({
+    required GatewayProviderRoute route,
+    String? cursor,
+    int limit = 50,
+  }) async {
+    projectListCalls++;
+    final pending = nextProjectPage;
+    if (pending != null) {
+      nextProjectPage = null;
+      return pending.future;
+    }
+    return ProjectPage(
+      projects: projects.take(limit).toList(growable: false),
+      snapshotCursor: 'handshake',
+    );
+  }
+
+  @override
+  Future<GatewayProject> getProject(RoutedResourceId project) async =>
+      projects.firstWhere((candidate) => candidate.resource == project);
+
+  @override
+  Future<GatewayProject> createProject({
+    required GatewayProviderRoute route,
+    required String idempotencyKey,
+    required String name,
+    required List<ProjectRoot> roots,
+    Map<String, String> metadata = const {},
+  }) async {
+    final now = DateTime.now().toUtc();
+    final project = GatewayProject(
+      resource: RoutedResourceId(
+        route: route,
+        nativeResourceId: 'created-${projects.length}',
+      ),
+      name: name,
+      roots: roots,
+      metadata: metadata,
+      position: projects.length,
+      createdAt: now,
+      updatedAt: now,
+    );
+    projects.add(project);
+    return project;
+  }
+
+  @override
+  Future<GatewayProject> updateProject({
+    required RoutedResourceId project,
+    String? name,
+    List<ProjectRoot>? roots,
+    Map<String, String>? metadata,
+  }) async {
+    final index = projects.indexWhere((item) => item.resource == project);
+    final current = projects[index];
+    final updated = GatewayProject(
+      resource: project,
+      name: name ?? current.name,
+      roots: roots ?? current.roots,
+      metadata: metadata ?? current.metadata,
+      position: current.position,
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt.add(const Duration(seconds: 1)),
+    );
+    projects[index] = updated;
+    return updated;
+  }
+
+  @override
+  Future<void> deleteProject(RoutedResourceId project) async {
+    projects.removeWhere((item) => item.resource == project);
+  }
 }
 
 class _FailingClient implements GatewayClient {
@@ -1296,11 +1493,11 @@ class _FailingClient implements GatewayClient {
       retryable: true,
     ),
   );
-  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) => throw StateError('not reached');
+  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) => throw StateError('not reached');
   @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw StateError('not reached');
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) => throw StateError('not reached');
   @override Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) => throw StateError('not reached');
-  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw StateError('not reached');
+  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw StateError('not reached');
   @override Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw StateError('not reached');
   @override Future<void> close() async {
     closeCalled = true;
@@ -1337,6 +1534,39 @@ const _listProvider = GatewayProvider(
     methods: ['conversation.list', 'conversation.get'],
   ),
 );
+
+const _projectProvider = GatewayProvider(
+  route: _primaryRoute,
+  providerType: 'dev.codepet.codex',
+  displayName: 'Codex Projects',
+  status: ProviderStatus.ready,
+  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
+  capabilities: GatewayCapabilities(
+    revision: 'projects-1',
+    methods: [
+      'project.list',
+      'project.get',
+      'project.create',
+      'project.update',
+      'project.delete',
+      'conversation.list',
+      'conversation.create',
+    ],
+  ),
+);
+
+GatewayProject _gatewayProject() => GatewayProject(
+      resource: const RoutedResourceId(
+        route: _primaryRoute,
+        nativeResourceId: 'project-1',
+      ),
+      name: 'Project One',
+      roots: const [ProjectRoot(path: '/same/cwd')],
+      metadata: const {},
+      position: 0,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(2000, isUtc: true),
+    );
 
 const _secondaryRoute = GatewayProviderRoute(
   deviceId: 'host-one',

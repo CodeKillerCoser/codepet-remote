@@ -234,6 +234,7 @@ class _GatewayClient implements GatewayClient {
   @override
   Future<ConversationPage> listConversations({
     required GatewayProviderRoute route,
+    required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) async => const ConversationPage(
@@ -257,7 +258,7 @@ class _GatewayClient implements GatewayClient {
       const ConversationInteraction(selection: TurnSendSelection());
 
   @override
-  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
+  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
 
   @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();

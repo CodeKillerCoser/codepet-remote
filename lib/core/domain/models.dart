@@ -937,6 +937,52 @@ class TurnTask {
   final RoutedResourceId? conversationResource;
 }
 
+class ProjectRoot {
+  const ProjectRoot({required this.path});
+
+  final String path;
+}
+
+class GatewayProject {
+  const GatewayProject({
+    required this.resource,
+    required this.name,
+    required this.roots,
+    required this.metadata,
+    required this.position,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final RoutedResourceId resource;
+  final String name;
+  final List<ProjectRoot> roots;
+  final Map<String, String> metadata;
+  final int position;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  String get key => resource.key;
+}
+
+sealed class ConversationProjectFilter {
+  const ConversationProjectFilter();
+}
+
+final class AllConversationFilter extends ConversationProjectFilter {
+  const AllConversationFilter();
+}
+
+final class StandaloneConversationFilter extends ConversationProjectFilter {
+  const StandaloneConversationFilter();
+}
+
+final class ProjectConversationFilter extends ConversationProjectFilter {
+  const ProjectConversationFilter(this.project);
+
+  final RoutedResourceId project;
+}
+
 class ConversationSummary {
   const ConversationSummary({
     required this.id,
@@ -950,6 +996,7 @@ class ConversationSummary {
     this.model,
     this.reasoningEffort,
     this.workspaceRoot,
+    this.project,
     this.activeTurn,
     this.turnSendSelection,
     this.resource,
@@ -970,6 +1017,9 @@ class ConversationSummary {
   final String? model;
   final String? reasoningEffort;
   final String? workspaceRoot;
+  /// Project ownership is independent from [workspaceRoot], which is only the
+  /// conversation's current working directory.
+  final RoutedResourceId? project;
   final DateTime createdAt;
   final DateTime updatedAt;
   final TurnTask? activeTurn;
@@ -990,6 +1040,7 @@ class ConversationSummary {
         model: model,
         reasoningEffort: reasoningEffort,
         workspaceRoot: workspaceRoot,
+        project: project,
         activeTurn: activeTurn,
         turnSendSelection: turnSendSelection,
         resource: resource,
@@ -1014,6 +1065,7 @@ class ConversationSummary {
         model: model,
         reasoningEffort: reasoningEffort,
         workspaceRoot: workspaceRoot,
+        project: project,
         activeTurn: turn.status.isTerminal ? null : turn,
         turnSendSelection: turnSendSelection,
         resource: resource,
@@ -1535,6 +1587,18 @@ class ConversationPage {
   final String snapshotCursor;
 }
 
+class ProjectPage {
+  const ProjectPage({
+    required this.projects,
+    required this.snapshotCursor,
+    this.nextCursor,
+  });
+
+  final List<GatewayProject> projects;
+  final String? nextCursor;
+  final String snapshotCursor;
+}
+
 sealed class GatewayEvent {
   const GatewayEvent({required this.eventCursor});
 
@@ -1548,6 +1612,19 @@ class GatewayProviderChangedEvent extends GatewayEvent {
   });
 
   final GatewayProvider provider;
+}
+
+enum ProjectChangeType { created, updated, deleted }
+
+class ProjectChangedEvent extends GatewayEvent {
+  const ProjectChangedEvent({
+    required super.eventCursor,
+    required this.project,
+    required this.changeType,
+  });
+
+  final RoutedResourceId project;
+  final ProjectChangeType changeType;
 }
 
 class ConversationUpsertedEvent extends GatewayEvent {

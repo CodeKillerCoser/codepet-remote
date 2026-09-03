@@ -12,7 +12,10 @@ import 'transport.dart';
 
 /// Infrastructure adapter backed exclusively by CodePet's generated SDK.
 final class ProtocolGatewayClient
-    implements GatewayClient, ConversationReadGatewayClient {
+    implements
+        GatewayClient,
+        ConversationReadGatewayClient,
+        ProjectGatewayClient {
   ProtocolGatewayClient({
     required this.transport,
     required this.clientId,
@@ -174,14 +177,23 @@ final class ProtocolGatewayClient
   @override
   Future<ConversationPage> listConversations({
     required GatewayProviderRoute route,
+    required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) async {
+    if (projectFilter case ProjectConversationFilter(:final project)) {
+      if (project.route != route) {
+        throw const FormatException(
+          'Conversation project filter route does not match Provider route',
+        );
+      }
+    }
     _validateProviderRequest(route, cursor: cursor, limit: limit);
     final response = await _call(
       () => _protocol.conversationList(
         sdk.ConversationListRequest(
           route: _mapper.sdkProviderRoute(route),
+          projectFilter: _mapper.conversationProjectFilter(projectFilter),
           cursor: cursor,
           limit: limit,
         ),
@@ -193,6 +205,118 @@ final class ProtocolGatewayClient
       snapshotCursor: response.snapshotCursor,
       route: route,
       method: 'conversation.list',
+    );
+  }
+
+  @override
+  Future<ProjectPage> listProjects({
+    required GatewayProviderRoute route,
+    String? cursor,
+    int limit = 50,
+  }) async {
+    _requireProviderCapability(
+      route,
+      method: 'project.list',
+      cursor: cursor,
+      limit: limit,
+    );
+    final response = await _call(
+      () => _protocol.projectList(
+        sdk.ProjectListRequest(
+          route: _mapper.sdkProviderRoute(route),
+          cursor: cursor,
+          limit: limit,
+        ),
+      ),
+    );
+    final projects = response.projects.map((project) {
+      _requireSdkResourceRoute(project.resource, route, 'project.list');
+      return _mapper.project(project);
+    }).toList(growable: false);
+    return ProjectPage(
+      projects: projects,
+      nextCursor: response.pageInfo.nextCursor,
+      snapshotCursor: response.snapshotCursor,
+    );
+  }
+
+  @override
+  Future<GatewayProject> getProject(RoutedResourceId project) async {
+    final route = project.route;
+    _requireProviderCapability(route, method: 'project.get');
+    final requested = _mapper.sdkResourceId(project);
+    final response = await _call(
+      () => _protocol.projectGet(sdk.ProjectGetRequest(project: requested)),
+    );
+    _requireSameSdkResource(
+      response.project.resource,
+      requested,
+      'project.get',
+    );
+    return _mapper.project(response.project);
+  }
+
+  @override
+  Future<GatewayProject> createProject({
+    required GatewayProviderRoute route,
+    required String idempotencyKey,
+    required String name,
+    required List<ProjectRoot> roots,
+    Map<String, String> metadata = const {},
+  }) async {
+    _requireProviderCapability(route, method: 'project.create');
+    final response = await _call(
+      () => _protocol.projectCreate(
+        sdk.ProjectCreateRequest(
+          route: _mapper.sdkProviderRoute(route),
+          idempotencyKey: idempotencyKey,
+          name: name,
+          roots: _mapper.projectRoots(roots),
+          metadata: metadata,
+        ),
+      ),
+    );
+    _requireSdkResourceRoute(response.project.resource, route, 'project.create');
+    return _mapper.project(response.project);
+  }
+
+  @override
+  Future<GatewayProject> updateProject({
+    required RoutedResourceId project,
+    String? name,
+    List<ProjectRoot>? roots,
+    Map<String, String>? metadata,
+  }) async {
+    if (name == null && roots == null && metadata == null) {
+      throw const FormatException('project.update requires a changed field');
+    }
+    _requireProviderCapability(project.route, method: 'project.update');
+    final requested = _mapper.sdkResourceId(project);
+    final response = await _call(
+      () => _protocol.projectUpdate(
+        sdk.ProjectUpdateRequest(
+          project: requested,
+          name: name,
+          roots: roots == null ? null : _mapper.projectRoots(roots),
+          metadata: metadata,
+        ),
+      ),
+    );
+    _requireSameSdkResource(
+      response.project.resource,
+      requested,
+      'project.update',
+    );
+    return _mapper.project(response.project);
+  }
+
+  @override
+  Future<void> deleteProject(RoutedResourceId project) async {
+    _requireProviderCapability(project.route, method: 'project.delete');
+    await _call(
+      () => _protocol.projectDelete(
+        sdk.ProjectDeleteRequest(project: _mapper.sdkResourceId(project)),
+      ),
     );
   }
 
@@ -265,6 +389,42 @@ final class ProtocolGatewayClient
     }
     if (limit < 1 || limit > 100) {
       throw RangeError.range(limit, 1, 100, 'limit');
+    }
+  }
+
+  GatewayProvider _requireProviderCapability(
+    GatewayProviderRoute route, {
+    required String method,
+    String? cursor,
+    int limit = 1,
+  }) {
+    _validateProviderRequest(route, cursor: cursor, limit: limit);
+    final provider = _providersByRoute[route.key];
+    if (provider == null || !provider.methods.contains(method)) {
+      throw FormatException('Provider $method capability is unavailable');
+    }
+    return provider;
+  }
+
+  void _requireSdkResourceRoute(
+    sdk.RoutedResourceId resource,
+    GatewayProviderRoute route,
+    String method,
+  ) {
+    if (resource.deviceId != route.deviceId ||
+        resource.providerPluginId != route.providerPluginId ||
+        resource.providerInstanceId != route.providerInstanceId) {
+      throw FormatException('$method returned a different Provider route');
+    }
+  }
+
+  void _requireSameSdkResource(
+    sdk.RoutedResourceId actual,
+    sdk.RoutedResourceId expected,
+    String method,
+  ) {
+    if (_mapper.resourceKey(actual) != _mapper.resourceKey(expected)) {
+      throw FormatException('$method returned a different project');
     }
   }
 
@@ -437,7 +597,13 @@ final class ProtocolGatewayClient
     String? reasoningEffort,
     String? workspaceRoot,
     String? workspaceMode,
+    RoutedResourceId? project,
   }) async {
+    if (project != null && project.route != route) {
+      throw const FormatException(
+        'Conversation project route does not match Provider route',
+      );
+    }
     _validateProviderRequest(route, cursor: null, limit: 1);
     final provider = _providersByRoute[route.key];
     if (provider == null ||
@@ -457,6 +623,7 @@ final class ProtocolGatewayClient
           reasoningEffort: reasoningEffort,
           workspaceRoot: workspaceRoot,
           workspaceMode: workspaceMode,
+          project: project == null ? null : _mapper.sdkResourceId(project),
         ),
       ),
     );
