@@ -173,6 +173,67 @@ void main() {
 
     expect(hosts.single.host, '192.0.2.10');
   });
+
+  test('Android native discovery is preferred over raw mDNS', () async {
+    final client = _FakeMdnsClient();
+    final nativeHost = _discoveredHost('192.168.0.105');
+    final discovery = CodePetDiscovery(
+      clientFactory: () => client,
+      multicastLock: _FakeMulticastLock(),
+      nativeDiscovery: (_) async => [nativeHost],
+    );
+
+    final hosts = await discovery.discover().toList();
+
+    expect(hosts, [nativeHost]);
+    expect(client.started, isFalse);
+  });
+
+  test('empty Android native discovery falls back to raw mDNS', () async {
+    final client = _FakeMdnsClient();
+    final discovery = CodePetDiscovery(
+      clientFactory: () => client,
+      multicastLock: _FakeMulticastLock(),
+      nativeDiscovery: (_) async => const [],
+    );
+
+    final hosts = await discovery.discover().toList();
+
+    expect(hosts.single.host, '192.0.2.10');
+    expect(client.started, isTrue);
+  });
+
+  test('native NSD records use the same strict Host metadata validation', () {
+    final valid = validatedDiscoveredCodePetHost(
+      instanceName: 'Host',
+      host: '192.168.0.105',
+      port: 47622,
+      txt: {
+        'id': 'trusted-device',
+        'name': 'Host',
+        'fp': 'a' * 64,
+        'vmin': '1',
+        'vmax': '1',
+        'pair': '0',
+      },
+    );
+    final invalidPairingFlag = validatedDiscoveredCodePetHost(
+      instanceName: 'Host',
+      host: '192.168.0.105',
+      port: 47622,
+      txt: {
+        'id': 'trusted-device',
+        'name': 'Host',
+        'fp': 'a' * 64,
+        'vmin': '1',
+        'vmax': '1',
+        'pair': 'yes',
+      },
+    );
+
+    expect(valid?.host, '192.168.0.105');
+    expect(invalidPairingFlag, isNull);
+  });
 }
 
 DiscoveredCodePetHost _discoveredHost(

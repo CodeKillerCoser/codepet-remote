@@ -202,6 +202,41 @@ class PlatformCodePetMulticastLock implements CodePetMulticastLock {
   }
 }
 
+class PlatformCodePetNsdDiscovery {
+  static const MethodChannel _channel = MethodChannel('com.codepet.remote/mdns');
+
+  Future<List<DiscoveredCodePetHost>> discover(Duration timeout) async {
+    final records = await _channel.invokeMethod<List<dynamic>>(
+      'discoverServices',
+      {
+        'serviceType': '_codepet._tcp.',
+        'timeoutMillis': timeout.inMilliseconds,
+      },
+    );
+    if (records == null) return const [];
+    return records
+        .map(_decodeRecord)
+        .whereType<DiscoveredCodePetHost>()
+        .toList(growable: false);
+  }
+
+  DiscoveredCodePetHost? _decodeRecord(dynamic record) {
+    if (record is! Map) return null;
+    final map = Map<String, dynamic>.from(record);
+    final rawTxt = map['txt'];
+    if (rawTxt is! Map) return null;
+    final txt = rawTxt.map(
+      (key, value) => MapEntry(key.toString(), value.toString()),
+    );
+    return validatedDiscoveredCodePetHost(
+      instanceName: map['instanceName'],
+      host: map['host'],
+      port: map['port'],
+      txt: txt,
+    );
+  }
+}
+
 RawDatagramSocketFactory codePetMdnsSocketFactory({
   required bool isAndroid,
   RawDatagramSocketFactory socketBinder = RawDatagramSocket.bind,
@@ -223,15 +258,21 @@ class CodePetDiscovery {
   CodePetDiscovery({
     MDnsClient Function()? clientFactory,
     CodePetMulticastLock? multicastLock,
-    Future<DiscoveredCodePetHost?> Function()? fallbackProbe,
+    this._fallbackProbe,
+    Future<List<DiscoveredCodePetHost>> Function(Duration)? nativeDiscovery,
   })  : _clientFactory = clientFactory ?? _defaultClient,
         _multicastLock = multicastLock ?? PlatformCodePetMulticastLock(),
-        _fallbackProbe = fallbackProbe;
+        _nativeDiscovery = nativeDiscovery ??
+            (Platform.isAndroid
+                ? PlatformCodePetNsdDiscovery().discover
+                : null);
 
   static const serviceType = '_codepet._tcp.local.';
   final MDnsClient Function() _clientFactory;
   final CodePetMulticastLock _multicastLock;
   final Future<DiscoveredCodePetHost?> Function()? _fallbackProbe;
+  final Future<List<DiscoveredCodePetHost>> Function(Duration)?
+      _nativeDiscovery;
 
   static MDnsClient _defaultClient() => MDnsClient(
     rawDatagramSocketFactory: codePetMdnsSocketFactory(
@@ -245,6 +286,18 @@ class CodePetDiscovery {
       try {
         final fallback = await fallbackProbe().timeout(timeout);
         if (fallback != null) yield fallback;
+      } catch (_) {}
+    }
+    final nativeDiscovery = _nativeDiscovery;
+    if (nativeDiscovery != null) {
+      try {
+        final hosts = await nativeDiscovery(timeout).timeout(
+          timeout + const Duration(milliseconds: 500),
+        );
+        if (hosts.isNotEmpty) {
+          yield* Stream<DiscoveredCodePetHost>.fromIterable(hosts);
+          return;
+        }
       } catch (_) {}
     }
     final client = _clientFactory();
@@ -274,30 +327,64 @@ class CodePetDiscovery {
             if (separator > 0) txt[entry.substring(0, separator)] = entry.substring(separator + 1);
           }
         }
-        const allowed = {'id', 'name', 'fp', 'vmin', 'vmax', 'pair'};
-        const required = {'id', 'name', 'vmin', 'vmax', 'pair'};
-        if (txt.keys.any((key) => !allowed.contains(key)) || !required.every(txt.containsKey)) continue;
-        final fingerprint = txt['fp'];
-        if (fingerprint != null &&
-            !RegExp(r'^[0-9a-f]{64}$').hasMatch(fingerprint)) {
-          continue;
-        }
         final address = await _first(client.lookup<IPAddressResourceRecord>(
           ResourceRecordQuery.addressIPv4(service.target),
           timeout: timeout,
         ));
-        yield DiscoveredCodePetHost(
+        final host = validatedDiscoveredCodePetHost(
           instanceName: pointer.domainName,
           host: address?.address.address ?? service.target,
           port: service.port,
           txt: txt,
         );
+        if (host != null) yield host;
       }
     } finally {
       if (started) client.stop();
       await _multicastLock.release();
     }
   }
+}
+
+DiscoveredCodePetHost? validatedDiscoveredCodePetHost({
+  required dynamic instanceName,
+  required dynamic host,
+  required dynamic port,
+  required Map<String, String> txt,
+}) {
+  const allowed = {'id', 'name', 'fp', 'vmin', 'vmax', 'pair'};
+  const required = {'id', 'name', 'vmin', 'vmax', 'pair'};
+  if (instanceName is! String ||
+      instanceName.isEmpty ||
+      host is! String ||
+      host.isEmpty ||
+      port is! int ||
+      port < 1 ||
+      port > 65535 ||
+      txt.keys.any((key) => !allowed.contains(key)) ||
+      !required.every(txt.containsKey)) {
+    return null;
+  }
+  final fingerprint = txt['fp'];
+  final minimumVersion = int.tryParse(txt['vmin'] ?? '');
+  final maximumVersion = int.tryParse(txt['vmax'] ?? '');
+  if ((fingerprint != null &&
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(fingerprint)) ||
+      minimumVersion == null ||
+      minimumVersion < 1 ||
+      maximumVersion == null ||
+      maximumVersion < minimumVersion ||
+      (txt['pair'] != '0' && txt['pair'] != '1') ||
+      txt['id']!.isEmpty ||
+      txt['name']!.isEmpty) {
+    return null;
+  }
+  return DiscoveredCodePetHost(
+    instanceName: instanceName,
+    host: host,
+    port: port,
+    txt: txt,
+  );
 }
 
 class AndroidEmulatorCodePetHostProbe {

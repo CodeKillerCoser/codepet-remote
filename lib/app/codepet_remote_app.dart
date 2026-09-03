@@ -262,7 +262,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     final emulatorProvider = provider as DebugAndroidEmulatorProvider;
     try {
       if (!await emulatorProvider.isDebugAndroidEmulator()) return null;
-      return AndroidEmulatorCodePetHostProbe().probe();
+      return await AndroidEmulatorCodePetHostProbe().probe();
     } catch (_) {
       return null;
     }
