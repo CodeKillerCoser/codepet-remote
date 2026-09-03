@@ -142,6 +142,81 @@ void main() {
       throwsA(isA<FormatException>()),
     );
   });
+
+  test('accepted emulator pairing keeps the Host advertised Gateway URL', () async {
+    final registry = DeviceRegistry(
+      metadata: _Metadata(),
+      credentials: _Credentials(),
+    );
+    final exchangeClient = _RequestExchangeClient(
+      acceptedGatewayUrl:
+          'wss://192.168.1.10:47622/remote/v2/gateway',
+    );
+    final service = PairDiscoveredDeviceUseCase(
+      repository: registry,
+      descriptorProvider: const _DescriptorProvider(
+        DeviceDescriptor(
+          deviceName: 'Android Emulator',
+          operatingSystem: 'Android',
+          systemVersion: '16',
+        ),
+      ),
+      gateway: LanPairingRequestGateway(exchangeClient: exchangeClient),
+    );
+    const candidate = PairingCandidate(
+      deviceId: 'device-host',
+      displayName: 'MacBook',
+      host: '10.0.2.2',
+      port: 47622,
+      tlsFingerprint:
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      hostInitiated: false,
+    );
+
+    final pending = await service.request(candidate);
+    final accepted = await service.refresh(pending.attempt);
+
+    expect(
+      accepted.registration?.device.preferredEndpoint,
+      'wss://192.168.1.10:47622/remote/v2/gateway',
+    );
+  });
+
+  test('accepted pairing rejects an unrelated Gateway host', () async {
+    final exchangeClient = _RequestExchangeClient(
+      acceptedGatewayUrl: 'wss://unrelated.test:49152/remote/v2/gateway',
+    );
+    final service = PairDiscoveredDeviceUseCase(
+      repository: DeviceRegistry(
+        metadata: _Metadata(),
+        credentials: _Credentials(),
+      ),
+      descriptorProvider: const _DescriptorProvider(
+        DeviceDescriptor(
+          deviceName: 'Pixel from Android',
+          operatingSystem: 'Android',
+          systemVersion: '16',
+        ),
+      ),
+      gateway: LanPairingRequestGateway(exchangeClient: exchangeClient),
+    );
+    const candidate = PairingCandidate(
+      deviceId: 'device-host',
+      displayName: 'MacBook',
+      host: '192.168.1.10',
+      port: 49152,
+      tlsFingerprint:
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      hostInitiated: false,
+    );
+
+    final pending = await service.request(candidate);
+
+    await expectLater(
+      service.refresh(pending.attempt),
+      throwsA(isA<FormatException>()),
+    );
+  });
 }
 
 String _qrPayload() => jsonEncode({
@@ -198,9 +273,14 @@ class _ExchangeClient implements PairingExchangeClient {
 }
 
 class _RequestExchangeClient implements PairingExchangeClient {
-  _RequestExchangeClient({this.corruptConfirmationCode = false});
+  _RequestExchangeClient({
+    this.corruptConfirmationCode = false,
+    this.acceptedGatewayUrl =
+        'wss://192.168.1.10:49152/remote/v2/gateway',
+  });
 
   final bool corruptConfirmationCode;
+  final String acceptedGatewayUrl;
   JsonMap? createBody;
   final List<String> methods = [];
   String? _confirmationCode;
@@ -236,7 +316,7 @@ class _RequestExchangeClient implements PairingExchangeClient {
     return _requestResponse(
       'accepted',
       confirmationCode: _confirmationCode!,
-      gatewayUrl: 'wss://192.168.1.10:49152/remote/v2/gateway',
+      gatewayUrl: acceptedGatewayUrl,
       credential: 'requested-credential',
     );
   }

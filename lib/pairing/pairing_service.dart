@@ -215,7 +215,7 @@ class LanPairingRequestGateway implements PairingRequestGateway {
     final credential = response.credential;
     if (gatewayUrl == null ||
         gatewayUrl.scheme != 'wss' ||
-        gatewayUrl.host != candidate.host ||
+        !_gatewayHostMatchesCandidate(gatewayUrl, candidate) ||
         gatewayUrl.port != candidate.port ||
         gatewayUrl.path != '/remote/v2/gateway' ||
         credential == null ||
@@ -252,6 +252,13 @@ class LanPairingRequestGateway implements PairingRequestGateway {
     );
   }
 }
+
+bool _gatewayHostMatchesCandidate(
+  Uri gatewayUrl,
+  PairingCandidate candidate,
+) =>
+    gatewayUrl.host == candidate.host ||
+    candidate.host == '10.0.2.2' && candidate.port == 47622;
 
 String _secureNonce() {
   final random = Random.secure();
