@@ -905,7 +905,7 @@ void main() {
     unawaited(session.disconnect());
     await tester.pump();
     expect(find.text('saved offline'), findsOneWidget);
-    expect(find.text('设备已离线'), findsOneWidget);
+    expect(find.text('设备连接已断开'), findsOneWidget);
     expect(
       tester.widget<IconButton>(find.byKey(const Key('turn-send'))).onPressed,
       isNull,

@@ -8,6 +8,7 @@ import '../../application/pairing/pair_device.dart';
 import '../../application/ports/pairing_gateway.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/paired_device.dart';
+import 'device_detail_screen.dart';
 
 class PairDeviceScreen extends StatefulWidget {
   const PairDeviceScreen({
@@ -640,12 +641,28 @@ class _ConnectedDevicesTable extends StatelessWidget {
             else
               for (var index = 0; index < sessions.length; index++) ...[
                 if (index > 0) const Divider(height: 1),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
+                InkWell(
+                  key: Key('connected-device-${sessions[index].device.deviceId}'),
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute(
+                      builder: (_) => DeviceDetailScreen(
+                        session: sessions[index],
+                      ),
+                    ),
                   ),
-                  child: _DeviceTableRow.fromSession(sessions[index]),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(child: _DeviceTableRow.fromSession(sessions[index])),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.chevron_right, size: 20),
+                      ],
+                    ),
+                  ),
                 ),
               ],
           ],

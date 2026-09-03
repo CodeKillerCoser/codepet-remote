@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
 import '../common/identity_icons.dart';
+import '../connection/device_connection_notice.dart';
 import '../conversations/conversation_detail_screen.dart';
 import '../conversations/conversation_search_screen.dart';
 
@@ -159,9 +160,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       ),
       body: sessions.isEmpty
           ? _EmptyDevices(onAddDevice: widget.onAddDevice)
-          : RefreshIndicator(
-              onRefresh: session!.connect,
-              child: ListView(
+          : ListView(
                 key: const Key('remote-home'),
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
@@ -173,29 +172,13 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                   ),
                   const SizedBox(height: 12),
                   _DeviceActions(
-                    session: session,
+                    session: session!,
                     selectedProvider: selectedProvider,
                     onSelectProvider: session.selectProvider,
                   ),
-                  if (session.connectionState == DeviceConnectionState.failed) ...[
+                  if (DeviceConnectionNotice.shouldShow(session)) ...[
                     const SizedBox(height: 20),
-                    _MessageCard(
-                      icon: Icons.cloud_off_outlined,
-                      title: '设备连接失败',
-                      message: session.error ?? '无法连接此设备。',
-                      actionLabel: '重新连接',
-                      onAction: session.connect,
-                    ),
-                  ] else if (session.connectionState ==
-                      DeviceConnectionState.offline) ...[
-                    const SizedBox(height: 20),
-                    _MessageCard(
-                      icon: Icons.link_off_outlined,
-                      title: '设备已离线',
-                      message: '重新连接后，会话将从 Host 即时加载。',
-                      actionLabel: '连接',
-                      onAction: session.connect,
-                    ),
+                    DeviceConnectionNotice(session: session),
                   ],
                   if (session.selectedProviderSupportsProjects) ...[
                     const SizedBox(height: 28),
@@ -246,7 +229,6 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                   ],
                 ],
               ),
-            ),
       bottomNavigationBar: session == null
           ? null
           : _ConversationActionsBar(
@@ -279,28 +261,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
         projects.isEmpty) {
       return const [LinearProgressIndicator()];
     }
-    if (session.connectionState == DeviceConnectionState.failed) {
-      return [
-        _MessageCard(
-          icon: Icons.cloud_off_outlined,
-          title: '设备连接失败',
-          message: session.error ?? '无法连接此设备。',
-          actionLabel: '重新连接',
-          onAction: session.connect,
-        ),
-      ];
-    }
-    if (session.connectionState == DeviceConnectionState.offline) {
-      return [
-        _MessageCard(
-          icon: Icons.link_off_outlined,
-          title: '设备已离线',
-          message: '重新连接后，会话将从 Host 即时加载。',
-          actionLabel: '连接',
-          onAction: session.connect,
-        ),
-      ];
-    }
+    if (session.connectionState != DeviceConnectionState.online) return const [];
     if (projects.isEmpty) {
       return [
         const _MessageCard(
@@ -639,32 +600,14 @@ class _DeviceActions extends StatelessWidget {
           ),
           const SizedBox(height: 4),
         ],
-        Row(children: [
-          Expanded(child: Text(
-            handshake == null
-                ? '会话数据仅保留在本次连接中'
-                : _providerRuntimeLabel(selectedProvider),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall,
-          )),
-          TextButton.icon(
-            onPressed: session.connectionState == DeviceConnectionState.connecting
-                ? null
-                : session.connect,
-            icon: const Icon(Icons.refresh, size: 18),
-            label: const Text('重新连接'),
-          ),
-          PopupMenuButton<String>(
-            tooltip: '设备管理',
-            onSelected: (value) {
-              if (value == 'disconnect') session.disconnect();
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'disconnect', child: Text('断开设备')),
-            ],
-          ),
-        ]),
+        Text(
+          handshake == null
+              ? '会话数据仅保留在本次连接中'
+              : _providerRuntimeLabel(selectedProvider),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ],
     );
   }
@@ -876,12 +819,10 @@ class _PaginationControl extends StatelessWidget {
 }
 
 class _MessageCard extends StatelessWidget {
-  const _MessageCard({required this.icon, required this.title, required this.message, this.actionLabel, this.onAction});
+  const _MessageCard({required this.icon, required this.title, required this.message});
   final IconData icon;
   final String title;
   final String message;
-  final String? actionLabel;
-  final VoidCallback? onAction;
   @override
   Widget build(BuildContext context) => Card(
     margin: EdgeInsets.zero,
@@ -893,7 +834,6 @@ class _MessageCard extends StatelessWidget {
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 4), Text(message),
-          if (onAction != null) Align(alignment: Alignment.centerRight, child: TextButton(onPressed: onAction, child: Text(actionLabel!))),
         ])),
       ]),
     ),

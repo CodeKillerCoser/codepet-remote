@@ -184,7 +184,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('device-host-persisted')), findsOneWidget);
-      expect(find.text('设备连接失败'), findsOneWidget);
+      expect(find.text('设备连接已断开'), findsOneWidget);
       expect(find.textContaining('安全凭据不存在'), findsOneWidget);
       expect(clientBuilds, 0);
     },

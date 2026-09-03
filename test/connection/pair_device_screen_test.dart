@@ -23,7 +23,40 @@ void main() {
           connectionKind: DeviceConnectionKind.pairedGateway,
         ),
         clientFactory: () => throw StateError('not used'),
-      )..connectionState = DeviceConnectionState.online;
+      )
+        ..connectionState = DeviceConnectionState.online
+        ..handshake = const GatewayHandshake(
+          protocolVersion: 1,
+          eventCursor: '1',
+          deviceDescriptor: DeviceDescriptor(
+            deviceName: 'Studio Mac',
+            operatingSystem: 'macOS',
+            systemVersion: '15.6',
+          ),
+          providers: [
+            GatewayProvider(
+              id: 'codex',
+              displayName: 'Codex',
+              status: ProviderStatus.ready,
+              runtimeVersion: '0.152.1',
+              executablePath: '/Applications/ChatGPT.app/Contents/Resources/codex',
+              authenticationStatus: 'signed-in',
+              authenticationDisplayText: 'Signed in · ChatGPT Pro',
+              usageDisplayText: '7d 28% remaining',
+              usageDetails: [
+                {
+                  'namespace': 'openai.codex.rate-limits',
+                  'schemaVersion': '1',
+                  'data': {'remainingPercent': 28},
+                },
+              ],
+              capabilities: GatewayCapabilities(
+                revision: 'codex-1',
+                methods: ['project.list', 'conversation.list'],
+              ),
+            ),
+          ],
+        );
       var refreshCalls = 0;
 
       await tester.pumpWidget(MaterialApp(
@@ -70,6 +103,20 @@ void main() {
       expect(find.text('Studio Mac'), findsOneWidget);
       expect(find.text('macOS 15.6'), findsOneWidget);
       expect(find.text('在线'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('connected-device-paired-host')));
+      await tester.pumpAndSettle();
+      expect(find.text('设备详情'), findsOneWidget);
+      expect(find.text('0.152.1'), findsOneWidget);
+      expect(
+        find.text('/Applications/ChatGPT.app/Contents/Resources/codex'),
+        findsOneWidget,
+      );
+      expect(find.text('Signed in · ChatGPT Pro'), findsOneWidget);
+      expect(find.text('7d 28% remaining'), findsOneWidget);
+      expect(find.byKey(const Key('device-reconnect')), findsOneWidget);
+      expect(find.byKey(const Key('device-disconnect')), findsOneWidget);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.byKey(const Key('discovered-devices-title')),
         300,

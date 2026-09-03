@@ -6,6 +6,7 @@ import '../../application/conversations/conversation_search_controller.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
 import '../common/app_toast.dart';
+import '../connection/device_connection_notice.dart';
 import 'conversation_detail_screen.dart';
 
 class ConversationSearchScreen extends StatefulWidget {
@@ -163,11 +164,12 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
 
   Widget _buildBody({required bool online, required bool supported}) {
     if (!online) {
-      return const _SearchMessage(
-        key: Key('search-offline'),
-        icon: Icons.link_off_outlined,
-        title: '设备未连接',
-        message: '连接设备后才能搜索 Host 上的会话。',
+      return Center(
+        key: const Key('search-offline'),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: DeviceConnectionNotice(session: widget.session),
+        ),
       );
     }
     if (!supported) {

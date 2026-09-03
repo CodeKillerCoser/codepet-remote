@@ -260,7 +260,7 @@ void main() {
     session.dispose();
   });
 
-  testWidgets('failed state leaves loading and allows a manual reconnect', (tester) async {
+  testWidgets('failed state uses the shared notice without home reconnect controls', (tester) async {
     _useTallSurface(tester);
     var clientBuilds = 0;
     final session = DeviceSession(
@@ -285,17 +285,11 @@ void main() {
     expect(clientBuilds, 0);
     expect(session.connectionState, DeviceConnectionState.failed);
     expect(find.byType(LinearProgressIndicator), findsNothing);
-    expect(find.text('设备连接失败'), findsOneWidget);
-    final reconnect = find.widgetWithText(TextButton, '重新连接').first;
-    expect(tester.widget<TextButton>(reconnect).onPressed, isNotNull);
-
-    await tester.tap(reconnect);
-    await tester.pump();
-    await tester.pump();
-
-    expect(clientBuilds, 1);
-    expect(session.connectionState, DeviceConnectionState.online);
-    expect(find.text('设备连接失败'), findsNothing);
+    expect(find.text('设备连接已断开'), findsOneWidget);
+    expect(find.textContaining('all Gateway candidates timed out'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '重新连接'), findsNothing);
+    expect(find.byTooltip('设备管理'), findsNothing);
+    expect(clientBuilds, 0);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });

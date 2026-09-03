@@ -7,6 +7,7 @@ import '../../application/conversations/conversation_timeline.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
 import '../common/identity_icons.dart';
+import '../connection/device_connection_notice.dart';
 import 'widgets/conversation_timeline_view.dart';
 
 const int _messagePageSize = 40;
@@ -270,7 +271,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       body: Stack(
         children: [
           Positioned.fill(child: _buildBody()),
-          if (_error != null)
+          if (_detail != null && DeviceConnectionNotice.shouldShow(widget.session))
+            Positioned(
+              top: 8,
+              left: 12,
+              right: 12,
+              child: DeviceConnectionNotice(session: widget.session),
+            )
+          else if (_error != null)
             Positioned(
               top: 0,
               left: 0,
@@ -286,17 +294,6 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                     child: const Text('重新加载'),
                   ),
                 ],
-              ),
-            )
-          else if (widget.session.connectionState ==
-              DeviceConnectionState.offline)
-            const Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: MaterialBanner(
-                content: Text('设备已离线'),
-                actions: [SizedBox.shrink()],
               ),
             ),
           Positioned(
@@ -360,18 +357,12 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   Widget _buildBody() {
     final detail = _detail;
     if (detail == null && _error == null) {
-      if (widget.session.connectionState == DeviceConnectionState.offline) {
-        return const _DetailUnavailable(
-          icon: Icons.link_off_outlined,
-          title: '设备已离线',
-          message: '重新连接后会自动刷新会话；未发送的文字会保留。',
-        );
-      }
-      if (widget.session.connectionState == DeviceConnectionState.failed) {
-        return _DetailUnavailable(
-          icon: Icons.cloud_off_outlined,
-          title: '连接失败',
-          message: widget.session.error ?? '正在等待重新连接。',
+      if (DeviceConnectionNotice.shouldShow(widget.session)) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: DeviceConnectionNotice(session: widget.session),
+          ),
         );
       }
       return const Center(child: CircularProgressIndicator());
@@ -841,35 +832,6 @@ class _ConversationMetadataPanel extends StatelessWidget {
       ),
     );
   }
-}
-
-class _DetailUnavailable extends StatelessWidget {
-  const _DetailUnavailable({
-    required this.icon,
-    required this.title,
-    required this.message,
-  });
-
-  final IconData icon;
-  final String title;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 34),
-              const SizedBox(height: 12),
-              Text(title, style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 6),
-              Text(message, textAlign: TextAlign.center),
-            ],
-          ),
-        ),
-      );
 }
 
 class _ChoiceSelector extends StatelessWidget {
