@@ -55,20 +55,72 @@ void main() {
     );
   });
 
+  test('provider.changed replaces its summary before lazily describing a new revision',
+      () async {
+    final description = Completer<GatewayProvider>();
+    final client = _FakeClient(
+      const [],
+      onDescribeProvider: (_) => description.future,
+    );
+    final session = DeviceSession(
+      device: _device('provider-change'),
+      clientFactory: () => client,
+    );
+    await session.connect();
+
+    client.emit(const GatewayProviderChangedEvent(
+      eventCursor: 'provider-2',
+      provider: GatewayProvider(
+        id: _primaryRoute,
+        displayName: 'Codex Updated',
+        status: ProviderStatus.connecting,
+        runtimeVersion: '0.152.0',
+        capabilities: GatewayCapabilities(
+          revision: 'test-2',
+          methods: [],
+        ),
+        capabilitiesLoaded: false,
+      ),
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.selectedProvider?.displayName, 'Codex Updated');
+    expect(session.selectedProvider?.runtimeVersion, '0.152.0');
+    expect(session.selectedProvider?.capabilitiesLoaded, isFalse);
+    expect(client.describeProviderIds, [_primaryRoute]);
+
+    description.complete(const GatewayProvider(
+      id: _primaryRoute,
+      displayName: 'Codex Updated',
+      status: ProviderStatus.ready,
+      runtimeVersion: '0.152.0',
+      capabilities: GatewayCapabilities(
+        revision: 'test-2',
+        methods: ['conversation.list', 'conversation.get', 'turn.send'],
+        turnSend: TurnSendCapabilities(),
+      ),
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.selectedProvider?.capabilitiesLoaded, isTrue);
+    expect(session.selectedProvider?.methods, contains('turn.send'));
+    session.dispose();
+  });
+
   test('loads projects independently and uses explicit conversation scopes',
       () async {
     final project = _gatewayProject();
     final standalone = _routedConversation(
       nativeId: 'standalone',
-      providerPluginId: _primaryRoute.providerPluginId,
-      providerInstanceId: _primaryRoute.providerInstanceId,
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: _primaryRoute,
       workspaceRoot: '/same/cwd',
       updatedAt: 3000,
     );
     final projectConversation = _routedConversation(
       nativeId: 'project-conversation',
-      providerPluginId: _primaryRoute.providerPluginId,
-      providerInstanceId: _primaryRoute.providerInstanceId,
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: _primaryRoute,
       workspaceRoot: '/same/cwd',
       updatedAt: 2000,
       project: project.resource,
@@ -199,7 +251,7 @@ void main() {
   test('loads two cursor pages with an explicit small page limit', () async {
     final client = _FakeClient(
       const [],
-      onListConversations: ({required GatewayProviderRoute route, required String? cursor, required int limit}) async {
+      onListConversations: ({required String route, required String? cursor, required int limit}) async {
         if (cursor == null) {
           return ConversationPage(
             conversations: [_conversation('first', '/repo', 1000)],
@@ -250,21 +302,21 @@ void main() {
     final client = _FakeClient(
       const [],
       providers: const [_listProvider, _secondaryListProvider],
-      onListConversations: ({required GatewayProviderRoute route, required String? cursor, required int limit}) async {
+      onListConversations: ({required String route, required String? cursor, required int limit}) async {
         if (route == _primaryRoute && cursor == null) {
           return ConversationPage(
             conversations: [
               _routedConversation(
                 nativeId: 'shared',
-                providerPluginId: route.providerPluginId,
-                providerInstanceId: route.providerInstanceId,
+                providerPluginId: 'provider',
+                providerInstanceId: route,
                 workspaceRoot: '/repo',
                 updatedAt: 1000,
               ),
               _routedConversation(
                 nativeId: 'alpha',
-                providerPluginId: route.providerPluginId,
-                providerInstanceId: route.providerInstanceId,
+                providerPluginId: 'provider',
+                providerInstanceId: route,
                 workspaceRoot: '/repo',
                 updatedAt: 2000,
               ),
@@ -278,8 +330,8 @@ void main() {
             conversations: [
               _routedConversation(
                 nativeId: 'beta',
-                providerPluginId: route.providerPluginId,
-                providerInstanceId: route.providerInstanceId,
+                providerPluginId: 'provider',
+                providerInstanceId: route,
                 workspaceRoot: '/repo',
                 updatedAt: 3000,
               ),
@@ -293,8 +345,8 @@ void main() {
           conversations: [
             _routedConversation(
               nativeId: 'shared',
-              providerPluginId: route.providerPluginId,
-              providerInstanceId: route.providerInstanceId,
+              providerPluginId: 'provider',
+              providerInstanceId: route,
               workspaceRoot: '/repo',
               updatedAt: 4000,
               title: 'new shared',
@@ -335,15 +387,15 @@ void main() {
   test('marks a loaded count approximate until every route is exhausted', () async {
     final client = _FakeClient(
       const [],
-      onListConversations: ({required GatewayProviderRoute route, required String? cursor, required int limit}) async {
+      onListConversations: ({required String route, required String? cursor, required int limit}) async {
         if (cursor == null) {
           return ConversationPage(
             conversations: [
               for (var index = 0; index < 20; index++)
                 _routedConversation(
                   nativeId: 'initial-$index',
-                  providerPluginId: route.providerPluginId,
-                  providerInstanceId: route.providerInstanceId,
+                  providerPluginId: 'provider',
+                  providerInstanceId: route,
                   workspaceRoot: '/repo',
                   updatedAt: 1000 - index,
                 ),
@@ -356,8 +408,8 @@ void main() {
           conversations: [
             _routedConversation(
               nativeId: 'last',
-              providerPluginId: route.providerPluginId,
-              providerInstanceId: route.providerInstanceId,
+              providerPluginId: 'provider',
+              providerInstanceId: route,
               workspaceRoot: '/repo',
               updatedAt: 1,
             ),
@@ -383,7 +435,7 @@ void main() {
     final nextPage = Completer<ConversationPage>();
     final client = _FakeClient(
       const [],
-      onListConversations: ({required GatewayProviderRoute route, required String? cursor, required int limit}) {
+      onListConversations: ({required String route, required String? cursor, required int limit}) {
         if (cursor == null) {
           return Future.value(
             const ConversationPage(
@@ -426,7 +478,7 @@ void main() {
     var nextPageAttempts = 0;
     final client = _FakeClient(
       const [],
-      onListConversations: ({required GatewayProviderRoute route, required String? cursor, required int limit}) async {
+      onListConversations: ({required String route, required String? cursor, required int limit}) async {
         if (cursor == null) {
           return ConversationPage(
             conversations: [_conversation('first', '/repo', 1000)],
@@ -473,7 +525,7 @@ void main() {
     final nextPage = Completer<ConversationPage>();
     final client = _FakeClient(
       const [],
-      onListConversations: ({required GatewayProviderRoute route, required String? cursor, required int limit}) {
+      onListConversations: ({required String route, required String? cursor, required int limit}) {
         if (cursor == null) {
           return Future.value(
             const ConversationPage(
@@ -574,8 +626,8 @@ void main() {
       () async {
     final conversation = _routedConversation(
       nativeId: 'unread-thread',
-      providerPluginId: _primaryRoute.providerPluginId,
-      providerInstanceId: _primaryRoute.providerInstanceId,
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: _primaryRoute,
       workspaceRoot: '/repo',
       updatedAt: 1000,
     );
@@ -603,8 +655,8 @@ void main() {
       eventCursor: 'metadata-event',
       conversation: _routedConversation(
         nativeId: 'unread-thread',
-        providerPluginId: _primaryRoute.providerPluginId,
-        providerInstanceId: _primaryRoute.providerInstanceId,
+        providerPluginId: 'dev.codepet.codex',
+        providerInstanceId: _primaryRoute,
         workspaceRoot: '/repo',
         updatedAt: 2000,
         title: '新标题',
@@ -620,8 +672,8 @@ void main() {
   test('turn events keep the conversation list running state live', () async {
     final conversation = _routedConversation(
       nativeId: 'live-thread',
-      providerPluginId: _primaryRoute.providerPluginId,
-      providerInstanceId: _primaryRoute.providerInstanceId,
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: _primaryRoute,
       workspaceRoot: '/repo',
       updatedAt: 1000,
     );
@@ -684,8 +736,8 @@ void main() {
       (tester) async {
     final conversation = _routedConversation(
       nativeId: 'coalesced-thread',
-      providerPluginId: _primaryRoute.providerPluginId,
-      providerInstanceId: _primaryRoute.providerInstanceId,
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: _primaryRoute,
       workspaceRoot: '/repo',
       updatedAt: 1000,
     );
@@ -723,7 +775,7 @@ void main() {
     var listCalls = 0;
     final client = _FakeClient(
       const [],
-      onListConversations: ({required GatewayProviderRoute route, required String? cursor, required int limit}) async {
+      onListConversations: ({required String route, required String? cursor, required int limit}) async {
         listCalls++;
         if (listCalls == 1) {
           return const ConversationPage(
@@ -744,8 +796,8 @@ void main() {
     await session.connect();
     discovered = _routedConversation(
       nativeId: 'new-thread',
-      providerPluginId: _primaryRoute.providerPluginId,
-      providerInstanceId: _primaryRoute.providerInstanceId,
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: _primaryRoute,
       workspaceRoot: '/repo',
       updatedAt: 1000,
     );
@@ -771,7 +823,7 @@ void main() {
     final client = _FakeClient(
       const [],
       onListConversations: ({
-        required GatewayProviderRoute route,
+        required String route,
         required String? cursor,
         required int limit,
       }) {
@@ -799,15 +851,15 @@ void main() {
     await session.connect();
     first = _routedConversation(
       nativeId: 'first-during-refresh',
-      providerPluginId: _primaryRoute.providerPluginId,
-      providerInstanceId: _primaryRoute.providerInstanceId,
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: _primaryRoute,
       workspaceRoot: '/repo',
       updatedAt: 1000,
     );
     second = _routedConversation(
       nativeId: 'second-during-refresh',
-      providerPluginId: _primaryRoute.providerPluginId,
-      providerInstanceId: _primaryRoute.providerInstanceId,
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: _primaryRoute,
       workspaceRoot: '/repo',
       updatedAt: 2000,
     );
@@ -1139,7 +1191,7 @@ void main() {
     var firstPageAttempts = 0;
     final first = _FakeClient(
       const [],
-      onListConversations: ({required GatewayProviderRoute route, required String? cursor, required int limit}) async {
+      onListConversations: ({required String route, required String? cursor, required int limit}) async {
         if (cursor == null) {
           return ConversationPage(
             conversations: [_conversation('old', '/repo', 1000)],
@@ -1179,7 +1231,7 @@ void main() {
     final nextPage = Completer<ConversationPage>();
     final client = _FakeClient(
       const [],
-      onListConversations: ({required GatewayProviderRoute route, required String? cursor, required int limit}) {
+      onListConversations: ({required String route, required String? cursor, required int limit}) {
         if (cursor == null) {
           return Future.value(
             ConversationPage(
@@ -1300,7 +1352,6 @@ ConversationSummary _conversation(
 
 ConversationSummary _routedConversation({
   String? domainId,
-  String hostDeviceId = 'host-one',
   required String nativeId,
   required String providerPluginId,
   required String providerInstanceId,
@@ -1309,12 +1360,10 @@ ConversationSummary _routedConversation({
   String? title,
   RoutedResourceId? project,
 }) {
-  final route = GatewayProviderRoute(
-    deviceId: hostDeviceId,
-    providerPluginId: providerPluginId,
-    providerInstanceId: providerInstanceId,
+  final resource = RoutedResourceId(
+    providerId: providerInstanceId,
+    nativeResourceId: nativeId,
   );
-  final resource = RoutedResourceId(route: route, nativeResourceId: nativeId);
   final id = resource.key;
   return ConversationSummary(
     id: domainId ?? id,
@@ -1337,7 +1386,7 @@ TurnTask _turnFor(
 ) {
   final conversationResource = conversation.resource!;
   final turnResource = RoutedResourceId(
-    route: conversationResource.route,
+    providerId: conversationResource.providerId,
     nativeResourceId: 'turn-live',
   );
   return TurnTask(
@@ -1352,7 +1401,7 @@ TurnTask _turnFor(
 }
 
 typedef _ListConversationsHandler = Future<ConversationPage> Function({
-  required GatewayProviderRoute route,
+  required String route,
   required String? cursor,
   required int limit,
 });
@@ -1365,7 +1414,7 @@ class _ConversationListRequest {
     required this.limit,
   });
 
-  final GatewayProviderRoute route;
+  final String route;
   final ConversationProjectFilter projectFilter;
   final String? cursor;
   final int limit;
@@ -1376,12 +1425,16 @@ class _FakeClient implements GatewayClient {
     this.values, {
     this.nextCursor,
     this.onListConversations,
+    this.onDescribeProvider,
     this.providers = const [_listProvider],
   });
   final List<ConversationSummary> values;
   final String? nextCursor;
   final _ListConversationsHandler? onListConversations;
+  final Future<GatewayProvider> Function(String providerId)?
+      onDescribeProvider;
   final List<GatewayProvider> providers;
+  final List<String> describeProviderIds = [];
   final List<_ConversationListRequest> listRequests = [];
   final StreamController<GatewayEvent> controller = StreamController<GatewayEvent>.broadcast();
   String _cursor = 'handshake';
@@ -1390,23 +1443,32 @@ class _FakeClient implements GatewayClient {
   @override String? get latestEventCursor => _cursor;
   @override GatewayEventWindow openEventWindow() => GatewayEventWindow.forStream(_cursor, events);
   void emit(GatewayEvent event) { _cursor = event.eventCursor; controller.add(event); }
-  @override Future<GatewayHandshake> connect() async => GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: providers, eventCursor: 'handshake');
+  @override Future<GatewayHandshake> connect() async => GatewayHandshake(protocolVersion: 1, providers: providers, eventCursor: 'handshake', deviceDescriptor: const DeviceDescriptor(deviceName: 'Test', operatingSystem: 'TestOS', systemVersion: '1'));
+  @override Future<GatewayProvider> describeProvider(String providerId) {
+    describeProviderIds.add(providerId);
+    final handler = onDescribeProvider;
+    return handler == null
+        ? Future.value(
+            providers.singleWhere((provider) => provider.id == providerId),
+          )
+        : handler(providerId);
+  }
   @override
   Future<ConversationPage> listConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) async {
     listRequests.add(_ConversationListRequest(
-      route: route,
+      route: providerId,
       projectFilter: projectFilter,
       cursor: cursor,
       limit: limit,
     ));
     final handler = onListConversations;
     if (handler != null) {
-      return handler(route: route, cursor: cursor, limit: limit);
+      return handler(route: providerId, cursor: cursor, limit: limit);
     }
     return ConversationPage(
       conversations: values,
@@ -1414,11 +1476,11 @@ class _FakeClient implements GatewayClient {
       snapshotCursor: 'handshake',
     );
   }
-  @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
+  @override Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: _cursor);
   @override Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async => const ConversationInteraction(selection: TurnSendSelection());
-  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
-  @override Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
+  @override Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
+  @override Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
   @override Future<void> close() async { closed = true; await controller.close(); }
 }
 
@@ -1435,13 +1497,13 @@ class _ProjectFakeClient extends _FakeClient implements ProjectGatewayClient {
 
   @override
   Future<ConversationPage> listConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) async {
     listRequests.add(_ConversationListRequest(
-      route: route,
+      route: providerId,
       projectFilter: projectFilter,
       cursor: cursor,
       limit: limit,
@@ -1460,7 +1522,7 @@ class _ProjectFakeClient extends _FakeClient implements ProjectGatewayClient {
 
   @override
   Future<ProjectPage> listProjects({
-    required GatewayProviderRoute route,
+    required String providerId,
     String? cursor,
     int limit = 50,
   }) async {
@@ -1482,7 +1544,7 @@ class _ProjectFakeClient extends _FakeClient implements ProjectGatewayClient {
 
   @override
   Future<GatewayProject> createProject({
-    required GatewayProviderRoute route,
+    required String providerId,
     required String idempotencyKey,
     required String name,
     required List<ProjectRoot> roots,
@@ -1491,7 +1553,7 @@ class _ProjectFakeClient extends _FakeClient implements ProjectGatewayClient {
     final now = DateTime.now().toUtc();
     final project = GatewayProject(
       resource: RoutedResourceId(
-        route: route,
+        providerId: providerId,
         nativeResourceId: 'created-${projects.length}',
       ),
       name: name,
@@ -1544,12 +1606,13 @@ class _FailingClient implements GatewayClient {
       retryable: true,
     ),
   );
-  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) => throw StateError('not reached');
-  @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw StateError('not reached');
+  @override Future<GatewayProvider> describeProvider(String providerId) => throw StateError('not reached');
+  @override Future<ConversationPage> listConversations({required String providerId, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) => throw StateError('not reached');
+  @override Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50}) => throw StateError('not reached');
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) => throw StateError('not reached');
   @override Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) => throw StateError('not reached');
-  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw StateError('not reached');
-  @override Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw StateError('not reached');
+  @override Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw StateError('not reached');
+  @override Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw StateError('not reached');
   @override Future<void> close() async {
     closeCalled = true;
     throw StateError('close also failed');
@@ -1568,18 +1631,12 @@ class _ControlledConnectClient extends _FailingClient {
   }
 }
 
-const _primaryRoute = GatewayProviderRoute(
-  deviceId: 'host-one',
-  providerPluginId: 'dev.codepet.codex',
-  providerInstanceId: 'codex-work',
-);
+const _primaryRoute = 'codex-work';
 
 const _listProvider = GatewayProvider(
-  route: _primaryRoute,
-  providerType: 'dev.codepet.codex',
+  id: _primaryRoute,
   displayName: 'Codex Work',
   status: ProviderStatus.ready,
-  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
   capabilities: GatewayCapabilities(
     revision: 'test-1',
     methods: ['conversation.list', 'conversation.get'],
@@ -1587,11 +1644,9 @@ const _listProvider = GatewayProvider(
 );
 
 const _projectProvider = GatewayProvider(
-  route: _primaryRoute,
-  providerType: 'dev.codepet.codex',
+  id: _primaryRoute,
   displayName: 'Codex Projects',
   status: ProviderStatus.ready,
-  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
   capabilities: GatewayCapabilities(
     revision: 'projects-1',
     methods: [
@@ -1608,7 +1663,7 @@ const _projectProvider = GatewayProvider(
 
 GatewayProject _gatewayProject() => GatewayProject(
       resource: const RoutedResourceId(
-        route: _primaryRoute,
+        providerId: _primaryRoute,
         nativeResourceId: 'project-1',
       ),
       name: 'Project One',
@@ -1619,18 +1674,12 @@ GatewayProject _gatewayProject() => GatewayProject(
       updatedAt: DateTime.fromMillisecondsSinceEpoch(2000, isUtc: true),
     );
 
-const _secondaryRoute = GatewayProviderRoute(
-  deviceId: 'host-one',
-  providerPluginId: 'dev.codepet.claude',
-  providerInstanceId: 'claude-work',
-);
+const _secondaryRoute = 'claude-work';
 
 const _secondaryListProvider = GatewayProvider(
-  route: _secondaryRoute,
-  providerType: 'dev.codepet.claude',
+  id: _secondaryRoute,
   displayName: 'Claude Work',
   status: ProviderStatus.ready,
-  harness: HarnessDescriptor(id: 'claude', displayName: 'Claude'),
   capabilities: GatewayCapabilities(
     revision: 'test-1',
     methods: ['conversation.list', 'conversation.get'],

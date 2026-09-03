@@ -137,7 +137,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     final viewState = session == null
         ? _DeviceHomeViewState()
         : _deviceViewStates.putIfAbsent(
-            '${session.device.deviceId}\u0000${selectedProvider?.route.key ?? 'no-provider'}',
+            '${session.device.deviceId}\u0000${selectedProvider?.id ?? 'no-provider'}',
             _DeviceHomeViewState.new,
           );
     return Scaffold(
@@ -631,7 +631,7 @@ class _DeviceActions extends StatelessWidget {
                 final provider = providers[index];
                 return _ProviderIdentity(
                   provider: provider,
-                  selected: provider.route == selectedProvider?.route,
+                  selected: provider.id == selectedProvider?.id,
                   onSelected: onSelectProvider,
                 );
               },
@@ -643,7 +643,7 @@ class _DeviceActions extends StatelessWidget {
           Expanded(child: Text(
             handshake == null
                 ? '会话数据仅保留在本次连接中'
-                : '${handshake.serverName} · ${handshake.serverVersion}',
+                : _providerRuntimeLabel(selectedProvider),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodySmall,
@@ -685,14 +685,14 @@ class _ProviderIdentity extends StatelessWidget {
   Widget build(BuildContext context) {
     final ready = provider.status == ProviderStatus.ready;
     return ChoiceChip(
-      key: Key('provider-${provider.route.key}'),
+      key: Key('provider-${provider.id}'),
       selected: selected,
       showCheckmark: false,
       onSelected: (_) => onSelected(provider),
       visualDensity: VisualDensity.compact,
       avatar: ProviderIcon(
         icon: provider.icon,
-        providerIdentity: provider.providerType,
+        providerIdentity: provider.id,
         size: 17,
         color: ready
             ? Theme.of(context).colorScheme.primary
@@ -1654,6 +1654,21 @@ String _deviceStateLabel(DeviceConnectionState state) => switch (state) {
   DeviceConnectionState.online => '在线',
   DeviceConnectionState.failed => '连接失败',
 };
+
+String _providerRuntimeLabel(GatewayProvider? provider) {
+  if (provider == null) return '未发现 Provider';
+  final values = <String>[provider.displayName];
+  final runtimeVersion = provider.runtimeVersion;
+  if (runtimeVersion != null) values.add('v$runtimeVersion');
+  final executablePath = provider.executablePath;
+  if (executablePath != null) values.add(executablePath);
+  final authentication =
+      provider.authenticationDisplayText ?? provider.authenticationStatus;
+  if (authentication != null) values.add(authentication);
+  final usage = provider.usageDisplayText;
+  if (usage != null) values.add(usage);
+  return values.join(' · ');
+}
 
 String relativeConversationTime(DateTime value, {DateTime? now}) {
   final local = value.toLocal();

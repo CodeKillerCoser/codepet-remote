@@ -9,14 +9,15 @@ abstract interface class GatewayClient {
   String? get latestEventCursor;
   GatewayEventWindow openEventWindow();
   Future<GatewayHandshake> connect();
+  Future<GatewayProvider> describeProvider(String providerId);
   Future<ConversationPage> listConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   });
   Future<ConversationPage> searchConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required String searchTerm,
     String? cursor,
     int limit = 50,
@@ -28,7 +29,7 @@ abstract interface class GatewayClient {
     ConversationSummary conversation,
   );
   Future<ConversationSummary> createConversation({
-    required GatewayProviderRoute route,
+    required String providerId,
     String? title,
     required String permissionLevel,
     String? model,
@@ -38,7 +39,7 @@ abstract interface class GatewayClient {
     RoutedResourceId? project,
   });
   Future<TurnSendReceipt> sendTurn({
-    required GatewayProviderRoute route,
+    required String providerId,
     required ConversationSummary conversation,
     required String clientRequestId,
     required String capabilityRevision,
@@ -52,7 +53,7 @@ abstract interface class GatewayClient {
 /// SDK that exposes project methods.
 abstract interface class ProjectGatewayClient {
   Future<ProjectPage> listProjects({
-    required GatewayProviderRoute route,
+    required String providerId,
     String? cursor,
     int limit = 50,
   });
@@ -60,7 +61,7 @@ abstract interface class ProjectGatewayClient {
   Future<GatewayProject> getProject(RoutedResourceId project);
 
   Future<GatewayProject> createProject({
-    required GatewayProviderRoute route,
+    required String providerId,
     required String idempotencyKey,
     required String name,
     required List<ProjectRoot> roots,

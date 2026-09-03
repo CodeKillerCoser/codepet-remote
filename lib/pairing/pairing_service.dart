@@ -251,7 +251,7 @@ bool _isGatewayLocator(Uri? gatewayUrl) =>
     gatewayUrl != null &&
     gatewayUrl.scheme == 'wss' &&
     gatewayUrl.host.isNotEmpty &&
-    gatewayUrl.path == '/remote/v2/gateway' &&
+    gatewayUrl.path == '/remote/v1/gateway' &&
     gatewayUrl.userInfo.isEmpty &&
     gatewayUrl.query.isEmpty &&
     gatewayUrl.fragment.isEmpty;

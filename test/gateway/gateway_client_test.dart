@@ -12,7 +12,7 @@ import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('performs the generated v2 handshake, subscribe, list and get sequence', () async {
+  test('performs the generated V1 handshake, subscribe, list and get sequence', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _handshakeJson(),
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
@@ -31,7 +31,7 @@ void main() {
 
     final handshake = await client.connect();
     final page = await client.listConversations(
-      route: handshake.providers.single.route,
+      providerId: handshake.providers.single.id,
       projectFilter: const AllConversationFilter(),
       limit: 25,
     );
@@ -40,23 +40,35 @@ void main() {
     expect(transport.connected, isTrue);
     expect(handshake.protocolVersion, gatewayProtocolVersion);
     expect(handshake.providers.single.id, 'codex-work');
-    expect(handshake.providers.single.route, _route);
+    expect(handshake.providers.single.id, _providerId);
     expect(handshake.providers.single.displayName, 'Codex');
     expect(
       handshake.providers.single.icon,
       'https://cdn.example.com/codex.png',
     );
+    expect(handshake.providers.single.runtimeVersion, '1.0.0');
+    expect(
+      handshake.providers.single.executablePath,
+      '/usr/local/bin/codex',
+    );
+    expect(handshake.providers.single.authenticationDisplayText, 'Signed in');
+    expect(handshake.providers.single.usageDisplayText, '72% remaining');
+    expect(handshake.providers.single.usageDetails.single['data'], {
+      'opaque': true,
+    });
     expect(transport.requests[0].method, 'protocol.handshake');
     expect(transport.requests[0].params['device'], _clientDevice.toJson());
     expect(transport.requests[0].params, isNot(contains('clientName')));
     expect(transport.requests[0].params['supportedVersions'], {'minVersion': 1, 'maxVersion': 1});
     expect(transport.requests[1].method, 'event.subscribe');
     expect(transport.requests[1].params['afterCursor'], 'opaque-handshake');
-    expect(transport.requests[2].method, 'conversation.list');
-    expect(transport.requests[2].params['route'], _route.toJson());
-    expect(transport.requests[2].params['projectFilter'], {'kind': 'all'});
-    expect(transport.requests[2].params['limit'], 25);
-    expect(transport.requests[3].method, 'conversation.get');
+    expect(transport.requests[2].method, 'provider.describe');
+    expect(transport.requests[2].params['providerId'], _providerId);
+    expect(transport.requests[3].method, 'conversation.list');
+    expect(transport.requests[3].params['providerId'], _providerId);
+    expect(transport.requests[3].params['projectFilter'], {'kind': 'all'});
+    expect(transport.requests[3].params['limit'], 25);
+    expect(transport.requests[4].method, 'conversation.get');
     expect(detail.detail.summary.resource!.nativeResourceId, 'conversation-1');
     expect(detail.detail.messages, isEmpty);
 
@@ -160,19 +172,19 @@ void main() {
     final provider = Map<String, dynamic>.from(
       (_handshakeJson()['providers'] as List).single as Map,
     );
-    provider['icon'] = 'codex';
+    (provider['identity'] as Map<String, dynamic>)['icon'] = 'codex';
 
     expect(
-      () => sdk.ProviderInstance.fromJson(provider),
+      () => sdk.ProviderSummary.fromJson(provider),
       throwsA(isA<sdk.ProtocolCodecException>()),
     );
   });
 
-  test('sends original text with route, revision and flat selection', () async {
+  test('sends original text with providerId, revision and flat selection', () async {
     final handshakeJson = _handshakeJson();
-    final provider = (handshakeJson['providers'] as List).single
-        as Map<String, dynamic>;
-    final capabilities = provider['capabilities'] as Map<String, dynamic>;
+    final providerDescription = _providerDescriptionJson();
+    final capabilities =
+        providerDescription['capabilities'] as Map<String, dynamic>;
     capabilities['turnSend'] = {
       'modelCatalog': {
         'kind': 'flat',
@@ -185,6 +197,7 @@ void main() {
     final transport = _FakeTransport({
       'protocol.handshake': handshakeJson,
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'provider.describe': providerDescription,
       'turn.send': _turnSendResult(
         selection: {'model': {'kind': 'flat', 'modelId': 'model-a'}},
       ),
@@ -203,7 +216,7 @@ void main() {
     );
 
     final receipt = await client.sendTurn(
-      route: _route,
+      providerId: _providerId,
       conversation: conversation,
       clientRequestId: 'request-1',
       capabilityRevision: 'revision-1',
@@ -246,7 +259,7 @@ void main() {
     final conversation = _domainConversation();
 
     final receipt = await client.sendTurn(
-      route: _route,
+      providerId: _providerId,
       conversation: conversation,
       clientRequestId: 'request-null-item',
       capabilityRevision: 'revision-1',
@@ -266,13 +279,14 @@ void main() {
 
   test('creates a routed conversation through the generated SDK', () async {
     final handshake = _handshakeJson();
-    final provider = (handshake['providers'] as List).single
-        as Map<String, dynamic>;
-    final capabilities = provider['capabilities'] as Map<String, dynamic>;
+    final providerDescription = _providerDescriptionJson();
+    final capabilities =
+        providerDescription['capabilities'] as Map<String, dynamic>;
     (capabilities['methods'] as List).add('conversation.create');
     final transport = _FakeTransport({
       'protocol.handshake': handshake,
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'provider.describe': providerDescription,
       'conversation.create': {'conversation': _conversationJson()},
     });
     final client = ProtocolGatewayClient(
@@ -285,7 +299,7 @@ void main() {
     await client.connect();
 
     final conversation = await client.createConversation(
-      route: _route,
+      providerId: _providerId,
       title: 'New task',
       permissionLevel: PermissionLevel.workspaceWrite,
       model: 'model-a',
@@ -293,7 +307,7 @@ void main() {
       workspaceRoot: '/workspace/project',
       workspaceMode: 'worktree',
       project: const RoutedResourceId(
-        route: _route,
+        providerId: _providerId,
         nativeResourceId: 'project-1',
       ),
     );
@@ -302,7 +316,7 @@ void main() {
     expect(
       transport.requests.last.params,
       {
-        'route': _route.toJson(),
+        'providerId': _providerId,
         'title': 'New task',
         'permissionLevel': 'workspace-write',
         'model': 'model-a',
@@ -310,7 +324,7 @@ void main() {
         'workspaceRoot': '/workspace/project',
         'workspaceMode': 'worktree',
         'project': {
-          ..._route.toJson(),
+          ..._providerResourceFields,
           'nativeResourceId': 'project-1',
         },
       },
@@ -320,9 +334,9 @@ void main() {
 
   test('maps project CRUD and explicit conversation project filters', () async {
     final handshake = _handshakeJson();
-    final provider = (handshake['providers'] as List).single
-        as Map<String, dynamic>;
-    final capabilities = provider['capabilities'] as Map<String, dynamic>;
+    final providerDescription = _providerDescriptionJson();
+    final capabilities =
+        providerDescription['capabilities'] as Map<String, dynamic>;
     (capabilities['methods'] as List<String>).addAll(const <String>[
       'project.list',
       'project.get',
@@ -334,6 +348,7 @@ void main() {
     final transport = _FakeTransport({
       'protocol.handshake': handshake,
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'provider.describe': providerDescription,
       'project.list': {
         'projects': [projectJson],
         'pageInfo': {'nextCursor': 'project-page-2'},
@@ -358,7 +373,7 @@ void main() {
     );
     await client.connect();
 
-    final page = await client.listProjects(route: _route, limit: 20);
+    final page = await client.listProjects(providerId: _providerId, limit: 20);
     final project = page.projects.single;
     expect(project.name, 'codepet-remote');
     expect(project.roots.single.path, '/workspace/codepet-remote');
@@ -366,7 +381,7 @@ void main() {
     expect(page.nextCursor, 'project-page-2');
 
     await client.listConversations(
-      route: _route,
+      providerId: _providerId,
       projectFilter: const StandaloneConversationFilter(),
     );
     expect(transport.requests.last.params['projectFilter'], {
@@ -374,7 +389,7 @@ void main() {
     });
 
     await client.listConversations(
-      route: _route,
+      providerId: _providerId,
       projectFilter: ProjectConversationFilter(project.resource),
     );
     expect(transport.requests.last.params['projectFilter'], {
@@ -384,7 +399,7 @@ void main() {
 
     await client.getProject(project.resource);
     await client.createProject(
-      route: _route,
+      providerId: _providerId,
       idempotencyKey: 'create-project-1',
       name: 'codepet-remote',
       roots: const [ProjectRoot(path: '/workspace/codepet-remote')],
@@ -407,9 +422,9 @@ void main() {
 
   test('preserves grouped model identity and rejects a mismatched receipt', () async {
     final handshakeJson = _handshakeJson();
-    final provider = (handshakeJson['providers'] as List).single
-        as Map<String, dynamic>;
-    final capabilities = provider['capabilities'] as Map<String, dynamic>;
+    final providerDescription = _providerDescriptionJson();
+    final capabilities =
+        providerDescription['capabilities'] as Map<String, dynamic>;
     capabilities['turnSend'] = {
       'modelCatalog': {
         'kind': 'grouped',
@@ -433,12 +448,13 @@ void main() {
     });
     final userItem = result['userItem'] as Map<String, dynamic>;
     userItem['conversation'] = {
-      ..._route.toJson(),
+      ..._providerResourceFields,
       'nativeResourceId': 'another-conversation',
     };
     final transport = _FakeTransport({
       'protocol.handshake': handshakeJson,
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'provider.describe': providerDescription,
       'turn.send': result,
     });
     final client = ProtocolGatewayClient(
@@ -453,7 +469,7 @@ void main() {
 
     await expectLater(
       client.sendTurn(
-        route: _route,
+        providerId: _providerId,
         conversation: conversation,
         clientRequestId: 'request-grouped',
         capabilityRevision: 'revision-1',
@@ -497,14 +513,14 @@ void main() {
 
     final handshake = await client.connect();
     final page = await client.listConversations(
-      route: handshake.providers.single.route,
+      providerId: handshake.providers.single.id,
       projectFilter: const AllConversationFilter(),
     );
     final snapshot = await client.getConversation(page.conversations.single);
     final history = snapshot.detail.committedMessages;
 
-    expect(handshake.deviceDescriptor?.deviceName, 'MacBook');
-    expect(handshake.deviceDescriptor?.operatingSystem, 'macOS');
+    expect(handshake.deviceDescriptor.deviceName, 'MacBook');
+    expect(handshake.deviceDescriptor.operatingSystem, 'macOS');
     expect(history, hasLength(5));
     expect(history[0].role, MessageRole.user);
     expect(history[0].content, 'Show the Gateway history.');
@@ -541,7 +557,7 @@ void main() {
         if (method != 'conversation.get') return null;
         final limit = params['limit'] as int;
         final cursor = params['cursor'] as String?;
-        if (cursor == null && limit == 40) {
+        if (cursor == null && limit > 1) {
           return {
             'jsonrpc': '2.0',
             'id': id,
@@ -588,8 +604,14 @@ void main() {
     final requests = transport.requests
         .where((request) => request.method == 'conversation.get')
         .toList(growable: false);
-    expect(requests.map((request) => request.params['limit']), [40, 20, 20]);
-    expect(requests.map((request) => request.params['cursor']), [null, null, 'older-page']);
+    expect(
+      requests.map((request) => request.params['limit']),
+      [40, 20, 10, 5, 2, 1, 1],
+    );
+    expect(
+      requests.map((request) => request.params['cursor']),
+      [null, null, null, null, null, null, 'older-page'],
+    );
     expect(
       snapshot.detail.committedMessages.map((message) => message.content),
       ['older', 'newer'],
@@ -599,9 +621,9 @@ void main() {
 
   test('maps conversation selection and active turn from the routed snapshot', () async {
     final handshakeJson = _handshakeJson();
-    final provider = (handshakeJson['providers'] as List).single
-        as Map<String, dynamic>;
-    final capabilities = provider['capabilities'] as Map<String, dynamic>;
+    final providerDescription = _providerDescriptionJson();
+    final capabilities =
+        providerDescription['capabilities'] as Map<String, dynamic>;
     capabilities['turnSend'] = {
       'modelCatalog': {
         'kind': 'flat',
@@ -616,7 +638,7 @@ void main() {
     };
     conversation['activeTurn'] = {
       'resource': {
-        ..._route.toJson(),
+        ..._providerResourceFields,
         'nativeResourceId': 'active-turn',
       },
       'conversation': conversation['resource'],
@@ -627,6 +649,7 @@ void main() {
     final transport = _FakeTransport({
       'protocol.handshake': handshakeJson,
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'provider.describe': providerDescription,
       'conversation.get': {
         'conversation': conversation,
         'items': <Object>[],
@@ -677,7 +700,7 @@ void main() {
     );
     final handshake = await client.connect();
     final page = await client.listConversations(
-      route: handshake.providers.single.route,
+      providerId: handshake.providers.single.id,
       projectFilter: const AllConversationFilter(),
     );
 
@@ -688,7 +711,7 @@ void main() {
     await client.close();
   });
 
-  test('sends route-scoped search pagination and validates its route', () async {
+  test('sends providerId-scoped search pagination and validates its providerId', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _handshakeJson(),
       'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
@@ -713,7 +736,7 @@ void main() {
     final handshake = await client.connect();
 
     final page = await client.searchConversations(
-      route: handshake.providers.single.route,
+      providerId: handshake.providers.single.id,
       searchTerm: 'gateway protocol',
       cursor: 'search-cursor',
       limit: 20,
@@ -723,7 +746,7 @@ void main() {
     expect(page.nextCursor, 'search-next');
     expect(transport.requests.last.method, 'conversation.search');
     expect(transport.requests.last.params, {
-      'route': _route.toJson(),
+      'providerId': _providerId,
       'searchTerm': 'gateway protocol',
       'cursor': 'search-cursor',
       'limit': 20,
@@ -740,9 +763,7 @@ void main() {
       'conversations': [
         _conversationJson()
           ..['resource'] = {
-            'deviceId': 'device-test',
-            'providerPluginId': 'dev.codepet.other',
-            'providerInstanceId': 'other',
+            'providerId': 'other',
             'nativeResourceId': 'conversation-1',
           },
       ],
@@ -751,7 +772,7 @@ void main() {
     };
     await expectLater(
       client.searchConversations(
-        route: handshake.providers.single.route,
+        providerId: handshake.providers.single.id,
         searchTerm: 'gateway protocol',
       ),
       throwsFormatException,
@@ -759,15 +780,11 @@ void main() {
     await client.close();
   });
 
-  test('rejects a mismatched Provider route in the handshake', () async {
+  test('rejects an empty opaque Provider id in the handshake', () async {
     final handshake = _handshakeJson();
     final providers = handshake['providers'] as List;
     final provider = Map<String, dynamic>.from(providers.single as Map);
-    provider['route'] = {
-      'deviceId': 'another-device',
-      'providerPluginId': 'dev.codepet.codex',
-      'providerInstanceId': 'codex-work',
-    };
+    provider['id'] = '';
     handshake['providers'] = [provider];
     final client = ProtocolGatewayClient(
       transport: _FakeTransport({
@@ -781,48 +798,6 @@ void main() {
     );
 
     await expectLater(client.connect(), throwsFormatException);
-    await client.close();
-  });
-
-  test('does not accept or refresh descriptor for a mismatched Host identity', () async {
-    final handshake = _handshakeJson();
-    final device = Map<String, dynamic>.from(handshake['device'] as Map);
-    handshake['device'] = {
-      ...device,
-      'deviceId': 'untrusted-device',
-    };
-    final endpoint = Uri.parse('wss://untrusted.test/remote/v1/gateway');
-    final transport = _FakeTransport(
-      {'protocol.handshake': handshake},
-      selectedGatewayUri: endpoint,
-    );
-    var descriptorRefreshes = 0;
-    final endpointRefreshes = <Uri>[];
-    final client = ProtocolGatewayClient(
-      transport: transport,
-      clientId: 'client-test',
-      clientDevice: _clientDevice,
-      expectedDeviceId: 'device-test',
-      expectedIdentityFingerprint: _fingerprint,
-      onValidatedHostDescriptor: (_) {
-        descriptorRefreshes++;
-      },
-      onValidatedEndpoint: endpointRefreshes.add,
-    );
-
-    await expectLater(
-      client.connect(),
-      throwsA(
-        isA<GatewayConnectionException>().having(
-          (error) => error.retryable,
-          'retryable',
-          isFalse,
-        ),
-      ),
-    );
-    expect(descriptorRefreshes, 0);
-    expect(endpointRefreshes, isEmpty);
-    expect(transport.closed, isTrue);
     await client.close();
   });
 
@@ -939,42 +914,6 @@ void main() {
     await client.close();
   });
 
-  test('ephemeral alias cannot cross paired Host device IDs', () async {
-    final endpoint = Uri.parse('wss://10.0.2.2:47622/remote/v1/gateway');
-    final handshake = _handshakeJson();
-    final device = Map<String, dynamic>.from(handshake['device'] as Map);
-    handshake['device'] = {
-      ...device,
-      'deviceId': 'host-one',
-      'identityFingerprint': '1' * 64,
-    };
-    final transport = _FakeTransport(
-      {'protocol.handshake': handshake},
-      selectedGatewayUri: endpoint,
-      shouldPersistSelectedGatewayUri: false,
-    );
-    final client = ProtocolGatewayClient(
-      transport: transport,
-      clientId: 'client-for-host-two',
-      clientDevice: _clientDevice,
-      expectedDeviceId: 'host-two',
-      expectedIdentityFingerprint: '1' * 64,
-    );
-
-    await expectLater(
-      client.connect(),
-      throwsA(
-        isA<GatewayConnectionException>().having(
-          (error) => error.retryable,
-          'retryable',
-          isFalse,
-        ),
-      ),
-    );
-    expect(transport.closed, isTrue);
-    await client.close();
-  });
-
   test('projects transport events into Gateway events', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _handshakeJson(),
@@ -1070,9 +1009,7 @@ void main() {
         if (method != 'event.subscribe') return;
         final conversation = _conversationJson();
         conversation['resource'] = {
-          'deviceId': 'device-test',
-          'providerPluginId': 'dev.codepet.other',
-          'providerInstanceId': 'other-work',
+          'providerId': 'other-work',
           'nativeResourceId': 'conversation-foreign',
         };
         transport.emit({
@@ -1153,10 +1090,10 @@ void main() {
       'event': 'conversation.itemUpserted',
       'payload': {
         'item': {
-          'resource': {..._route.toJson(), 'nativeResourceId': 'command-live'},
-          'turn': {..._route.toJson(), 'nativeResourceId': 'turn-1'},
+          'resource': {..._providerResourceFields, 'nativeResourceId': 'command-live'},
+          'turn': {..._providerResourceFields, 'nativeResourceId': 'turn-1'},
           'conversation': {
-            ..._route.toJson(),
+            ..._providerResourceFields,
             'nativeResourceId': 'conversation-1',
           },
           'kind': 'command',
@@ -1359,8 +1296,11 @@ void main() {
 UnknownGatewayEvent _unknown(String cursor) => UnknownGatewayEvent(eventCursor: cursor, name: 'test', payload: const {});
 
 JsonMap _turnEvent(String name, String cursor) {
-  final turn = {'deviceId': 'device-test', 'providerPluginId': 'dev.codepet.codex', 'providerInstanceId': 'codex-work', 'nativeResourceId': 'turn-1'};
-  final conversation = {'deviceId': 'device-test', 'providerPluginId': 'dev.codepet.codex', 'providerInstanceId': 'codex-work', 'nativeResourceId': 'conversation-1'};
+  final turn = {..._providerResourceFields, 'nativeResourceId': 'turn-1'};
+  final conversation = {
+    ..._providerResourceFields,
+    'nativeResourceId': 'conversation-1',
+  };
   return {
     'protocolVersion': 1,
     'eventCursor': cursor,
@@ -1377,11 +1317,11 @@ JsonMap _approvalEvent(
   required String status,
   String? decision,
 }) {
-  final route = _route.toJson();
+  const providerId = _providerResourceFields;
   final approval = <String, Object?>{
-    'resource': {...route, 'nativeResourceId': 'approval-1'},
-    'conversation': {...route, 'nativeResourceId': 'conversation-1'},
-    'turn': {...route, 'nativeResourceId': 'turn-1'},
+    'resource': {...providerId, 'nativeResourceId': 'approval-1'},
+    'conversation': {...providerId, 'nativeResourceId': 'conversation-1'},
+    'turn': {...providerId, 'nativeResourceId': 'turn-1'},
     'kind': 'command',
     'title': 'Run command',
     'description': 'Run the command',
@@ -1453,6 +1393,9 @@ class _FakeTransport
     );
     if (customResponse != null) return customResponse;
     var response = responses[method];
+    if (response == null && method == 'provider.describe') {
+      response = _providerDescriptionJson();
+    }
     if (response == null) {
       throw StateError('No response for $method');
     }
@@ -1498,48 +1441,64 @@ class _RequestRecord {
 JsonMap _handshakeJson() {
   return {
     'selectedVersion': 1,
-    'serverName': 'CodePet Host',
-    'serverVersion': '0.1.0',
     'device': {
-      'deviceId': 'device-test',
-      'descriptor': {
-        'deviceName': 'Test Host',
-        'operatingSystem': 'TestOS',
-        'systemVersion': '1.0',
-      },
+      'deviceName': 'Test Host',
+      'operatingSystem': 'TestOS',
+      'systemVersion': '1.0',
     },
-    'devices': <Object>[],
-    'providers': [
-      {
-        'route': {'deviceId': 'device-test', 'providerPluginId': 'dev.codepet.codex', 'providerInstanceId': 'codex-work'},
-        'pluginId': 'dev.codepet.codex',
-        'displayName': 'Codex',
-        'icon': 'https://cdn.example.com/codex.png',
-        'harness': {
-          'id': 'codex',
-          'displayName': 'Codex',
-          'version': '1.0.0',
-        },
-        'status': 'ready',
-        'capabilities': {
-          'revision': 'revision-1',
-          'methods': [
-            'conversation.list',
-            'conversation.search',
-            'conversation.get',
-            'turn.send',
-          ],
-          'turnSend': <String, dynamic>{},
-        },
-      },
-    ],
+    'providers': [_providerSummaryJson()],
     'eventCursor': 'opaque-handshake',
   };
 }
 
+JsonMap _providerSummaryJson() => {
+      'id': _providerId,
+      'identity': {
+        'displayName': 'Codex',
+        'icon': 'https://cdn.example.com/codex.png',
+      },
+      'runtime': {
+        'status': 'ready',
+        'version': '1.0.0',
+        'executablePath': '/usr/local/bin/codex',
+        'authentication': {
+          'status': 'authenticated',
+          'displayText': 'Signed in',
+        },
+        'usage': {
+          'displayText': '72% remaining',
+          'details': [
+            {
+              'namespace': 'dev.codepet.codex',
+              'schemaVersion': 1,
+              'data': {'opaque': true},
+            },
+          ],
+        },
+      },
+      'capabilities': {'revision': 'revision-1'},
+    };
+
+JsonMap _providerDescriptionJson() => {
+      'provider': _providerSummaryJson(),
+      'capabilities': {
+        'revision': 'revision-1',
+        'methods': [
+          'conversation.list',
+          'conversation.search',
+          'conversation.get',
+          'turn.send',
+        ],
+        'turnSend': <String, dynamic>{},
+      },
+    };
+
 JsonMap _conversationJson() {
   return {
-    'resource': {'deviceId': 'device-test', 'providerPluginId': 'dev.codepet.codex', 'providerInstanceId': 'codex-work', 'nativeResourceId': 'conversation-1'},
+    'resource': {
+      ..._providerResourceFields,
+      'nativeResourceId': 'conversation-1',
+    },
     'project': null,
     'title': 'Test conversation',
     'status': 'idle',
@@ -1551,7 +1510,7 @@ JsonMap _conversationJson() {
 
 JsonMap _projectJson() => {
       'resource': {
-        ..._route.toJson(),
+        ..._providerResourceFields,
         'nativeResourceId': 'project-1',
       },
       'name': 'codepet-remote',
@@ -1566,12 +1525,12 @@ JsonMap _projectJson() => {
 
 JsonMap _historyItemJson(String itemId, String text) {
   final conversation = {
-    ..._route.toJson(),
+    ..._providerResourceFields,
     'nativeResourceId': 'conversation-1',
   };
   return {
-    'resource': {..._route.toJson(), 'nativeResourceId': itemId},
-    'turn': {..._route.toJson(), 'nativeResourceId': '$itemId-turn'},
+    'resource': {..._providerResourceFields, 'nativeResourceId': itemId},
+    'turn': {..._providerResourceFields, 'nativeResourceId': '$itemId-turn'},
     'conversation': conversation,
     'kind': 'message',
     'status': 'completed',
@@ -1584,11 +1543,11 @@ JsonMap _historyItemJson(String itemId, String text) {
 
 JsonMap _turnSendResult({required JsonMap selection}) {
   final conversation = {
-    ..._route.toJson(),
+    ..._providerResourceFields,
     'nativeResourceId': 'conversation-1',
   };
   final turn = {
-    ..._route.toJson(),
+    ..._providerResourceFields,
     'nativeResourceId': 'turn-sent',
   };
   return {
@@ -1601,7 +1560,7 @@ JsonMap _turnSendResult({required JsonMap selection}) {
     },
     'userItem': {
       'resource': {
-        ..._route.toJson(),
+        ..._providerResourceFields,
         'nativeResourceId': 'item-user',
       },
       'turn': turn,
@@ -1627,17 +1586,14 @@ ConversationSummary _domainConversation() =>
     );
 
 JsonMap _resourceJson(RoutedResourceId resource) => {
-      ...resource.route.toJson(),
+      'providerId': resource.providerId,
       'nativeResourceId': resource.nativeResourceId,
     };
 
 const _fingerprint = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
-const _route = GatewayProviderRoute(
-  deviceId: 'device-test',
-  providerPluginId: 'dev.codepet.codex',
-  providerInstanceId: 'codex-work',
-);
+const _providerId = 'codex-work';
+const JsonMap _providerResourceFields = {'providerId': _providerId};
 
 const _clientDevice = DeviceDescriptor(
   deviceName: 'Test Phone',

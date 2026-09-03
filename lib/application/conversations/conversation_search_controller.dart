@@ -15,7 +15,7 @@ class ConversationSearchController extends ApplicationNotifier {
   final RoutedResourceId? project;
   final int pageSize;
   DeviceSession _session;
-  final Map<GatewayProviderRoute, String?> _cursors = {};
+  final Map<String, String?> _cursors = {};
   List<ConversationSummary> _conversations = const [];
   String? _query;
   String? _error;
@@ -160,20 +160,20 @@ class ConversationSearchController extends ApplicationNotifier {
       final pages = await Future.wait([
         for (final provider in selectedProviders)
           lease.searchConversations(
-            route: provider.route,
+            providerId: provider.id,
             searchTerm: query,
             limit: pageSize,
           ),
       ]);
       if (!_acceptsResult(requestGeneration, lease, query)) return;
       var conversations = const <ConversationSummary>[];
-      final cursors = <GatewayProviderRoute, String?>{};
+      final cursors = <String, String?>{};
       for (var index = 0; index < pages.length; index++) {
         conversations = mergeRoutedConversations(
           conversations,
           _inScope(pages[index].conversations),
         );
-        cursors[selectedProviders[index].route] = pages[index].nextCursor;
+        cursors[selectedProviders[index].id] = pages[index].nextCursor;
       }
       _resultsLease = lease;
       _conversations = conversations;
@@ -224,7 +224,7 @@ class ConversationSearchController extends ApplicationNotifier {
       final pages = await Future.wait([
         for (final entry in pendingRoutes)
           lease.searchConversations(
-            route: entry.key,
+            providerId: entry.key,
             searchTerm: query,
             cursor: entry.value,
             limit: pageSize,
@@ -232,7 +232,7 @@ class ConversationSearchController extends ApplicationNotifier {
       ]);
       if (!_acceptsResult(requestGeneration, lease, query)) return;
       var conversations = _conversations;
-      final cursors = Map<GatewayProviderRoute, String?>.from(_cursors);
+      final cursors = Map<String, String?>.from(_cursors);
       for (var index = 0; index < pages.length; index++) {
         conversations = mergeRoutedConversations(
           conversations,

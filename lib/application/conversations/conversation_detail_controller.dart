@@ -19,6 +19,7 @@ class ConversationDetailController extends ApplicationNotifier {
   })  : _session = session,
         _now = now ?? (() => DateTime.now().toUtc()) {
     _conversation = conversation;
+    _detail = ConversationDetail(summary: conversation);
     _observedLease = session.runtimeLease;
     session.addListener(_sessionChanged);
   }
@@ -104,10 +105,9 @@ class ConversationDetailController extends ApplicationNotifier {
         ? null
         : _CapabilityBinding.from(lease, provider);
     if (_sameLease(_observedLease, lease) && _binding == nextBinding) {
-      if (_provider != provider) {
-        _provider = provider;
-        notifyApplicationListeners();
-      }
+      _provider = provider;
+      _detail = _detail?.withSummary(conversation);
+      notifyApplicationListeners();
       return;
     }
     _observedLease = lease;
@@ -144,8 +144,11 @@ class ConversationDetailController extends ApplicationNotifier {
     _observedLease = lease;
     _binding = binding;
     _provider = provider;
-    _detail = null;
-    _error = null;
+    _detail = (_detail ?? ConversationDetail(summary: conversation))
+        .withSummary(conversation);
+    if (lease != null && provider != null && binding != null) {
+      _error = null;
+    }
     _sendError = preserveUnknown ? unknownTurnOutcomeMessage : null;
     _interactionError = null;
     _accessModeId = null;
@@ -164,13 +167,6 @@ class ConversationDetailController extends ApplicationNotifier {
     notifyApplicationListeners();
     if (previousWindow != null) unawaited(previousWindow.close());
     if (lease == null || provider == null || binding == null) return;
-    if (!provider.methods.contains('conversation.get')) {
-      if (_acceptsRuntime(epoch, lease, binding)) {
-        _error = '当前 Provider 不支持加载会话详情。';
-        notifyApplicationListeners();
-      }
-      return;
-    }
     if (provider.methods.contains('turn.send')) {
       unawaited(_acquireInteraction(
         lease: lease,
@@ -178,6 +174,13 @@ class ConversationDetailController extends ApplicationNotifier {
         conversation: conversation,
         epoch: epoch,
       ));
+    }
+    if (!provider.methods.contains('conversation.get')) {
+      if (_acceptsRuntime(epoch, lease, binding)) {
+        _error = '当前 Provider 不支持加载会话详情。';
+        notifyApplicationListeners();
+      }
+      return;
     }
     await _loadSnapshot(
       lease: lease,
@@ -349,7 +352,6 @@ class ConversationDetailController extends ApplicationNotifier {
         onEvent: (event) => _applyEvent(event, epoch, lease, binding),
         onError: (Object error, StackTrace _) {
           if (_acceptsRuntime(epoch, lease, binding)) {
-            _detail = null;
             _error = '事件流异常：$error';
             notifyApplicationListeners();
           }
@@ -359,14 +361,14 @@ class ConversationDetailController extends ApplicationNotifier {
       );
       _markReadIfVisible(detail.summary, epoch, lease, binding);
     } catch (error) {
-      await window.close();
       if (_acceptsRuntime(epoch, lease, binding)) {
-        await _eventWindow?.close();
+        final previousWindow = _eventWindow;
         _eventWindow = null;
-        _detail = null;
         _error = error.toString();
         notifyApplicationListeners();
+        if (previousWindow != null) unawaited(previousWindow.close());
       }
+      await window.close();
     }
   }
 
@@ -605,7 +607,7 @@ class ConversationDetailController extends ApplicationNotifier {
       text: text,
       selection: selection,
       capabilityRevision: provider.capabilities.revision,
-      route: provider.route,
+      providerId: provider.id,
       conversation: currentConversation,
     );
     _detail = _detail?.stageUserInput(
@@ -619,7 +621,7 @@ class ConversationDetailController extends ApplicationNotifier {
     notifyApplicationListeners();
     try {
       final receipt = await lease.sendTurn(
-        route: attempt.route,
+        providerId: attempt.providerId,
         conversation: attempt.conversation,
         clientRequestId: attempt.clientRequestId,
         capabilityRevision: attempt.capabilityRevision,
@@ -736,7 +738,7 @@ class PendingTurnSend {
     required this.text,
     required this.selection,
     required this.capabilityRevision,
-    required this.route,
+    required this.providerId,
     required this.conversation,
   });
 
@@ -744,7 +746,7 @@ class PendingTurnSend {
   final String text;
   final TurnSendSelection selection;
   final String capabilityRevision;
-  final GatewayProviderRoute route;
+  final String providerId;
   final ConversationSummary conversation;
 }
 
@@ -752,7 +754,7 @@ class _CapabilityBinding {
   const _CapabilityBinding({
     required this.generation,
     required this.lease,
-    required this.route,
+    required this.providerId,
     required this.revision,
   });
 
@@ -763,13 +765,13 @@ class _CapabilityBinding {
       _CapabilityBinding(
         generation: lease.generation,
         lease: lease,
-        route: provider.route,
+        providerId: provider.id,
         revision: provider.capabilities.revision,
       );
 
   final int generation;
   final DeviceSessionRuntimeLease lease;
-  final GatewayProviderRoute route;
+  final String providerId;
   final String revision;
 
   @override
@@ -777,14 +779,14 @@ class _CapabilityBinding {
       other is _CapabilityBinding &&
       other.generation == generation &&
       lease.sameRuntime(other.lease) &&
-      other.route == route &&
+      other.providerId == providerId &&
       other.revision == revision;
 
   @override
   int get hashCode => Object.hash(
         generation,
         lease.runtimeIdentityHash,
-        route,
+        providerId,
         revision,
       );
 }

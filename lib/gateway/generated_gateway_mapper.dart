@@ -5,36 +5,39 @@ import '../core/domain/models.dart';
 /// Maps generated Gateway SDK values into protocol-neutral application models.
 ///
 /// JSON-RPC envelopes and wire DTO validation stay entirely inside the
-/// generated SDK. This adapter contains only domain mapping and route checks.
+/// generated SDK. This adapter contains only domain mapping and providerId checks.
 final class GeneratedGatewayMapper {
   const GeneratedGatewayMapper();
 
-  GatewayProvider provider(sdk.ProviderInstance value) {
-    final route = providerRoute(value.route);
-    if (route.providerPluginId != value.pluginId) {
-      throw const FormatException('Provider plugin route mismatch');
-    }
-    return GatewayProvider(
-      route: route,
-      providerType: value.pluginId,
-      displayName: value.displayName,
-      version: value.version,
-      icon: value.icon,
-      harness: HarnessDescriptor.fromJson(
-        Map<String, dynamic>.from(value.harness.toJson()),
-      ),
-      status: ProviderStatus.fromWire(value.status.wireValue),
-      capabilities: GatewayCapabilities.fromJson(
-        Map<String, dynamic>.from(value.capabilities.toJson()),
-      ),
-    );
-  }
-
-  GatewayProviderRoute providerRoute(sdk.GatewayProviderRoute value) =>
-      GatewayProviderRoute(
-        deviceId: value.deviceId,
-        providerPluginId: value.providerPluginId,
-        providerInstanceId: value.providerInstanceId,
+  GatewayProvider provider(
+    sdk.ProviderSummary value, {
+    sdk.GatewayCapabilities? capabilities,
+  }) =>
+      GatewayProvider(
+        id: value.id,
+        displayName: value.identity.displayName,
+        icon: value.identity.icon,
+        status: ProviderStatus.fromWire(value.runtime.status.wireValue),
+        runtimeVersion: value.runtime.version,
+        executablePath: value.runtime.executablePath,
+        authenticationStatus:
+            value.runtime.authentication?.status.wireValue,
+        authenticationDisplayText:
+            value.runtime.authentication?.displayText,
+        usageDisplayText: value.runtime.usage?.displayText,
+        usageDetails: value.runtime.usage?.details
+                .map((detail) => Map<String, dynamic>.from(detail.toJson()))
+                .toList(growable: false) ??
+            const [],
+        capabilities: capabilities == null
+            ? GatewayCapabilities(
+                revision: value.capabilities.revision,
+                methods: const [],
+              )
+            : GatewayCapabilities.fromJson(
+                Map<String, dynamic>.from(capabilities.toJson()),
+              ),
+        capabilitiesLoaded: capabilities != null,
       );
 
   ConversationSummary conversation(sdk.Conversation value) {
@@ -44,7 +47,7 @@ final class GeneratedGatewayMapper {
     final createdAt = _time(value.createdAt) ?? _epoch;
     return ConversationSummary(
       id: resourceKey(resource),
-      providerId: resource.providerInstanceId,
+      providerId: resource.providerId,
       title: value.title,
       preview: value.preview,
       status: ConversationStatus.fromWire(value.status.wireValue),
@@ -117,7 +120,7 @@ final class GeneratedGatewayMapper {
     final startedAt = _time(value.startedAt);
     return TurnTask(
       id: resourceKey(value.resource),
-      providerId: value.resource.providerInstanceId,
+      providerId: value.resource.providerId,
       conversationId: resourceKey(value.conversation),
       status: TurnStatus.fromWire(value.status.wireValue),
       displaySummary: value.displaySummary,
@@ -258,14 +261,9 @@ final class GeneratedGatewayMapper {
             sdk.ProjectChangeType.deleted => ProjectChangeType.deleted,
           },
         );
-      case sdk.ProtocolEventName.providerStatusChanged:
-        final payload = envelope.payload as sdk.ProviderStatusChangedEvent;
+      case sdk.ProtocolEventName.providerChanged:
+        final payload = envelope.payload as sdk.ProviderChangedEvent;
         final mapped = provider(payload.provider);
-        _requireProviderRoute(
-          mapped.route,
-          expectedDeviceId: expectedDeviceId,
-          expectedProviderRouteKeys: expectedProviderRouteKeys,
-        );
         return GatewayProviderChangedEvent(
           eventCursor: cursor,
           provider: mapped,
@@ -329,7 +327,7 @@ final class GeneratedGatewayMapper {
         );
         return TurnOutputDeltaEvent(
           eventCursor: cursor,
-          providerId: payload.turn.providerInstanceId,
+          providerId: payload.turn.providerId,
           conversationId: resourceKey(payload.conversation),
           turnId: resourceKey(payload.turn),
           itemId: payload.itemId,
@@ -352,12 +350,6 @@ final class GeneratedGatewayMapper {
           payload.approval,
           expectedDeviceId: expectedDeviceId,
           expectedProviderRouteKeys: expectedProviderRouteKeys,
-        );
-      case sdk.ProtocolEventName.deviceStatusChanged:
-        return UnknownGatewayEvent(
-          eventCursor: cursor,
-          name: envelope.event.wireName,
-          payload: _unsupportedEventPayload(envelope),
         );
     }
   }
@@ -397,39 +389,23 @@ final class GeneratedGatewayMapper {
     );
   }
 
-  sdk.GatewayProviderRoute sdkProviderRoute(GatewayProviderRoute route) =>
-      sdk.GatewayProviderRoute(
-        deviceId: route.deviceId,
-        providerPluginId: route.providerPluginId,
-        providerInstanceId: route.providerInstanceId,
-      );
-
   sdk.RoutedResourceId sdkResourceId(RoutedResourceId value) =>
       sdk.RoutedResourceId(
-        deviceId: value.route.deviceId,
-        providerPluginId: value.route.providerPluginId,
-        providerInstanceId: value.route.providerInstanceId,
+        providerId: value.providerId,
         nativeResourceId: value.nativeResourceId,
       );
 
   RoutedResourceId resourceId(sdk.RoutedResourceId value) =>
       RoutedResourceId(
-        route: GatewayProviderRoute(
-          deviceId: value.deviceId,
-          providerPluginId: value.providerPluginId,
-          providerInstanceId: value.providerInstanceId,
-        ),
+        providerId: value.providerId,
         nativeResourceId: value.nativeResourceId,
       );
 
   String resourceKey(sdk.RoutedResourceId value) =>
-      '${value.deviceId}\u0000${value.providerPluginId}\u0000'
-      '${value.providerInstanceId}\u0000${value.nativeResourceId}';
+      '${value.providerId}\u0000${value.nativeResourceId}';
 
   bool hasSameRoute(sdk.RoutedResourceId left, sdk.RoutedResourceId right) =>
-      left.deviceId == right.deviceId &&
-      left.providerPluginId == right.providerPluginId &&
-      left.providerInstanceId == right.providerInstanceId;
+      left.providerId == right.providerId;
 
   void requireExpectedResource(
     sdk.RoutedResourceId resource, {
@@ -447,7 +423,7 @@ final class GeneratedGatewayMapper {
     sdk.RoutedResourceId right,
   ) {
     if (!hasSameRoute(left, right)) {
-      throw const FormatException('Gateway resource route mismatch');
+      throw const FormatException('Gateway resource providerId mismatch');
     }
   }
 
@@ -457,41 +433,24 @@ final class GeneratedGatewayMapper {
     required Set<String> expectedProviderRouteKeys,
   }) {
     _requireProviderRoute(
-      GatewayProviderRoute(
-        deviceId: resource.deviceId,
-        providerPluginId: resource.providerPluginId,
-        providerInstanceId: resource.providerInstanceId,
-      ),
+      resource.providerId,
       expectedDeviceId: expectedDeviceId,
       expectedProviderRouteKeys: expectedProviderRouteKeys,
     );
   }
 
   void _requireProviderRoute(
-    GatewayProviderRoute route, {
+    String providerId, {
     required String expectedDeviceId,
     required Set<String> expectedProviderRouteKeys,
   }) {
-    if (route.deviceId != expectedDeviceId ||
-        !expectedProviderRouteKeys.contains(route.key)) {
+    if (!expectedProviderRouteKeys.contains(providerId)) {
       throw const FormatException(
-        'Resource route was not advertised by the connected Host',
+        'Resource providerId was not advertised by the connected Host',
       );
     }
   }
 
-  JsonMap _unsupportedEventPayload(sdk.ProtocolEventEnvelope envelope) {
-    final value = switch (envelope.event) {
-      sdk.ProtocolEventName.deviceStatusChanged =>
-        (envelope.payload as sdk.DeviceStatusChangedEvent).toJson(),
-      sdk.ProtocolEventName.approvalRequested =>
-        (envelope.payload as sdk.ApprovalRequestedEvent).toJson(),
-      sdk.ProtocolEventName.approvalResolved =>
-        (envelope.payload as sdk.ApprovalResolvedEvent).toJson(),
-      _ => const <String, Object?>{},
-    };
-    return Map<String, dynamic>.from(value);
-  }
 }
 
 final DateTime _epoch =

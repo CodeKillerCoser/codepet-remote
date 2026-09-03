@@ -402,7 +402,7 @@ void main() {
     });
   }
 
-  testWidgets('event stream failure discards stale detail and live output', (tester) async {
+  testWidgets('event stream failure preserves rendered detail and live output', (tester) async {
     final client = _DetailClient();
     await _pumpDetail(tester, client);
     await tester.pumpAndSettle();
@@ -410,8 +410,8 @@ void main() {
     await tester.pump();
     client.eventsController.addError(StateError('socket lost'));
     await tester.pump();
-    expect(find.text('stale-live'), findsNothing);
-    expect(find.textContaining('socket lost'), findsOneWidget);
+    await tester.pump();
+    expect(find.text('stale-live'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
@@ -755,6 +755,7 @@ void main() {
       ),
     ));
     await tester.pump();
+    await tester.pump();
 
     expect(
       tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
@@ -927,6 +928,8 @@ void main() {
     });
     await _pumpDetail(tester, client, conversation: _idleConversation());
     await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
     await tester.enterText(find.byKey(const Key('turn-input')), 'retry me');
     await tester.pump();
     await tester.tap(find.byKey(const Key('turn-send')));
@@ -944,6 +947,32 @@ void main() {
           .text,
       isEmpty,
     );
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('keeps summary and composer usable when history fails',
+      (tester) async {
+    final client = _DetailClient(
+      onGet: (_) => Future.error(StateError('history unavailable')),
+    );
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('conversation-detail')), findsOneWidget);
+    expect(find.byKey(const Key('conversation-history-error')), findsOneWidget);
+    expect(find.byKey(const Key('turn-input')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('turn-input')), 'send anyway');
+    await tester.pump();
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('turn-send'))).onPressed,
+      isNotNull,
+    );
+
+    await tester.tap(find.byKey(const Key('turn-send')));
+    await tester.pump();
+    expect(client.sendCalls.single.text, 'send anyway');
+
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
@@ -1114,7 +1143,7 @@ void main() {
     await tester.pump();
     expect(client.sendCalls, hasLength(1));
     final firstCall = client.sendCalls.single;
-    expect(firstCall.route, _detailRoute);
+    expect(firstCall.providerId, _detailProviderId);
     expect(
       conversationRoutingKey(firstCall.conversation),
       conversationRoutingKey(_idleConversation()),
@@ -1186,7 +1215,7 @@ void main() {
     expect(client.sendCalls, hasLength(2));
     final secondCall = client.sendCalls.last;
     expect(secondCall.clientRequestId, isNot(firstCall.clientRequestId));
-    expect(secondCall.route, firstCall.route);
+    expect(secondCall.providerId, firstCall.providerId);
     expect(
       conversationRoutingKey(secondCall.conversation),
       conversationRoutingKey(firstCall.conversation),
@@ -1539,23 +1568,17 @@ final _conversation = ConversationSummary(
   createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
   updatedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
   resource: const RoutedResourceId(
-    route: _detailRoute,
+    providerId: _detailProviderId,
     nativeResourceId: 'conversation',
   ),
 );
 
-const _detailRoute = GatewayProviderRoute(
-  deviceId: 'host',
-  providerPluginId: 'plugin',
-  providerInstanceId: 'provider',
-);
+const _detailProviderId = 'provider';
 
 const _detailProvider = GatewayProvider(
-  route: _detailRoute,
-  providerType: 'plugin',
+  id: _detailProviderId,
   displayName: 'Provider',
   status: ProviderStatus.ready,
-  harness: HarnessDescriptor(id: 'test', displayName: 'Test Harness'),
   capabilities: GatewayCapabilities(
     revision: 'revision-1',
     methods: ['conversation.get', 'turn.send'],
@@ -1568,14 +1591,9 @@ GatewayProvider _providerWith({
   required TurnSendCapabilities turnSend,
 }) =>
     GatewayProvider(
-      route: _detailRoute,
-      providerType: 'plugin',
+      id: _detailProviderId,
       displayName: 'Provider',
       status: ProviderStatus.ready,
-      harness: const HarnessDescriptor(
-        id: 'test',
-        displayName: 'Test Harness',
-      ),
       capabilities: GatewayCapabilities(
         revision: revision,
         methods: const ['conversation.get', 'turn.send'],
@@ -1605,6 +1623,7 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
     this.committedMessages = const [],
     this.eventDuringFirstGet,
     this.provider = _detailProvider,
+    this.onGet,
     this.onAcquire,
     this.onSend,
   });
@@ -1612,6 +1631,8 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
   final List<GatewayMessage> committedMessages;
   final GatewayEvent? eventDuringFirstGet;
   GatewayProvider provider;
+  final Future<ConversationSnapshot> Function(ConversationSummary conversation)?
+      onGet;
   final Future<ConversationInteraction> Function(ConversationSummary conversation)? onAcquire;
   final Future<TurnSendReceipt> Function(_SendCall call)? onSend;
   final StreamController<GatewayEvent> eventsController = StreamController<GatewayEvent>.broadcast(sync: true);
@@ -1627,15 +1648,18 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
   void emit(GatewayEvent event) { _cursor = event.eventCursor; eventsController.add(event); }
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async {
     getCalls++;
+    final getHandler = onGet;
+    if (getHandler != null) return getHandler(conversation);
     final snapshotCursor = _cursor;
     if (getCalls == 1 && eventDuringFirstGet != null) {
       emit(eventDuringFirstGet!);
     }
     return ConversationSnapshot(detail: ConversationDetail(summary: conversation, committedMessages: committedMessages), snapshotCursor: snapshotCursor);
   }
-  @override Future<GatewayHandshake> connect() async => GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: [provider], eventCursor: _cursor);
-  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) => throw UnimplementedError();
-  @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
+  @override Future<GatewayHandshake> connect() async => GatewayHandshake(protocolVersion: 1, providers: [provider], eventCursor: _cursor, deviceDescriptor: const DeviceDescriptor(deviceName: 'Test', operatingSystem: 'TestOS', systemVersion: '1'));
+  @override Future<GatewayProvider> describeProvider(String providerId) async => provider;
+  @override Future<ConversationPage> listConversations({required String providerId, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) => throw UnimplementedError();
+  @override Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override
   Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) {
     acquireCalls++;
@@ -1646,7 +1670,7 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
           ))
         : handler(conversation);
   }
-  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
+  @override Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
   @override
   Future<ConversationReadState> markConversationRead(
     ConversationSummary conversation,
@@ -1658,9 +1682,9 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
     );
   }
   @override
-  Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) {
+  Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) {
     final call = _SendCall(
-      route: route,
+      providerId: providerId,
       conversation: conversation,
       clientRequestId: clientRequestId,
       capabilityRevision: capabilityRevision,
@@ -1676,7 +1700,7 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
 
 class _SendCall {
   const _SendCall({
-    required this.route,
+    required this.providerId,
     required this.conversation,
     required this.clientRequestId,
     required this.capabilityRevision,
@@ -1684,7 +1708,7 @@ class _SendCall {
     required this.selection,
   });
 
-  final GatewayProviderRoute route;
+  final String providerId;
   final ConversationSummary conversation;
   final String clientRequestId;
   final String capabilityRevision;

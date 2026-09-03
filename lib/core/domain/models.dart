@@ -9,23 +9,23 @@ const gatewayProtocolVersion = 1;
 /// wire maps.
 class RoutedResourceId {
   const RoutedResourceId({
-    required this.route,
+    required this.providerId,
     required this.nativeResourceId,
   });
 
-  final GatewayProviderRoute route;
+  final String providerId;
   final String nativeResourceId;
 
-  String get key => '${route.key}\u0000$nativeResourceId';
+  String get key => '$providerId\u0000$nativeResourceId';
 
   @override
   bool operator ==(Object other) =>
       other is RoutedResourceId &&
-      other.route == route &&
+      other.providerId == providerId &&
       other.nativeResourceId == nativeResourceId;
 
   @override
-  int get hashCode => Object.hash(route, nativeResourceId);
+  int get hashCode => Object.hash(providerId, nativeResourceId);
 }
 
 class DeviceDescriptor {
@@ -245,86 +245,6 @@ class GatewayToolInvocation {
   final bool? destructive;
   final bool? idempotent;
   final bool? openWorld;
-}
-
-class GatewayProviderRoute {
-  const GatewayProviderRoute({
-    required this.deviceId,
-    required this.providerPluginId,
-    required this.providerInstanceId,
-  });
-
-  factory GatewayProviderRoute.fromJson(JsonMap json) {
-    const fields = {
-      'deviceId',
-      'providerPluginId',
-      'providerInstanceId',
-    };
-    if (json.keys.toSet().difference(fields).isNotEmpty ||
-        fields.difference(json.keys.toSet()).isNotEmpty) {
-      throw const FormatException(
-        'Provider route fields do not match the Gateway schema',
-      );
-    }
-    return GatewayProviderRoute(
-      deviceId: _requiredString(json, 'deviceId'),
-      providerPluginId: _requiredString(json, 'providerPluginId'),
-      providerInstanceId: _requiredString(json, 'providerInstanceId'),
-    );
-  }
-
-  final String deviceId;
-  final String providerPluginId;
-  final String providerInstanceId;
-
-  String get key =>
-      '$deviceId\u0000$providerPluginId\u0000$providerInstanceId';
-
-  JsonMap toJson() => {
-        'deviceId': deviceId,
-        'providerPluginId': providerPluginId,
-        'providerInstanceId': providerInstanceId,
-      };
-
-  @override
-  bool operator ==(Object other) =>
-      other is GatewayProviderRoute &&
-      other.deviceId == deviceId &&
-      other.providerPluginId == providerPluginId &&
-      other.providerInstanceId == providerInstanceId;
-
-  @override
-  int get hashCode => Object.hash(
-        deviceId,
-        providerPluginId,
-        providerInstanceId,
-      );
-}
-
-class HarnessDescriptor {
-  const HarnessDescriptor({
-    required this.id,
-    required this.displayName,
-    this.version,
-  });
-
-  factory HarnessDescriptor.fromJson(JsonMap json) {
-    _validateJsonFields(
-      json,
-      required: const {'id', 'displayName'},
-      optional: const {'version'},
-      name: 'Harness descriptor',
-    );
-    return HarnessDescriptor(
-      id: _requiredString(json, 'id'),
-      displayName: _requiredString(json, 'displayName'),
-      version: _optionalString(json, 'version'),
-    );
-  }
-
-  final String id;
-  final String displayName;
-  final String? version;
 }
 
 class ProviderChoice {
@@ -853,58 +773,69 @@ class GatewayCapabilities {
 
 class GatewayProvider {
   const GatewayProvider({
-    required this.route,
-    required this.providerType,
+    required this.id,
     required this.displayName,
     required this.status,
-    required this.harness,
     required this.capabilities,
-    this.version,
     this.icon,
+    this.runtimeVersion,
+    this.executablePath,
+    this.authenticationStatus,
+    this.authenticationDisplayText,
+    this.usageDisplayText,
+    this.usageDetails = const [],
+    this.capabilitiesLoaded = true,
   });
 
-  final GatewayProviderRoute route;
-  String get id => route.providerInstanceId;
-  final String providerType;
+  final String id;
   final String displayName;
-  final String? version;
   final String? icon;
-  final HarnessDescriptor harness;
+  final String? runtimeVersion;
+  final String? executablePath;
+  final String? authenticationStatus;
+  final String? authenticationDisplayText;
+  final String? usageDisplayText;
+  final List<JsonMap> usageDetails;
   final ProviderStatus status;
   final GatewayCapabilities capabilities;
+  final bool capabilitiesLoaded;
   List<String> get methods => capabilities.methods;
+
+  GatewayProvider withCapabilities(GatewayCapabilities value) =>
+      GatewayProvider(
+        id: id,
+        displayName: displayName,
+        status: status,
+        capabilities: value,
+        icon: icon,
+        runtimeVersion: runtimeVersion,
+        executablePath: executablePath,
+        authenticationStatus: authenticationStatus,
+        authenticationDisplayText: authenticationDisplayText,
+        usageDisplayText: usageDisplayText,
+        usageDetails: usageDetails,
+        capabilitiesLoaded: true,
+      );
 }
 
 class GatewayHandshake {
   const GatewayHandshake({
     required this.protocolVersion,
-    required this.serverName,
-    required this.serverVersion,
     required this.providers,
     required this.eventCursor,
-    this.deviceId,
-    this.identityFingerprint,
-    this.deviceDescriptor,
+    required this.deviceDescriptor,
   });
 
   final int protocolVersion;
-  final String serverName;
-  final String serverVersion;
   final List<GatewayProvider> providers;
   final String eventCursor;
-  final String? deviceId;
-  final String? identityFingerprint;
-  final DeviceDescriptor? deviceDescriptor;
+  final DeviceDescriptor deviceDescriptor;
 
   GatewayHandshake withProviders(List<GatewayProvider> nextProviders) =>
       GatewayHandshake(
         protocolVersion: protocolVersion,
-        serverName: serverName,
-        serverVersion: serverVersion,
         providers: nextProviders,
         eventCursor: eventCursor,
-        deviceId: deviceId,
-        identityFingerprint: identityFingerprint,
         deviceDescriptor: deviceDescriptor,
       );
 }

@@ -15,22 +15,22 @@ void main() {
       (tester) async {
     _useTallSurface(tester);
     const project = RoutedResourceId(
-      route: _primaryRoute,
+      providerId: _primaryRoute,
       nativeResourceId: 'project-1',
     );
     final client = _SearchClient(
       providers: const [_primaryProvider],
-      onSearch: ({required route, required searchTerm, required cursor, required limit}) async =>
+      onSearch: ({required providerId, required searchTerm, required cursor, required limit}) async =>
           ConversationPage(
         conversations: [
           _conversation(
-            route,
+            providerId,
             'project-result',
             '项目结果',
             2000,
             project: project,
           ),
-          _conversation(route, 'standalone-result', '独立结果', 1000),
+          _conversation(providerId, 'standalone-result', '独立结果', 1000),
         ],
         snapshotCursor: 'handshake',
       ),
@@ -61,9 +61,9 @@ void main() {
         _primaryRoute: [_conversation(_primaryRoute, 'home-a', '首页 A', 5000)],
         _secondaryRoute: [_conversation(_secondaryRoute, 'home-b', '首页 B', 4000)],
       },
-      onSearch: ({required GatewayProviderRoute route, required String searchTerm, required String? cursor, required int limit}) async {
+      onSearch: ({required String providerId, required String searchTerm, required String? cursor, required int limit}) async {
         expect(searchTerm, 'needle');
-        if (route == _primaryRoute) {
+        if (providerId == _primaryRoute) {
           return ConversationPage(
             conversations: [
               _conversation(_primaryRoute, 'shared', '旧结果', 1000),
@@ -88,7 +88,7 @@ void main() {
 
     expect(find.text('首页 A'), findsOneWidget);
     expect(find.text('首页 B'), findsNothing);
-    await tester.tap(find.byKey(Key('provider-${_secondaryRoute.key}')));
+    await tester.tap(find.byKey(Key('provider-$_secondaryRoute')));
     await tester.pump();
     expect(find.text('首页 A'), findsNothing);
     expect(find.text('首页 B'), findsOneWidget);
@@ -99,7 +99,7 @@ void main() {
     await tester.tap(find.byKey(const Key('search-submit')));
     await _pumpAsync(tester);
 
-    expect(client.searchRequests.map((request) => request.route), [
+    expect(client.searchRequests.map((request) => request.providerId), [
       _secondaryRoute,
     ]);
     expect(find.text('1 个结果'), findsOneWidget);
@@ -122,14 +122,14 @@ void main() {
       listValues: {
         _primaryRoute: [_conversation(_primaryRoute, 'home', '首页会话', 5000)],
       },
-      onSearch: ({required GatewayProviderRoute route, required String searchTerm, required String? cursor, required int limit}) async {
+      onSearch: ({required String providerId, required String searchTerm, required String? cursor, required int limit}) async {
         expect(limit, 20);
         if (cursor == null) {
           return ConversationPage(
             conversations: [
               for (var index = 0; index < 20; index++)
                 _conversation(
-                  route,
+                  providerId,
                   'result-$index',
                   '结果 $index',
                   3000 - index,
@@ -142,7 +142,7 @@ void main() {
         expect(cursor, 'search-next');
         return ConversationPage(
           conversations: [
-            _conversation(route, 'result-20', '结果 20', 1000),
+            _conversation(providerId, 'result-20', '结果 20', 1000),
           ],
           snapshotCursor: 'handshake',
         );
@@ -179,12 +179,12 @@ void main() {
     var oldSearches = 0;
     final oldClient = _SearchClient(
       providers: const [_primaryProvider],
-      onSearch: ({required GatewayProviderRoute route, required String searchTerm, required String? cursor, required int limit}) {
+      onSearch: ({required String providerId, required String searchTerm, required String? cursor, required int limit}) {
         oldSearches++;
         if (oldSearches == 1) {
           return Future.value(ConversationPage(
             conversations: [
-              _conversation(route, 'old-visible', '旧运行结果', 2000),
+              _conversation(providerId, 'old-visible', '旧运行结果', 2000),
             ],
             snapshotCursor: 'handshake',
           ));
@@ -280,7 +280,7 @@ void main() {
     var attempts = 0;
     final client = _SearchClient(
       providers: const [_primaryProvider],
-      onSearch: ({required GatewayProviderRoute route, required String searchTerm, required String? cursor, required int limit}) async {
+      onSearch: ({required String providerId, required String searchTerm, required String? cursor, required int limit}) async {
         attempts++;
         if (attempts == 1) throw StateError('search unavailable');
         return const ConversationPage(
@@ -318,10 +318,10 @@ void main() {
           _conversation(_primaryRoute, 'shared', '列表旧标题', 3000),
         ],
       },
-      onSearch: ({required GatewayProviderRoute route, required String searchTerm, required String? cursor, required int limit}) async =>
+      onSearch: ({required String providerId, required String searchTerm, required String? cursor, required int limit}) async =>
           ConversationPage(
             conversations: [
-              _conversation(route, 'shared', '搜索旧标题', 3000),
+              _conversation(providerId, 'shared', '搜索旧标题', 3000),
             ],
             snapshotCursor: 'handshake',
           ),
@@ -389,19 +389,19 @@ class _HomeHarness extends StatelessWidget {
 }
 
 ConversationSummary _conversation(
-  GatewayProviderRoute route,
+  String providerId,
   String nativeId,
   String title,
   int updatedAt,
   {RoutedResourceId? project}
 ) {
   final resource = RoutedResourceId(
-    route: route,
+    providerId: providerId,
     nativeResourceId: nativeId,
   );
   return ConversationSummary(
-    id: '${route.key}\u0000$nativeId',
-    providerId: route.providerInstanceId,
+    id: '$providerId\u0000$nativeId',
+    providerId: providerId,
     title: title,
     preview: 'preview $nativeId',
     status: ConversationStatus.idle,
@@ -415,14 +415,14 @@ ConversationSummary _conversation(
 }
 
 typedef _SearchHandler = Future<ConversationPage> Function({
-  required GatewayProviderRoute route,
+  required String providerId,
   required String searchTerm,
   required String? cursor,
   required int limit,
 });
 
 Future<ConversationPage> _unusedSearch({
-  required GatewayProviderRoute route,
+  required String providerId,
   required String searchTerm,
   required String? cursor,
   required int limit,
@@ -430,13 +430,13 @@ Future<ConversationPage> _unusedSearch({
 
 class _SearchRequest {
   const _SearchRequest({
-    required this.route,
+    required this.providerId,
     required this.searchTerm,
     required this.cursor,
     required this.limit,
   });
 
-  final GatewayProviderRoute route;
+  final String providerId;
   final String searchTerm;
   final String? cursor;
   final int limit;
@@ -451,7 +451,7 @@ class _SearchClient implements GatewayClient {
 
   final List<GatewayProvider> providers;
   final _SearchHandler onSearch;
-  final Map<GatewayProviderRoute, List<ConversationSummary>> listValues;
+  final Map<String, List<ConversationSummary>> listValues;
   final List<_SearchRequest> searchRequests = [];
   final StreamController<GatewayEvent> controller =
       StreamController<GatewayEvent>.broadcast();
@@ -469,39 +469,45 @@ class _SearchClient implements GatewayClient {
   @override
   Future<GatewayHandshake> connect() async => GatewayHandshake(
         protocolVersion: 1,
-        serverName: 'Test Host',
-        serverVersion: '1',
         providers: providers,
         eventCursor: 'handshake',
-        deviceId: 'host-one',
+        deviceDescriptor: const DeviceDescriptor(
+          deviceName: 'Test Host',
+          operatingSystem: 'TestOS',
+          systemVersion: '1',
+        ),
       );
 
   @override
+  Future<GatewayProvider> describeProvider(String providerId) async =>
+      providers.singleWhere((provider) => provider.id == providerId);
+
+  @override
   Future<ConversationPage> listConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) async => ConversationPage(
-        conversations: listValues[route] ?? const [],
+        conversations: listValues[providerId] ?? const [],
         snapshotCursor: 'handshake',
       );
 
   @override
   Future<ConversationPage> searchConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required String searchTerm,
     String? cursor,
     int limit = 50,
   }) {
     searchRequests.add(_SearchRequest(
-      route: route,
+      providerId: providerId,
       searchTerm: searchTerm,
       cursor: cursor,
       limit: limit,
     ));
     return onSearch(
-      route: route,
+      providerId: providerId,
       searchTerm: searchTerm,
       cursor: cursor,
       limit: limit,
@@ -523,10 +529,10 @@ class _SearchClient implements GatewayClient {
       const ConversationInteraction(selection: TurnSendSelection());
 
   @override
-  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
+  Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
 
   @override
-  Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
+  Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
 
   @override
   Future<void> close() async {
@@ -534,24 +540,14 @@ class _SearchClient implements GatewayClient {
   }
 }
 
-const _primaryRoute = GatewayProviderRoute(
-  deviceId: 'host-one',
-  providerPluginId: 'dev.codepet.codex',
-  providerInstanceId: 'codex-work',
-);
+const _primaryRoute = 'codex-work';
 
-const _secondaryRoute = GatewayProviderRoute(
-  deviceId: 'host-one',
-  providerPluginId: 'dev.codepet.claude',
-  providerInstanceId: 'claude-work',
-);
+const _secondaryRoute = 'claude-work';
 
 const _primaryProvider = GatewayProvider(
-  route: _primaryRoute,
-  providerType: 'dev.codepet.codex',
+  id: _primaryRoute,
   displayName: 'Codex Work',
   status: ProviderStatus.ready,
-  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
   capabilities: GatewayCapabilities(
     revision: 'test-1',
     methods: ['conversation.list', 'conversation.search', 'conversation.get'],
@@ -559,11 +555,9 @@ const _primaryProvider = GatewayProvider(
 );
 
 const _secondaryProvider = GatewayProvider(
-  route: _secondaryRoute,
-  providerType: 'dev.codepet.claude',
+  id: _secondaryRoute,
   displayName: 'Claude Work',
   status: ProviderStatus.ready,
-  harness: HarnessDescriptor(id: 'claude', displayName: 'Claude'),
   capabilities: GatewayCapabilities(
     revision: 'test-1',
     methods: ['conversation.list', 'conversation.search', 'conversation.get'],
@@ -571,11 +565,9 @@ const _secondaryProvider = GatewayProvider(
 );
 
 const _listOnlyProvider = GatewayProvider(
-  route: _primaryRoute,
-  providerType: 'dev.codepet.codex',
+  id: _primaryRoute,
   displayName: 'Codex Work',
   status: ProviderStatus.ready,
-  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
   capabilities: GatewayCapabilities(
     revision: 'test-1',
     methods: ['conversation.list', 'conversation.get'],

@@ -7,9 +7,7 @@
     "result": {
       "conversation": {
         "resource": {
-          "deviceId": "device-macbook-1",
-          "providerPluginId": "dev.codepet.codex",
-          "providerInstanceId": "codex-work",
+          "providerId": "codex-work",
           "nativeResourceId": "thread-01"
         },
         "project": null,
@@ -21,21 +19,15 @@
       "items": [
         {
           "resource": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "message-user-01"
           },
           "turn": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "turn-01"
           },
           "conversation": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "thread-01"
           },
           "kind": "message",
@@ -51,21 +43,15 @@
         },
         {
           "resource": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "reasoning-01"
           },
           "turn": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "turn-01"
           },
           "conversation": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "thread-01"
           },
           "kind": "reasoning",
@@ -80,21 +66,15 @@
         },
         {
           "resource": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "command-01"
           },
           "turn": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "turn-01"
           },
           "conversation": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "thread-01"
           },
           "kind": "command",
@@ -138,21 +118,15 @@
     },
         {
           "resource": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "approval-command-01"
           },
           "turn": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "turn-01"
           },
           "conversation": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "thread-01"
           },
           "kind": "approval",
@@ -166,28 +140,20 @@
             }
           ],
           "relatedItem": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "command-01"
           },
           "approval": {
             "resource": {
-              "deviceId": "device-macbook-1",
-              "providerPluginId": "dev.codepet.codex",
-              "providerInstanceId": "codex-work",
+              "providerId": "codex-work",
               "nativeResourceId": "approval-command-01"
             },
             "conversation": {
-              "deviceId": "device-macbook-1",
-              "providerPluginId": "dev.codepet.codex",
-              "providerInstanceId": "codex-work",
+              "providerId": "codex-work",
               "nativeResourceId": "thread-01"
             },
             "turn": {
-              "deviceId": "device-macbook-1",
-              "providerPluginId": "dev.codepet.codex",
-              "providerInstanceId": "codex-work",
+              "providerId": "codex-work",
               "nativeResourceId": "turn-01"
             },
             "kind": "command",
@@ -202,21 +168,15 @@
         },
         {
           "resource": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "message-agent-01"
           },
           "turn": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "turn-01"
           },
           "conversation": {
-            "deviceId": "device-macbook-1",
-            "providerPluginId": "dev.codepet.codex",
-            "providerInstanceId": "codex-work",
+            "providerId": "codex-work",
             "nativeResourceId": "thread-01"
           },
           "kind": "message",

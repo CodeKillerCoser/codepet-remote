@@ -89,19 +89,11 @@ class PairedDevice {
       endpointHints: (json['endpointHints'] as List? ?? const []).cast<String>(),
       credentialKeyRef: json['credentialKeyRef'] as String?,
       clientId: json['clientId'] as String?,
-      preferredEndpoint:
-          _migrateGatewayEndpoint(json['preferredEndpoint'] as String?),
+      preferredEndpoint: json['preferredEndpoint'] as String?,
       autoConnect: json['autoConnect'] == true,
       connectionKind: _connectionKindFromJson(json['connectionKind'] as String),
     );
   }
-}
-
-String? _migrateGatewayEndpoint(String? endpoint) {
-  if (endpoint == null) return null;
-  final uri = Uri.tryParse(endpoint);
-  if (uri == null || uri.path != '/remote/v1/gateway') return endpoint;
-  return uri.replace(path: '/remote/v2/gateway').toString();
 }
 
 DeviceConnectionKind _connectionKindFromJson(String value) =>

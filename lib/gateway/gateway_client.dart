@@ -50,8 +50,8 @@ final class ProtocolGatewayClient
   StreamSubscription<JsonMap>? _transportEvents;
   String? _latestEventCursor;
   final _BoundedCursorSet _seenEventCursors = _BoundedCursorSet();
-  Set<String> _providerRouteKeys = const {};
-  final Map<String, GatewayProvider> _providersByRoute = {};
+  Set<String> _providerIds = const {};
+  final Map<String, GatewayProvider> _providersById = {};
 
   @override
   Stream<GatewayEvent> get events => _events.stream;
@@ -65,8 +65,8 @@ final class ProtocolGatewayClient
 
   @override
   Future<GatewayHandshake> connect() async {
-    _providerRouteKeys = const {};
-    _providersByRoute.clear();
+    _providerIds = const {};
+    _providersById.clear();
     _transportEvents ??= transport.events.listen(
       (raw) {
         try {
@@ -74,11 +74,11 @@ final class ProtocolGatewayClient
           final event = _mapper.event(
             envelope,
             expectedDeviceId: expectedDeviceId,
-            expectedProviderRouteKeys: _providerRouteKeys,
+            expectedProviderRouteKeys: _providerIds,
           );
           if (!_seenEventCursors.add(event.eventCursor)) return;
           if (event is GatewayProviderChangedEvent) {
-            _providersByRoute[event.provider.route.key] = event.provider;
+            _providersById[event.provider.id] = event.provider;
           }
           _latestEventCursor = event.eventCursor;
           _events.add(event);
@@ -110,31 +110,24 @@ final class ProtocolGatewayClient
         ),
       ),
     );
-    if (generated.selectedVersion != sdk.protocolVersion ||
-        generated.device.deviceId != expectedDeviceId) {
+    if (generated.selectedVersion != sdk.protocolVersion) {
       await transport.close();
       throw const GatewayConnectionException(
         'Gateway identity mismatch',
         retryable: false,
       );
     }
-    final providers = generated.providers.map((value) {
-      final provider = _mapper.provider(value);
-      if (provider.route.deviceId != expectedDeviceId) {
-        throw const FormatException(
-          'Provider route does not belong to the connected Host',
-        );
-      }
-      return provider;
-    }).toList(growable: false);
-    _providerRouteKeys = providers.map((value) => value.route.key).toSet();
-    _providersByRoute.addEntries(
-      providers.map((value) => MapEntry(value.route.key, value)),
+    final providers = generated.providers
+        .map(_mapper.provider)
+        .toList(growable: false);
+    _providerIds = providers.map((value) => value.id).toSet();
+    _providersById.addEntries(
+      providers.map((value) => MapEntry(value.id, value)),
     );
     final descriptor = DeviceDescriptor(
-      deviceName: generated.device.descriptor.deviceName,
-      operatingSystem: generated.device.descriptor.operatingSystem,
-      systemVersion: generated.device.descriptor.systemVersion,
+      deviceName: generated.device.deviceName,
+      operatingSystem: generated.device.operatingSystem,
+      systemVersion: generated.device.systemVersion,
     );
     await onValidatedHostDescriptor?.call(descriptor);
     _seenEventCursors.add(generated.eventCursor);
@@ -164,35 +157,57 @@ final class ProtocolGatewayClient
     }
     return GatewayHandshake(
       protocolVersion: sdk.protocolVersion,
-      serverName: generated.serverName,
-      serverVersion: generated.serverVersion,
       providers: providers,
       eventCursor: generated.eventCursor,
-      deviceId: generated.device.deviceId,
-      identityFingerprint: expectedIdentityFingerprint,
       deviceDescriptor: descriptor,
     );
   }
 
   @override
+  Future<GatewayProvider> describeProvider(String providerId) async {
+    _requireProviderId(providerId);
+    final response = await _call(
+      () => _protocol.providerDescribe(
+        sdk.ProviderDescribeRequest(providerId: providerId),
+      ),
+    );
+    if (response.provider.id != providerId ||
+        response.capabilities.revision !=
+            response.provider.capabilities.revision) {
+      throw const FormatException('provider.describe returned stale identity');
+    }
+    final provider = _mapper.provider(
+      response.provider,
+      capabilities: response.capabilities,
+    );
+    _providersById[providerId] = provider;
+    return provider;
+  }
+
+  @override
   Future<ConversationPage> listConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) async {
     if (projectFilter case ProjectConversationFilter(:final project)) {
-      if (project.route != route) {
+      if (project.providerId != providerId) {
         throw const FormatException(
-          'Conversation project filter route does not match Provider route',
+          'Conversation project filter providerId does not match Provider providerId',
         );
       }
     }
-    _validateProviderRequest(route, cursor: cursor, limit: limit);
+    await _requireProviderCapability(
+      providerId,
+      method: 'conversation.list',
+      cursor: cursor,
+      limit: limit,
+    );
     final response = await _call(
       () => _protocol.conversationList(
         sdk.ConversationListRequest(
-          route: _mapper.sdkProviderRoute(route),
+          providerId: providerId,
           projectFilter: _mapper.conversationProjectFilter(projectFilter),
           cursor: cursor,
           limit: limit,
@@ -203,19 +218,19 @@ final class ProtocolGatewayClient
       conversations: response.conversations,
       nextCursor: response.pageInfo.nextCursor,
       snapshotCursor: response.snapshotCursor,
-      route: route,
+      providerId: providerId,
       method: 'conversation.list',
     );
   }
 
   @override
   Future<ProjectPage> listProjects({
-    required GatewayProviderRoute route,
+    required String providerId,
     String? cursor,
     int limit = 50,
   }) async {
-    _requireProviderCapability(
-      route,
+    await _requireProviderCapability(
+      providerId,
       method: 'project.list',
       cursor: cursor,
       limit: limit,
@@ -223,14 +238,14 @@ final class ProtocolGatewayClient
     final response = await _call(
       () => _protocol.projectList(
         sdk.ProjectListRequest(
-          route: _mapper.sdkProviderRoute(route),
+          providerId: providerId,
           cursor: cursor,
           limit: limit,
         ),
       ),
     );
     final projects = response.projects.map((project) {
-      _requireSdkResourceRoute(project.resource, route, 'project.list');
+      _requireSdkResourceRoute(project.resource, providerId, 'project.list');
       return _mapper.project(project);
     }).toList(growable: false);
     return ProjectPage(
@@ -242,8 +257,8 @@ final class ProtocolGatewayClient
 
   @override
   Future<GatewayProject> getProject(RoutedResourceId project) async {
-    final route = project.route;
-    _requireProviderCapability(route, method: 'project.get');
+    final providerId = project.providerId;
+    await _requireProviderCapability(providerId, method: 'project.get');
     final requested = _mapper.sdkResourceId(project);
     final response = await _call(
       () => _protocol.projectGet(sdk.ProjectGetRequest(project: requested)),
@@ -258,17 +273,17 @@ final class ProtocolGatewayClient
 
   @override
   Future<GatewayProject> createProject({
-    required GatewayProviderRoute route,
+    required String providerId,
     required String idempotencyKey,
     required String name,
     required List<ProjectRoot> roots,
     Map<String, String> metadata = const {},
   }) async {
-    _requireProviderCapability(route, method: 'project.create');
+    await _requireProviderCapability(providerId, method: 'project.create');
     final response = await _call(
       () => _protocol.projectCreate(
         sdk.ProjectCreateRequest(
-          route: _mapper.sdkProviderRoute(route),
+          providerId: providerId,
           idempotencyKey: idempotencyKey,
           name: name,
           roots: _mapper.projectRoots(roots),
@@ -276,7 +291,7 @@ final class ProtocolGatewayClient
         ),
       ),
     );
-    _requireSdkResourceRoute(response.project.resource, route, 'project.create');
+    _requireSdkResourceRoute(response.project.resource, providerId, 'project.create');
     return _mapper.project(response.project);
   }
 
@@ -290,7 +305,10 @@ final class ProtocolGatewayClient
     if (name == null && roots == null && metadata == null) {
       throw const FormatException('project.update requires a changed field');
     }
-    _requireProviderCapability(project.route, method: 'project.update');
+    await _requireProviderCapability(
+      project.providerId,
+      method: 'project.update',
+    );
     final requested = _mapper.sdkResourceId(project);
     final response = await _call(
       () => _protocol.projectUpdate(
@@ -312,7 +330,10 @@ final class ProtocolGatewayClient
 
   @override
   Future<void> deleteProject(RoutedResourceId project) async {
-    _requireProviderCapability(project.route, method: 'project.delete');
+    await _requireProviderCapability(
+      project.providerId,
+      method: 'project.delete',
+    );
     await _call(
       () => _protocol.projectDelete(
         sdk.ProjectDeleteRequest(project: _mapper.sdkResourceId(project)),
@@ -322,7 +343,7 @@ final class ProtocolGatewayClient
 
   @override
   Future<ConversationPage> searchConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required String searchTerm,
     String? cursor,
     int limit = 50,
@@ -330,11 +351,16 @@ final class ProtocolGatewayClient
     if (searchTerm.trim().isEmpty) {
       throw ArgumentError.value(searchTerm, 'searchTerm', 'must not be empty');
     }
-    _validateProviderRequest(route, cursor: cursor, limit: limit);
+    await _requireProviderCapability(
+      providerId,
+      method: 'conversation.search',
+      cursor: cursor,
+      limit: limit,
+    );
     final response = await _call(
       () => _protocol.conversationSearch(
         sdk.ConversationSearchRequest(
-          route: _mapper.sdkProviderRoute(route),
+          providerId: providerId,
           searchTerm: searchTerm,
           cursor: cursor,
           limit: limit,
@@ -345,7 +371,7 @@ final class ProtocolGatewayClient
       conversations: response.conversations,
       nextCursor: response.pageInfo.nextCursor,
       snapshotCursor: response.snapshotCursor,
-      route: route,
+      providerId: providerId,
       method: 'conversation.search',
     );
   }
@@ -354,15 +380,13 @@ final class ProtocolGatewayClient
     required List<sdk.Conversation> conversations,
     required String? nextCursor,
     required String snapshotCursor,
-    required GatewayProviderRoute route,
+    required String providerId,
     required String method,
   }) {
     final mapped = conversations.map((conversation) {
       final resource = conversation.resource;
-      if (resource.deviceId != route.deviceId ||
-          resource.providerPluginId != route.providerPluginId ||
-          resource.providerInstanceId != route.providerInstanceId) {
-        throw FormatException('$method returned a different Provider route');
+      if (resource.providerId != providerId) {
+        throw FormatException('$method returned a different Provider providerId');
       }
       return _mapper.conversation(conversation);
     }).toList(growable: false);
@@ -374,14 +398,13 @@ final class ProtocolGatewayClient
   }
 
   void _validateProviderRequest(
-    GatewayProviderRoute route, {
+    String providerId, {
     required String? cursor,
     required int limit,
   }) {
-    if (route.deviceId != expectedDeviceId ||
-        !_providerRouteKeys.contains(route.key)) {
+    if (!_providerIds.contains(providerId)) {
       throw const FormatException(
-        'Provider route does not belong to the connected Host handshake',
+        'Provider providerId does not belong to the connected Host handshake',
       );
     }
     if (cursor != null && cursor.isEmpty) {
@@ -392,14 +415,17 @@ final class ProtocolGatewayClient
     }
   }
 
-  GatewayProvider _requireProviderCapability(
-    GatewayProviderRoute route, {
+  Future<GatewayProvider> _requireProviderCapability(
+    String providerId, {
     required String method,
     String? cursor,
     int limit = 1,
-  }) {
-    _validateProviderRequest(route, cursor: cursor, limit: limit);
-    final provider = _providersByRoute[route.key];
+  }) async {
+    _validateProviderRequest(providerId, cursor: cursor, limit: limit);
+    var provider = _providersById[providerId];
+    if (provider != null && !provider.capabilitiesLoaded) {
+      provider = await describeProvider(providerId);
+    }
     if (provider == null || !provider.methods.contains(method)) {
       throw FormatException('Provider $method capability is unavailable');
     }
@@ -408,13 +434,19 @@ final class ProtocolGatewayClient
 
   void _requireSdkResourceRoute(
     sdk.RoutedResourceId resource,
-    GatewayProviderRoute route,
+    String providerId,
     String method,
   ) {
-    if (resource.deviceId != route.deviceId ||
-        resource.providerPluginId != route.providerPluginId ||
-        resource.providerInstanceId != route.providerInstanceId) {
-      throw FormatException('$method returned a different Provider route');
+    if (resource.providerId != providerId) {
+      throw FormatException('$method returned a different Provider providerId');
+    }
+  }
+
+  void _requireProviderId(String providerId) {
+    if (providerId.isEmpty || !_providerIds.contains(providerId)) {
+      throw const FormatException(
+        'Provider id does not belong to the connected Host handshake',
+      );
     }
   }
 
@@ -478,7 +510,7 @@ final class ProtocolGatewayClient
 
       final returned = response.conversation.resource;
       if (_mapper.resourceKey(returned) != _mapper.resourceKey(requested) ||
-          returned.deviceId != expectedDeviceId) {
+          returned.providerId != requested.providerId) {
         throw const FormatException(
           'conversation.get returned a different routed conversation',
         );
@@ -488,7 +520,7 @@ final class ProtocolGatewayClient
           (_mapper.resourceKey(responseActiveTurn.conversation) !=
                   _mapper.resourceKey(requested) ||
               !_mapper.hasSameRoute(responseActiveTurn.resource, requested))) {
-        throw const FormatException('Conversation active turn route mismatch');
+        throw const FormatException('Conversation active turn providerId mismatch');
       }
       for (final item in response.items) {
         final approval = item.approval;
@@ -504,7 +536,7 @@ final class ProtocolGatewayClient
                     _mapper.resourceKey(approval.turn) !=
                         _mapper.resourceKey(item.turn) ||
                     !_mapper.hasSameRoute(approval.resource, requested)))) {
-          throw const FormatException('Conversation history route mismatch');
+          throw const FormatException('Conversation history providerId mismatch');
         }
       }
 
@@ -590,7 +622,7 @@ final class ProtocolGatewayClient
 
   @override
   Future<ConversationSummary> createConversation({
-    required GatewayProviderRoute route,
+    required String providerId,
     String? title,
     required String permissionLevel,
     String? model,
@@ -599,15 +631,16 @@ final class ProtocolGatewayClient
     String? workspaceMode,
     RoutedResourceId? project,
   }) async {
-    if (project != null && project.route != route) {
+    if (project != null && project.providerId != providerId) {
       throw const FormatException(
-        'Conversation project route does not match Provider route',
+        'Conversation project providerId does not match Provider providerId',
       );
     }
-    _validateProviderRequest(route, cursor: null, limit: 1);
-    final provider = _providersByRoute[route.key];
-    if (provider == null ||
-        provider.status != ProviderStatus.ready ||
+    final provider = await _requireProviderCapability(
+      providerId,
+      method: 'conversation.create',
+    );
+    if (provider.status != ProviderStatus.ready ||
         !provider.methods.contains('conversation.create')) {
       throw const FormatException(
         'Provider conversation.create capability is unavailable',
@@ -616,7 +649,7 @@ final class ProtocolGatewayClient
     final response = await _call(
       () => _protocol.conversationCreate(
         sdk.ConversationCreateRequest(
-          route: _mapper.sdkProviderRoute(route),
+          providerId: providerId,
           title: title,
           permissionLevel: permissionLevel,
           model: model,
@@ -630,14 +663,11 @@ final class ProtocolGatewayClient
     _mapper.requireExpectedResource(
       response.conversation.resource,
       expectedDeviceId: expectedDeviceId,
-      expectedProviderRouteKeys: _providerRouteKeys,
+      expectedProviderRouteKeys: _providerIds,
     );
-    if (response.conversation.resource.providerPluginId !=
-            route.providerPluginId ||
-        response.conversation.resource.providerInstanceId !=
-            route.providerInstanceId) {
+    if (response.conversation.resource.providerId != providerId) {
       throw const FormatException(
-        'conversation.create returned a different Provider route',
+        'conversation.create returned a different Provider providerId',
       );
     }
     return _mapper.conversation(response.conversation);
@@ -645,7 +675,7 @@ final class ProtocolGatewayClient
 
   @override
   Future<TurnSendReceipt> sendTurn({
-    required GatewayProviderRoute route,
+    required String providerId,
     required ConversationSummary conversation,
     required String clientRequestId,
     required String capabilityRevision,
@@ -669,10 +699,11 @@ final class ProtocolGatewayClient
     if (text.trim().isEmpty) {
       throw ArgumentError.value(text, 'text', 'must not be blank');
     }
-    _validateProviderRequest(route, cursor: null, limit: 1);
-    final provider = _providersByRoute[route.key];
-    if (provider == null ||
-        provider.status != ProviderStatus.ready ||
+    final provider = await _requireProviderCapability(
+      providerId,
+      method: 'turn.send',
+    );
+    if (provider.status != ProviderStatus.ready ||
         !provider.methods.contains('turn.send') ||
         provider.capabilities.revision != capabilityRevision ||
         provider.capabilities.turnSend == null) {
@@ -688,11 +719,9 @@ final class ProtocolGatewayClient
       throw const FormatException('Conversation has no routed identity');
     }
     final resource = _mapper.sdkResourceId(resourceId);
-    if (resource.deviceId != route.deviceId ||
-        resource.providerPluginId != route.providerPluginId ||
-        resource.providerInstanceId != route.providerInstanceId) {
+    if (resource.providerId != providerId) {
       throw const FormatException(
-        'Conversation route does not match turn.send Provider route',
+        'Conversation providerId does not match turn.send Provider providerId',
       );
     }
     final response = await _call(
@@ -737,8 +766,8 @@ final class ProtocolGatewayClient
 
   @override
   Future<void> close() async {
-    _providerRouteKeys = const {};
-    _providersByRoute.clear();
+    _providerIds = const {};
+    _providersById.clear();
     await _transportEvents?.cancel();
     _transportEvents = null;
     await transport.close();

@@ -123,7 +123,7 @@ void main() {
       displayName: 'Host',
       clientId: 'client-bound',
       tlsFingerprint: 'new-fingerprint',
-      preferredEndpoint: 'wss://new-host/remote/v2/gateway',
+      preferredEndpoint: 'wss://new-host/remote/v1/gateway',
       connectionKind: DeviceConnectionKind.pairedGateway,
     );
     await registry.save([paired]);
@@ -133,14 +133,14 @@ void main() {
         deviceId: 'host-bound',
         clientId: 'client-bound',
         tlsFingerprint: 'old-fingerprint',
-        endpoint: 'wss://stale-host/remote/v2/gateway',
+        endpoint: 'wss://stale-host/remote/v1/gateway',
       ),
       throwsStateError,
     );
 
     expect(
       (await registry.load()).single.preferredEndpoint,
-      'wss://new-host/remote/v2/gateway',
+      'wss://new-host/remote/v1/gateway',
     );
   });
 
@@ -155,7 +155,7 @@ void main() {
       displayName: 'Host',
       clientId: 'ordered-client',
       tlsFingerprint: 'ordered-fingerprint',
-      preferredEndpoint: 'wss://old/remote/v2/gateway',
+      preferredEndpoint: 'wss://old/remote/v1/gateway',
       connectionKind: DeviceConnectionKind.pairedGateway,
     );
     await registry.save([device]);
@@ -165,7 +165,7 @@ void main() {
       deviceId: device.deviceId,
       clientId: device.clientId!,
       tlsFingerprint: device.tlsFingerprint!,
-      endpoint: 'wss://new/remote/v2/gateway',
+      endpoint: 'wss://new/remote/v1/gateway',
     );
     await metadata.writeStarted.future;
     final forget = registry.forget(device);

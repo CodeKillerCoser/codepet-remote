@@ -327,8 +327,6 @@ class _GatewayClient implements GatewayClient {
     onConnect?.call();
     return const GatewayHandshake(
       protocolVersion: 1,
-      serverName: 'Test',
-      serverVersion: '1',
       providers: [],
       eventCursor: 'handshake',
       deviceDescriptor: DeviceDescriptor(
@@ -340,8 +338,12 @@ class _GatewayClient implements GatewayClient {
   }
 
   @override
+  Future<GatewayProvider> describeProvider(String providerId) =>
+      throw UnimplementedError();
+
+  @override
   Future<ConversationPage> listConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
@@ -351,7 +353,7 @@ class _GatewayClient implements GatewayClient {
       );
 
   @override
-  Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
+  Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
 
   @override
   Future<ConversationSnapshot> getConversation(
@@ -366,10 +368,10 @@ class _GatewayClient implements GatewayClient {
       const ConversationInteraction(selection: TurnSendSelection());
 
   @override
-  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
+  Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
 
   @override
-  Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
+  Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
 
   @override
   Future<void> close() async {

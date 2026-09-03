@@ -235,7 +235,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         widget.session.providerForConversation(
           _detail?.summary ?? widget.conversation,
         );
-    final providerIdentity = provider?.providerType ??
+    final providerIdentity = provider?.id ??
         widget.conversation.providerId;
     final summary = _detail?.summary ?? widget.conversation;
     final detailStatus = _detail?.effectiveStatus ?? summary.status;
@@ -270,6 +270,35 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       body: Stack(
         children: [
           Positioned.fill(child: _buildBody()),
+          if (_error != null)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: MaterialBanner(
+                content: Text(
+                  _error!,
+                  key: const Key('conversation-history-error'),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => unawaited(_bindRuntime()),
+                    child: const Text('重新加载'),
+                  ),
+                ],
+              ),
+            )
+          else if (widget.session.connectionState ==
+              DeviceConnectionState.offline)
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: MaterialBanner(
+                content: Text('设备已离线'),
+                actions: [SizedBox.shrink()],
+              ),
+            ),
           Positioned(
             top: 8,
             left: 12,
@@ -390,18 +419,6 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             sliver: SliverList(
               delegate: SliverChildListDelegate.fixed([
-                if (_error != null) ...[
-                  MaterialBanner(
-                    content: Text(_error!),
-                    actions: [
-                      TextButton(
-                        onPressed: () => unawaited(_bindRuntime()),
-                        child: const Text('重新加载'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                ],
                 if (_hiddenMessageCount > 0) ...[
                   Center(
                     child: TextButton.icon(
@@ -560,8 +577,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                       ),
                       TextButton(
                         key: const Key('turn-unknown-dismiss'),
-                        onPressed:
-                            _detail == null ? null : _clearUnknownOutcome,
+                        onPressed: _clearUnknownOutcome,
                         child: const Text('已核对，继续编辑'),
                       ),
                     ],

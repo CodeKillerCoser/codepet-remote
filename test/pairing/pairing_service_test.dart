@@ -59,7 +59,7 @@ void main() {
     expect(persisted.descriptor?.deviceName, 'MacBook');
     expect(persisted.credentialKeyRef, device.credentialKeyRef);
     expect(persisted.preferredEndpoint,
-        'wss://codepet-new.local:47622/remote/v2/gateway');
+        'wss://codepet-new.local:47622/remote/v1/gateway');
     expect(persisted.autoConnect, isTrue);
     expect(metadata.values.toString(), isNot(contains('opaque-credential')));
   });
@@ -103,7 +103,7 @@ void main() {
     final accepted = await service.refresh(pending.attempt);
     expect(accepted.attempt.state, PairingRequestState.accepted);
     expect(accepted.registration?.device.preferredEndpoint,
-        'wss://192.168.1.10:49152/remote/v2/gateway');
+        'wss://192.168.1.10:49152/remote/v1/gateway');
     final persisted = (await registry.load()).single;
     expect(await credentials.read(persisted.credentialKeyRef!),
         'requested-credential');
@@ -150,7 +150,7 @@ void main() {
     );
     final exchangeClient = _RequestExchangeClient(
       acceptedGatewayUrl:
-          'wss://192.168.1.10:55000/remote/v2/gateway',
+          'wss://192.168.1.10:55000/remote/v1/gateway',
     );
     final service = PairDiscoveredDeviceUseCase(
       repository: registry,
@@ -178,7 +178,7 @@ void main() {
 
     expect(
       accepted.registration?.device.preferredEndpoint,
-      'wss://192.168.1.10:55000/remote/v2/gateway',
+      'wss://192.168.1.10:55000/remote/v1/gateway',
     );
   });
 
@@ -266,7 +266,7 @@ class _ExchangeClient implements PairingExchangeClient {
         },
         'identityFingerprint': 'a' * 64,
       },
-      'gatewayUrl': 'wss://codepet-new.local:47622/remote/v2/gateway',
+      'gatewayUrl': 'wss://codepet-new.local:47622/remote/v1/gateway',
       'credential': 'opaque-credential',
     };
   }
@@ -276,7 +276,7 @@ class _RequestExchangeClient implements PairingExchangeClient {
   _RequestExchangeClient({
     this.corruptConfirmationCode = false,
     this.acceptedGatewayUrl =
-        'wss://192.168.1.10:49152/remote/v2/gateway',
+        'wss://192.168.1.10:49152/remote/v1/gateway',
   });
 
   final bool corruptConfirmationCode;

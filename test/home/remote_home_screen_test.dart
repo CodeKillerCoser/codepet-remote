@@ -135,10 +135,13 @@ void main() {
     session.connectionState = DeviceConnectionState.online;
     session.handshake = const GatewayHandshake(
       protocolVersion: 1,
-      serverName: 'Test',
-      serverVersion: '1',
       providers: [_updateOnlyProjectProvider],
       eventCursor: 'handshake',
+      deviceDescriptor: DeviceDescriptor(
+        deviceName: 'Test',
+        operatingSystem: 'TestOS',
+        systemVersion: '1',
+      ),
     );
     session.projects = [_homeProject()];
     await tester.pumpWidget(
@@ -233,7 +236,13 @@ void main() {
     );
 
     expect(find.byKey(const Key('connected-providers')), findsOneWidget);
-    expect(find.text('Codex Work'), findsOneWidget);
+    expect(find.text('Codex Work'), findsWidgets);
+    expect(
+      find.text(
+        'Codex Work · v0.151.0 · /usr/local/bin/codex · Signed in · 72% remaining',
+      ),
+      findsOneWidget,
+    );
     expect(find.byIcon(Icons.terminal), findsOneWidget);
     expect(
       tester
@@ -584,13 +593,14 @@ class _EventClient implements GatewayClient {
   @override Stream<GatewayEvent> get events => controller.stream;
   @override String? get latestEventCursor => 'handshake';
   @override GatewayEventWindow openEventWindow() => GatewayEventWindow.forStream('handshake', events);
-  @override Future<GatewayHandshake> connect() async => const GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: [], eventCursor: 'handshake', deviceDescriptor: DeviceDescriptor(deviceName: 'Host Metadata', operatingSystem: 'TestOS', systemVersion: '9'));
-  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
-  @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
+  @override Future<GatewayHandshake> connect() async => const GatewayHandshake(protocolVersion: 1, providers: [], eventCursor: 'handshake', deviceDescriptor: DeviceDescriptor(deviceName: 'Host Metadata', operatingSystem: 'TestOS', systemVersion: '9'));
+  @override Future<GatewayProvider> describeProvider(String providerId) => throw UnimplementedError();
+  @override Future<ConversationPage> listConversations({required String providerId, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
+  @override Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: 'handshake');
   @override Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async => const ConversationInteraction(selection: TurnSendSelection());
-  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
-  @override Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
+  @override Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
+  @override Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
   @override Future<void> close() => controller.close();
 }
 
@@ -620,15 +630,22 @@ class _PagedClient implements GatewayClient {
   @override
   Future<GatewayHandshake> connect() async => const GatewayHandshake(
         protocolVersion: 1,
-        serverName: 'Test',
-        serverVersion: '1',
         providers: [_homeListProvider],
         eventCursor: 'handshake',
+        deviceDescriptor: DeviceDescriptor(
+          deviceName: 'Test',
+          operatingSystem: 'TestOS',
+          systemVersion: '1',
+        ),
       );
 
   @override
+  Future<GatewayProvider> describeProvider(String providerId) async =>
+      _homeListProvider;
+
+  @override
   Future<ConversationPage> listConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
@@ -638,7 +655,7 @@ class _PagedClient implements GatewayClient {
   }
 
   @override
-  Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
+  Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
 
   @override
   Future<ConversationSnapshot> getConversation(
@@ -653,10 +670,10 @@ class _PagedClient implements GatewayClient {
       const ConversationInteraction(selection: TurnSendSelection());
 
   @override
-  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
+  Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
 
   @override
-  Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
+  Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
 
   @override
   Future<void> close() => controller.close();
@@ -680,15 +697,18 @@ class _ProjectConversationCreateClient extends _PagedClient
   @override
   Future<GatewayHandshake> connect() async => const GatewayHandshake(
         protocolVersion: 1,
-        serverName: 'Test',
-        serverVersion: '1',
         providers: [_homeProjectProvider],
         eventCursor: 'handshake',
+        deviceDescriptor: DeviceDescriptor(
+          deviceName: 'Test',
+          operatingSystem: 'TestOS',
+          systemVersion: '1',
+        ),
       );
 
   @override
   Future<ProjectPage> listProjects({
-    required GatewayProviderRoute route,
+    required String providerId,
     String? cursor,
     int limit = 50,
   }) async => ProjectPage(
@@ -698,7 +718,7 @@ class _ProjectConversationCreateClient extends _PagedClient
 
   @override
   Future<ConversationSummary> createConversation({
-    required GatewayProviderRoute route,
+    required String providerId,
     String? title,
     required String permissionLevel,
     String? model,
@@ -711,7 +731,7 @@ class _ProjectConversationCreateClient extends _PagedClient
     createdWorkspaceRoot = workspaceRoot;
     return ConversationSummary(
       id: 'created-conversation',
-      providerId: route.providerInstanceId,
+      providerId: providerId,
       title: 'Created conversation',
       status: ConversationStatus.idle,
       permissionLevel: permissionLevel,
@@ -720,7 +740,7 @@ class _ProjectConversationCreateClient extends _PagedClient
       createdAt: DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
       resource: RoutedResourceId(
-        route: route,
+        providerId: providerId,
         nativeResourceId: 'created-conversation',
       ),
     );
@@ -732,7 +752,7 @@ class _ProjectConversationCreateClient extends _PagedClient
 
   @override
   Future<GatewayProject> createProject({
-    required GatewayProviderRoute route,
+    required String providerId,
     required String idempotencyKey,
     required String name,
     required List<ProjectRoot> roots,
@@ -752,19 +772,18 @@ class _ProjectConversationCreateClient extends _PagedClient
       throw UnimplementedError();
 }
 
-const _homeRoute = GatewayProviderRoute(
-  deviceId: 'home-host',
-  providerPluginId: 'dev.codepet.codex',
-  providerInstanceId: 'test',
-);
+const _homeRoute = 'test';
 
 const _homeListProvider = GatewayProvider(
-  route: _homeRoute,
-  providerType: 'dev.codepet.codex',
+  id: _homeRoute,
   displayName: 'Codex Work',
   icon: 'codex',
   status: ProviderStatus.ready,
-  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
+  runtimeVersion: '0.151.0',
+  executablePath: '/usr/local/bin/codex',
+  authenticationStatus: 'authenticated',
+  authenticationDisplayText: 'Signed in',
+  usageDisplayText: '72% remaining',
   capabilities: GatewayCapabilities(
     revision: 'test-1',
     methods: [
@@ -802,12 +821,10 @@ const _homeListProvider = GatewayProvider(
 );
 
 const _homeProjectProvider = GatewayProvider(
-  route: _homeRoute,
-  providerType: 'dev.codepet.codex',
+  id: _homeRoute,
   displayName: 'Codex Work',
   icon: 'codex',
   status: ProviderStatus.ready,
-  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
   capabilities: GatewayCapabilities(
     revision: 'test-project-create-1',
     methods: [
@@ -834,11 +851,9 @@ const _homeProjectProvider = GatewayProvider(
 );
 
 const _updateOnlyProjectProvider = GatewayProvider(
-  route: _homeRoute,
-  providerType: 'dev.codepet.codex',
+  id: _homeRoute,
   displayName: 'Codex Projects',
   status: ProviderStatus.ready,
-  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
   capabilities: GatewayCapabilities(
     revision: 'partial-projects-1',
     methods: ['project.list', 'project.update', 'conversation.list'],
@@ -847,7 +862,7 @@ const _updateOnlyProjectProvider = GatewayProvider(
 
 GatewayProject _homeProject() => GatewayProject(
       resource: const RoutedResourceId(
-        route: _homeRoute,
+        providerId: _homeRoute,
         nativeResourceId: 'project-1',
       ),
       name: 'Partial project',

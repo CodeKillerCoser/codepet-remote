@@ -18,10 +18,63 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
   final Map<String, TurnTask> _activeTurns = {};
   int _sequence = 12;
   String get _cursor => 'demo-$_sequence';
-  GatewayProviderRoute get _route => GatewayProviderRoute(
-        deviceId: 'demo-$profileId',
-        providerPluginId: 'dev.codepet.demo',
-        providerInstanceId: 'codex-demo',
+  String get _providerId => 'codex-demo';
+
+  late final GatewayProvider _provider = GatewayProvider(
+        id: _providerId,
+        displayName: 'Codex Demo',
+        status: ProviderStatus.ready,
+        runtimeVersion: '1.0.0',
+        executablePath: '/demo/codex',
+        authenticationStatus: 'authenticated',
+        authenticationDisplayText: '演示账号已登录',
+        usageDisplayText: '演示用量充足',
+        capabilities: const GatewayCapabilities(
+          revision: 'demo-capabilities-1',
+          methods: [
+            'project.list',
+            'project.get',
+            'project.create',
+            'project.update',
+            'project.delete',
+            'conversation.list',
+            'conversation.search',
+            'conversation.get',
+            'conversation.create',
+            'turn.send',
+          ],
+          turnSend: TurnSendCapabilities(
+            accessMode: ProviderChoiceSet(
+              options: [
+                ProviderChoice(
+                  id: 'read-only',
+                  displayName: '只读',
+                  description: '只读取当前工作区',
+                ),
+                ProviderChoice(
+                  id: 'workspace-write',
+                  displayName: '工作区写入',
+                  description: '允许修改当前工作区',
+                ),
+              ],
+              defaultId: 'workspace-write',
+            ),
+            reasoningEffort: ProviderChoiceSet(
+              options: [
+                ProviderChoice(id: 'medium', displayName: '中等'),
+                ProviderChoice(id: 'high', displayName: '高'),
+              ],
+              defaultId: 'medium',
+            ),
+            modelCatalog: FlatModelCatalog(
+              models: [
+                ProviderChoice(id: 'demo-fast', displayName: 'Demo Fast'),
+                ProviderChoice(id: 'demo-deep', displayName: 'Demo Deep'),
+              ],
+              defaultSelection: FlatModelSelection(modelId: 'demo-fast'),
+            ),
+          ),
+        ),
       );
 
   late final List<GatewayProject> _projects = [
@@ -122,77 +175,8 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
     await Future<void>.delayed(const Duration(milliseconds: 250));
     return GatewayHandshake(
       protocolVersion: gatewayProtocolVersion,
-      serverName: 'CodePet Demo Host',
-      serverVersion: '0.1.0-demo',
-      providers: [
-        GatewayProvider(
-          route: _route,
-          providerType: _route.providerPluginId,
-          displayName: 'Codex Demo',
-          status: ProviderStatus.ready,
-          harness: const HarnessDescriptor(
-            id: 'demo-harness',
-            displayName: 'Demo Harness',
-            version: '1.0.0',
-          ),
-          capabilities: const GatewayCapabilities(
-            revision: 'demo-capabilities-1',
-            methods: [
-              'project.list',
-              'project.get',
-              'project.create',
-              'project.update',
-              'project.delete',
-              'conversation.list',
-              'conversation.search',
-              'conversation.get',
-              'conversation.create',
-              'turn.send',
-            ],
-            turnSend: TurnSendCapabilities(
-              accessMode: ProviderChoiceSet(
-                options: [
-                  ProviderChoice(
-                    id: 'read-only',
-                    displayName: '只读',
-                    description: '只读取当前工作区',
-                  ),
-                  ProviderChoice(
-                    id: 'workspace-write',
-                    displayName: '工作区写入',
-                    description: '允许修改当前工作区',
-                  ),
-                ],
-                defaultId: 'workspace-write',
-              ),
-              reasoningEffort: ProviderChoiceSet(
-                options: [
-                  ProviderChoice(id: 'medium', displayName: '中等'),
-                  ProviderChoice(id: 'high', displayName: '高'),
-                ],
-                defaultId: 'medium',
-              ),
-              modelCatalog: FlatModelCatalog(
-                models: [
-                  ProviderChoice(
-                    id: 'demo-fast',
-                    displayName: 'Demo Fast',
-                  ),
-                  ProviderChoice(
-                    id: 'demo-deep',
-                    displayName: 'Demo Deep',
-                  ),
-                ],
-                defaultSelection: FlatModelSelection(
-                  modelId: 'demo-fast',
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
+      providers: [_provider],
       eventCursor: _cursor,
-      deviceId: _route.deviceId,
       deviceDescriptor: DeviceDescriptor(
         deviceName: profileId == 'laptop' ? '演示随身电脑' : '演示工作室 Mac',
         operatingSystem: profileId == 'laptop' ? 'Android' : 'macOS',
@@ -202,14 +186,22 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
   }
 
   @override
+  Future<GatewayProvider> describeProvider(String providerId) async {
+    if (providerId != _providerId) {
+      throw const FormatException('Unknown demo Provider id');
+    }
+    return _provider;
+  }
+
+  @override
   Future<ConversationPage> listConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) async {
-    if (route != _route) {
-      throw const FormatException('Unknown demo Provider route');
+    if (providerId != _providerId) {
+      throw const FormatException('Unknown demo Provider providerId');
     }
     await Future<void>.delayed(const Duration(milliseconds: 180));
     final conversations = _conversations
@@ -229,13 +221,13 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
 
   @override
   Future<ConversationPage> searchConversations({
-    required GatewayProviderRoute route,
+    required String providerId,
     required String searchTerm,
     String? cursor,
     int limit = 50,
   }) async {
-    if (route != _route) {
-      throw const FormatException('Unknown demo Provider route');
+    if (providerId != _providerId) {
+      throw const FormatException('Unknown demo Provider providerId');
     }
     final term = searchTerm.trim().toLowerCase();
     if (term.isEmpty) {
@@ -323,7 +315,7 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
 
   @override
   Future<ConversationSummary> createConversation({
-    required GatewayProviderRoute route,
+    required String providerId,
     String? title,
     required String permissionLevel,
     String? model,
@@ -332,14 +324,14 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
     String? workspaceMode,
     RoutedResourceId? project,
   }) async {
-    if (route != _route) {
-      throw const FormatException('Unknown demo Provider route');
+    if (providerId != _providerId) {
+      throw const FormatException('Unknown demo Provider providerId');
     }
     final now = DateTime.now().toUtc();
     final id = 'demo-created-${++_sequence}';
     final conversation = ConversationSummary(
       id: id,
-      providerId: _route.providerInstanceId,
+      providerId: _providerId,
       title: title ?? '新会话',
       status: ConversationStatus.idle,
       permissionLevel: permissionLevel,
@@ -360,8 +352,8 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
   }
 
   @override
-  Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) async {
-    if (route != _route || capabilityRevision != 'demo-capabilities-1') {
+  Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) async {
+    if (providerId != _providerId || capabilityRevision != 'demo-capabilities-1') {
       throw const FormatException('Demo turn.send capability is stale');
     }
     if (text.trim().isEmpty || _activeTurns[conversation.id] != null) {
@@ -371,7 +363,7 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
     final turnId = 'demo-turn-${++_sequence}';
     final turn = TurnTask(
       id: turnId,
-      providerId: _route.providerInstanceId,
+      providerId: _providerId,
       conversationId: conversation.id,
       status: TurnStatus.queued,
       updatedAt: now,
@@ -534,12 +526,12 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
   }
 
   RoutedResourceId _conversationResource(String id) => RoutedResourceId(
-        route: _route,
+        providerId: _providerId,
         nativeResourceId: id,
       );
 
   RoutedResourceId _projectResource(String id) => RoutedResourceId(
-        route: _route,
+        providerId: _providerId,
         nativeResourceId: id,
       );
 
@@ -563,12 +555,12 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
 
   @override
   Future<ProjectPage> listProjects({
-    required GatewayProviderRoute route,
+    required String providerId,
     String? cursor,
     int limit = 50,
   }) async {
-    if (route != _route) {
-      throw const FormatException('Unknown demo Provider route');
+    if (providerId != _providerId) {
+      throw const FormatException('Unknown demo Provider providerId');
     }
     return ProjectPage(
       projects: _projects.take(limit).toList(growable: false),
@@ -582,14 +574,14 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
 
   @override
   Future<GatewayProject> createProject({
-    required GatewayProviderRoute route,
+    required String providerId,
     required String idempotencyKey,
     required String name,
     required List<ProjectRoot> roots,
     Map<String, String> metadata = const {},
   }) async {
-    if (route != _route) {
-      throw const FormatException('Unknown demo Provider route');
+    if (providerId != _providerId) {
+      throw const FormatException('Unknown demo Provider providerId');
     }
     final now = DateTime.now().toUtc();
     final project = GatewayProject(
