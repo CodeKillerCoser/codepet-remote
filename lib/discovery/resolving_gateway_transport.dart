@@ -31,6 +31,7 @@ class ResolvingPinnedGatewayTransport
     required this.certSha256,
     this.connectTimeout = defaultConnectTimeout,
     CodePetDiscovery? discovery,
+    this.hostDirectory,
     GatewayTransport Function(Uri gatewayUri, String credential, String certSha256)? transportFactory,
   })  : discovery = discovery ?? CodePetDiscovery(),
         transportFactory = transportFactory ??
@@ -48,6 +49,7 @@ class ResolvingPinnedGatewayTransport
   final String certSha256;
   final Duration connectTimeout;
   final CodePetDiscovery discovery;
+  final CodePetHostDirectory? hostDirectory;
   final GatewayTransport Function(Uri gatewayUri, String credential, String certSha256) transportFactory;
   final StreamController<JsonMap> _events = StreamController<JsonMap>.broadcast();
   GatewayTransport? _active;
@@ -68,6 +70,25 @@ class ResolvingPinnedGatewayTransport
   Future<void> connect() async {
     _throwIfClosed();
     final attempted = <Uri>{};
+    Object? discoveryError;
+    Future<bool> tryDiscoveredHost(DiscoveredCodePetHost? host) async {
+      if (host == null || !isTrustedDiscoveryCandidate(host, deviceId)) {
+        return false;
+      }
+      final candidate = preferredGatewayUri.replace(
+        host: host.host,
+        port: host.port,
+      );
+      if (!attempted.add(candidate)) return false;
+      try {
+        await _tryCandidate(candidate);
+        return true;
+      } catch (error) {
+        discoveryError = error;
+        return false;
+      }
+    }
+
     Object? debugAndroidEmulatorError;
     final debugAndroidEmulatorCandidate = debugAndroidEmulatorGatewayUri;
     if (debugAndroidEmulatorCandidate != null &&
@@ -81,6 +102,10 @@ class ResolvingPinnedGatewayTransport
       } catch (error) {
         debugAndroidEmulatorError = error;
       }
+    }
+    _throwIfClosed();
+    if (await tryDiscoveredHost(hostDirectory?.currentHost(deviceId))) {
+      return;
     }
     _throwIfClosed();
     Object? preferredError;
@@ -106,23 +131,33 @@ class ResolvingPinnedGatewayTransport
       }
     }
     _throwIfClosed();
-    Object? discoveryError;
-    try {
-      await for (final host in discovery.discover()) {
-        _throwIfClosed();
-        if (!isTrustedDiscoveryCandidate(host, deviceId)) continue;
-        final candidate = preferredGatewayUri.replace(host: host.host, port: host.port);
-        if (!attempted.add(candidate)) continue;
-        try {
-          await _tryCandidate(candidate);
-          return;
-        } catch (error) {
-          discoveryError = error;
+    if (await tryDiscoveredHost(hostDirectory?.currentHost(deviceId))) {
+      return;
+    }
+    _throwIfClosed();
+    final directory = hostDirectory;
+    if (directory != null) {
+      try {
+        await for (final host in directory
+            .watchHost(deviceId)
+            .timeout(connectTimeout)) {
+          _throwIfClosed();
+          if (await tryDiscoveredHost(host)) return;
         }
+      } catch (error) {
+        if (_closed) rethrow;
+        discoveryError ??= error;
       }
-    } catch (error) {
-      if (_closed) rethrow;
-      discoveryError = error;
+    } else {
+      try {
+        await for (final host in discovery.discover()) {
+          _throwIfClosed();
+          if (await tryDiscoveredHost(host)) return;
+        }
+      } catch (error) {
+        if (_closed) rethrow;
+        discoveryError = error;
+      }
     }
     final debugAndroidEmulatorSummary = debugAndroidEmulatorCandidate == null
         ? ''
@@ -260,13 +295,17 @@ bool isTrustedDiscoveryCandidate(
   DiscoveredCodePetHost host,
   String trustedDeviceId,
 ) {
-  const exactKeys = {'id', 'name', 'vmin', 'vmax', 'pair'};
-  if (host.txt.keys.toSet().difference(exactKeys).isNotEmpty ||
-      host.txt.length != exactKeys.length ||
+  const allowedKeys = {'id', 'name', 'fp', 'vmin', 'vmax', 'pair'};
+  const requiredKeys = {'id', 'name', 'vmin', 'vmax', 'pair'};
+  if (host.txt.keys.toSet().difference(allowedKeys).isNotEmpty ||
+      !requiredKeys.every(host.txt.containsKey) ||
       host.txt['id'] != trustedDeviceId) {
     return false;
   }
   final minimum = int.tryParse(host.txt['vmin'] ?? '');
   final maximum = int.tryParse(host.txt['vmax'] ?? '');
-  return minimum != null && maximum != null && minimum <= 1 && maximum >= 1;
+  final fingerprint = host.txt['fp'];
+  return (fingerprint == null ||
+          RegExp(r'^[0-9a-f]{64}$').hasMatch(fingerprint)) &&
+      minimum != null && maximum != null && minimum <= 1 && maximum >= 1;
 }

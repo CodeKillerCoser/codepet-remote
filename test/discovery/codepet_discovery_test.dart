@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:codepet_remote/discovery/codepet_discovery.dart';
@@ -5,6 +6,84 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:multicast_dns/multicast_dns.dart';
 
 void main() {
+  test('Host directory keeps the latest endpoint for a stable device id', () async {
+    final discovery = _StreamingDiscovery();
+    final directory = MdnsCodePetHostDirectory(
+      discovery: discovery,
+      retryDelay: Duration.zero,
+    );
+    final updates = <DiscoveredCodePetHost>[];
+    final advertisements = <DiscoveredCodePetHost>[];
+    final subscription = directory.watchHost('trusted-device').listen(updates.add);
+    final advertisementSubscription =
+        directory.watchHosts().listen(advertisements.add);
+    directory.start();
+    await pumpEventQueue();
+
+    discovery.controller.add(_discoveredHost('192.168.0.10'));
+    await pumpEventQueue();
+    discovery.controller.add(_discoveredHost('192.168.0.10', pair: '1'));
+    await pumpEventQueue();
+    discovery.controller.add(_discoveredHost('192.168.0.11'));
+    await pumpEventQueue();
+
+    expect(updates.map((host) => host.host), [
+      '192.168.0.10',
+      '192.168.0.11',
+    ]);
+    expect(directory.currentHost('trusted-device')?.host, '192.168.0.11');
+    expect(advertisements.map((host) => host.txt['pair']), ['0', '1', '0']);
+    expect(directory.currentHosts().single.host, '192.168.0.11');
+
+    await subscription.cancel();
+    await advertisementSubscription.cancel();
+    await directory.stop();
+    await discovery.controller.close();
+  });
+
+  test('Host directory does not return an expired endpoint', () async {
+    final discovery = _StreamingDiscovery();
+    final directory = MdnsCodePetHostDirectory(
+      discovery: discovery,
+      retryDelay: Duration.zero,
+      staleAfter: const Duration(milliseconds: 1),
+    );
+    directory.start();
+    await pumpEventQueue();
+    discovery.controller.add(_discoveredHost('192.168.0.10'));
+    await pumpEventQueue();
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+
+    expect(directory.currentHost('trusted-device'), isNull);
+
+    await directory.stop();
+    await discovery.controller.close();
+  });
+
+  test('Host directory refresh clears candidates and starts a new scan', () async {
+    final discovery = _RestartableDiscovery();
+    final directory = MdnsCodePetHostDirectory(
+      discovery: discovery,
+      retryDelay: Duration.zero,
+    );
+    directory.start();
+    await pumpEventQueue();
+    discovery.controllers.single.add(_discoveredHost('192.168.0.10'));
+    await pumpEventQueue();
+
+    expect(directory.currentHosts(), hasLength(1));
+    await directory.refresh();
+    await pumpEventQueue();
+
+    expect(directory.currentHosts(), isEmpty);
+    expect(discovery.discoverCalls, 2);
+
+    await directory.stop();
+    for (final controller in discovery.controllers) {
+      await controller.close();
+    }
+  });
+
   test('Android mDNS sockets disable unsupported reusePort', () async {
     bool? boundWithReusePort;
     final factory = codePetMdnsSocketFactory(
@@ -68,6 +147,48 @@ void main() {
   });
 }
 
+DiscoveredCodePetHost _discoveredHost(
+  String address, {
+  String pair = '0',
+}) => DiscoveredCodePetHost(
+      instanceName: 'Host._codepet._tcp.local.',
+      host: address,
+      port: 47622,
+      txt: {
+        'id': 'trusted-device',
+        'name': 'Host',
+        'fp': 'a' * 64,
+        'vmin': '1',
+        'vmax': '1',
+        'pair': pair,
+      },
+    );
+
+class _StreamingDiscovery extends CodePetDiscovery {
+  final StreamController<DiscoveredCodePetHost> controller =
+      StreamController<DiscoveredCodePetHost>();
+
+  @override
+  Stream<DiscoveredCodePetHost> discover({
+    Duration timeout = const Duration(seconds: 4),
+  }) => controller.stream;
+}
+
+class _RestartableDiscovery extends CodePetDiscovery {
+  final List<StreamController<DiscoveredCodePetHost>> controllers = [];
+  int discoverCalls = 0;
+
+  @override
+  Stream<DiscoveredCodePetHost> discover({
+    Duration timeout = const Duration(seconds: 4),
+  }) {
+    discoverCalls++;
+    final controller = StreamController<DiscoveredCodePetHost>();
+    controllers.add(controller);
+    return controller.stream;
+  }
+}
+
 class _FakeMulticastLock implements CodePetMulticastLock {
   int acquireCalls = 0;
   int releaseCalls = 0;
@@ -124,7 +245,7 @@ class _FakeMdnsClient extends MDnsClient {
       ResourceRecordType.text => const TxtResourceRecord(
           instance,
           validUntil,
-          text: 'id=trusted-device name=Host vmin=1 vmax=1 pair=0',
+          text: 'id=trusted-device name=Host fp=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa vmin=1 vmax=1 pair=0',
         ),
       ResourceRecordType.addressIPv4 => IPAddressResourceRecord(
           target,

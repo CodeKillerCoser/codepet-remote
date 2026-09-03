@@ -80,7 +80,12 @@ class DeviceSession extends ApplicationNotifier {
       Duration(seconds: 10),
       Duration(seconds: 30),
     ],
-  }) : assert(reconnectDelays.isNotEmpty);
+    Stream<void>? reconnectSignals,
+  }) : assert(reconnectDelays.isNotEmpty) {
+    _reconnectSignalSubscription = reconnectSignals?.listen(
+      (_) => _handleReconnectSignal(),
+    );
+  }
 
   static const int conversationPageSize = 20;
 
@@ -91,6 +96,7 @@ class DeviceSession extends ApplicationNotifier {
   GatewayClient? _client;
   GatewayEventWindow? _eventWindow;
   Timer? _reconnectTimer;
+  StreamSubscription<void>? _reconnectSignalSubscription;
   final Map<GatewayProviderRoute, String?> _conversationCursors = {};
   final Set<GatewayProviderRoute> _conversationRefreshes = {};
   final Map<GatewayProviderRoute, Map<String, TurnTask>>
@@ -101,6 +107,7 @@ class DeviceSession extends ApplicationNotifier {
   int _runtimeGeneration = 0;
   int _reconnectAttempt = 0;
   bool _reconnectEnabled = false;
+  bool _retryableFailure = false;
   bool _disposed = false;
   Timer? _conversationNotificationTimer;
   GatewayProviderRoute? _selectedProviderRoute;
@@ -217,6 +224,7 @@ class DeviceSession extends ApplicationNotifier {
 
   Future<void> connect() {
     _reconnectEnabled = autoReconnect;
+    _retryableFailure = false;
     _cancelReconnect(resetAttempt: true);
     return _connect();
   }
@@ -294,6 +302,7 @@ class DeviceSession extends ApplicationNotifier {
         },
       );
       connectionState = DeviceConnectionState.online;
+      _retryableFailure = false;
       _reconnectAttempt = 0;
       _notifyListenersImmediately();
     } catch (value) {
@@ -307,6 +316,7 @@ class DeviceSession extends ApplicationNotifier {
       handshake = null;
       _resetConversationPagination();
       error = connectionError;
+      _retryableFailure = isRetryableGatewayFailure(value);
       connectionState = DeviceConnectionState.failed;
       _notifyListenersImmediately();
       try {
@@ -315,7 +325,7 @@ class DeviceSession extends ApplicationNotifier {
       try {
         await client?.close();
       } catch (_) {}
-      if (isRetryableGatewayFailure(value)) {
+      if (_retryableFailure) {
         _scheduleReconnect(failureGeneration);
       }
     }
@@ -336,7 +346,19 @@ class DeviceSession extends ApplicationNotifier {
       generation == _runtimeGeneration &&
       connectionState == DeviceConnectionState.failed &&
       _reconnectEnabled &&
+      _retryableFailure &&
       !_disposed;
+
+  void _handleReconnectSignal() {
+    if (connectionState != DeviceConnectionState.failed ||
+        !_reconnectEnabled ||
+        !_retryableFailure ||
+        _disposed) {
+      return;
+    }
+    _cancelReconnect();
+    unawaited(_connect());
+  }
 
   void _cancelReconnect({bool resetAttempt = false}) {
     _reconnectTimer?.cancel();
@@ -482,6 +504,7 @@ class DeviceSession extends ApplicationNotifier {
     handshake = null;
     _resetConversationPagination();
     error = message;
+    _retryableFailure = isRetryableGatewayFailure(cause);
     connectionState = DeviceConnectionState.failed;
     _notifyListenersImmediately();
     try {
@@ -490,7 +513,7 @@ class DeviceSession extends ApplicationNotifier {
     try {
       await client.close();
     } catch (_) {}
-    if (isRetryableGatewayFailure(cause)) {
+    if (_retryableFailure) {
       _scheduleReconnect(failureGeneration);
     }
   }
@@ -751,6 +774,7 @@ class DeviceSession extends ApplicationNotifier {
 
   Future<void> disconnect() async {
     _reconnectEnabled = false;
+    _retryableFailure = false;
     _cancelReconnect(resetAttempt: true);
     final window = _eventWindow;
     final client = _client;
@@ -794,7 +818,10 @@ class DeviceSession extends ApplicationNotifier {
     _cancelConversationNotification();
     _disposed = true;
     _reconnectEnabled = false;
+    _retryableFailure = false;
     _cancelReconnect(resetAttempt: true);
+    unawaited(_reconnectSignalSubscription?.cancel());
+    _reconnectSignalSubscription = null;
     _runtimeGeneration++;
     final window = _eventWindow;
     final client = _client;

@@ -36,23 +36,25 @@ void main() {
     await tester.tap(find.text('连接设备'));
     await tester.pumpAndSettle();
     expect(find.text('配对 CodePet Host'), findsOneWidget);
-    expect(find.text('扫描 Host 显示的 LAN 配对二维码'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('开发诊断：粘贴 QR JSON'), 300);
-    expect(find.text('开发诊断：粘贴 QR JSON'), findsOneWidget);
+    expect(find.byKey(const Key('manual-add-device')), findsOneWidget);
+    expect(find.byKey(const Key('manual-qr-scanner')), findsNothing);
   });
 
-  testWidgets('offers pinned QR JSON diagnostics without a raw token field', (tester) async {
+  testWidgets('offers QR and passcode methods behind manual add', (tester) async {
     await tester.pumpWidget(const CodePetRemoteApp(includeDemoDevices: true));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('home-overflow-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('连接设备'));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('开发诊断：粘贴 QR JSON'), 300);
-    await tester.tap(find.text('开发诊断：粘贴 QR JSON'));
+    await tester.tap(find.byKey(const Key('manual-add-device')));
+    await tester.pumpAndSettle();
+    expect(find.text('扫描二维码'), findsOneWidget);
+    expect(find.text('粘贴二维码内容'), findsOneWidget);
+    expect(find.text('填写配对口令'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('manual-paste-qr')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('qr-json-field')), findsOneWidget);
     expect(find.byKey(const Key('pair-json-button')), findsOneWidget);
-    expect(find.byKey(const Key('pairing-token-field')), findsNothing);
   });
 }

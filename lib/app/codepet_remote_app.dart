@@ -13,6 +13,7 @@ import '../admission/lan_admission.dart';
 import '../channel/channel.dart';
 import '../core/domain/models.dart';
 import '../application/ports/gateway_client.dart';
+import '../application/ports/pairing_gateway.dart';
 import '../devices/local_device_descriptor.dart';
 import '../features/connection/pair_device_screen.dart';
 import '../features/common/app_toast.dart';
@@ -34,12 +35,14 @@ class CodePetRemoteApp extends StatefulWidget {
     this.registry,
     this.descriptorProvider,
     this.gatewayClientBuilder,
+    this.hostDirectory,
   });
 
   final bool includeDemoDevices;
   final DeviceRepository? registry;
   final DeviceDescriptorProvider? descriptorProvider;
   final RestoredGatewayClientBuilder? gatewayClientBuilder;
+  final CodePetHostDirectory? hostDirectory;
 
   @override State<CodePetRemoteApp> createState() => _CodePetRemoteAppState();
 }
@@ -48,6 +51,10 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   late final DeviceRepository _registry;
   late final DeviceDescriptorProvider _descriptorProvider;
+  late final CodePetHostDirectory _hostDirectory;
+  late final bool _discoveryEnabled;
+  StreamSubscription<DiscoveredCodePetHost>? _pairingAdvertisementSubscription;
+  final Set<String> _handledPairingInvitations = {};
   final List<DeviceSession> _sessions = [];
   int _selectedIndex = 0;
   bool _loading = true;
@@ -61,6 +68,15 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     );
     _descriptorProvider =
         widget.descriptorProvider ?? LocalDeviceDescriptorProvider();
+    _hostDirectory = widget.hostDirectory ?? MdnsCodePetHostDirectory();
+    _discoveryEnabled = !widget.includeDemoDevices &&
+        (widget.hostDirectory != null || widget.gatewayClientBuilder == null);
+    if (_discoveryEnabled) _hostDirectory.start();
+    if (_discoveryEnabled) {
+      _pairingAdvertisementSubscription = _hostDirectory.watchHosts().listen(
+        _handlePairingAdvertisement,
+      );
+    }
     unawaited(_loadDevices());
   }
 
@@ -129,6 +145,9 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     }
     final restoredCredential = credential!;
     final restoredGateway = gateway!;
+    final reconnectSignals = _discoveryEnabled
+        ? _hostDirectory.watchHost(device.deviceId).map<void>((_) {})
+        : null;
     final clientDevice = await _descriptorProvider.load();
     final descriptorProvider = _descriptorProvider;
     var useDebugAndroidEmulatorAlias = false;
@@ -164,6 +183,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
                 debugAndroidEmulatorGatewayUri,
             credential: restoredCredential,
             certSha256: device.tlsFingerprint!,
+            hostDirectory: _discoveryEnabled ? _hostDirectory : null,
           ),
           clientId: device.clientId!, clientDevice: clientDevice, expectedDeviceId: device.deviceId, expectedIdentityFingerprint: device.tlsFingerprint!,
           onValidatedHostDescriptor: (descriptor) => _registry.updateHostDescriptor(
@@ -181,19 +201,33 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
           },
         );
       },
+      reconnectSignals: reconnectSignals,
     );
   }
 
   void _openAddDevice() {
     _navigatorKey.currentState!.push<void>(MaterialPageRoute(builder: (_) => PairDeviceScreen(
       pairingService: _pairer(),
+      discoveryService: _discoveredPairer(),
+      connectedSessions: List.unmodifiable(_sessions),
+      initialCandidates: _discoveryEnabled
+          ? _hostDirectory
+              .currentHosts()
+              .where((host) => host.txt['fp'] != null)
+              .map(_pairingCandidate)
+              .toList()
+          : const [],
+      candidateUpdates: _discoveryEnabled
+          ? _hostDirectory
+              .watchHosts()
+              .where((host) => host.txt['fp'] != null)
+              .map(_pairingCandidate)
+          : null,
+      onRefreshDiscovery: _discoveryEnabled ? _hostDirectory.refresh : null,
       onPaired: (device) async {
-        final session = await _sessionFor(device);
-        final index = await replaceDeviceSession(_sessions, session);
+        await _activatePairedDevice(device);
         if (!mounted) return;
-        setState(() => _selectedIndex = index);
         _navigatorKey.currentState!.pop();
-        unawaited(session.connect());
       },
       onAddDemo: widget.includeDemoDevices ? () async {} : null,
     )));
@@ -204,6 +238,146 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         descriptorProvider: _descriptorProvider,
         gateway: const LanPairingGateway(),
       );
+
+  DiscoveredDevicePairer _discoveredPairer() =>
+      PairDiscoveredDeviceUseCase(
+        repository: _registry,
+        descriptorProvider: _descriptorProvider,
+        gateway: const LanPairingRequestGateway(),
+      );
+
+  PairingCandidate _pairingCandidate(DiscoveredCodePetHost host) =>
+      PairingCandidate(
+        deviceId: host.txt['id']!,
+        displayName: host.txt['name'] ?? host.instanceName,
+        host: host.host,
+        port: host.port,
+        tlsFingerprint: host.txt['fp']!,
+        hostInitiated: host.txt['pair'] == '1',
+      );
+
+  Future<void> _activatePairedDevice(PairedDevice device) async {
+    final session = await _sessionFor(device);
+    final index = await replaceDeviceSession(_sessions, session);
+    if (!mounted) {
+      session.dispose();
+      return;
+    }
+    setState(() => _selectedIndex = index);
+    unawaited(session.connect());
+  }
+
+  void _handlePairingAdvertisement(DiscoveredCodePetHost host) {
+    final deviceId = host.txt['id'];
+    final fingerprint = host.txt['fp'];
+    if (deviceId == null || fingerprint == null) return;
+    final invitationKey = '$deviceId:$fingerprint';
+    if (host.txt['pair'] != '1') {
+      _handledPairingInvitations.remove(invitationKey);
+      return;
+    }
+    if (_sessions.any((session) => session.device.deviceId == deviceId) ||
+        !_handledPairingInvitations.add(invitationKey)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_confirmHostInvitation(host));
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  Future<void> _confirmHostInvitation(DiscoveredCodePetHost host) async {
+    final context = _navigatorKey.currentContext;
+    if (context == null) return;
+    final displayName = host.txt['name'] ?? host.instanceName;
+    final accepted = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('收到设备配对请求'),
+            content: Text('$displayName 希望与这台设备建立安全连接。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('拒绝'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('接受并连接'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!accepted || !mounted) return;
+    try {
+      var exchange = await _discoveredPairer().request(_pairingCandidate(host));
+      BuildContext? waitingDialogContext;
+      Future<void>? waitingDialog;
+      if (exchange.registration == null && mounted) {
+        final waitingContext = _navigatorKey.currentContext;
+        if (waitingContext != null && waitingContext.mounted) {
+          waitingDialog = showDialog<void>(
+            context: waitingContext,
+            barrierDismissible: false,
+            builder: (context) {
+              waitingDialogContext = context;
+              return AlertDialog(
+                title: const Text('核对配对码'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('请确认 Host 上显示相同配对码'),
+                    const SizedBox(height: 12),
+                    Text(
+                      exchange.attempt.confirmationCode,
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        }
+      }
+      try {
+        while (exchange.registration == null &&
+            exchange.attempt.state == PairingRequestState.pending &&
+            exchange.attempt.localPollDeadline.isAfter(DateTime.now().toUtc())) {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          exchange = await _discoveredPairer().refresh(exchange.attempt);
+        }
+      } finally {
+        final dialogContext = waitingDialogContext;
+        if (dialogContext != null && dialogContext.mounted) {
+          Navigator.pop(dialogContext);
+        }
+        await waitingDialog;
+      }
+      final registration = exchange.registration;
+      if (registration == null) {
+        throw StateError('Host 未接受或配对请求已过期');
+      }
+      await _activatePairedDevice(registration.device);
+    } catch (error) {
+      if (!mounted) return;
+      final errorContext = _navigatorKey.currentContext;
+      if (errorContext != null && errorContext.mounted) {
+        await showDialog<void>(
+          context: errorContext,
+          builder: (context) => AlertDialog(
+            title: const Text('配对失败'),
+            content: Text(error.toString()),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('知道了'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+  }
 
   void _openSettings() {
     _navigatorKey.currentState!.push<void>(MaterialPageRoute(builder: (_) => Scaffold(
@@ -224,7 +398,15 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     )));
   }
 
-  @override void dispose() { for (final session in _sessions) { session.dispose(); } super.dispose(); }
+  @override
+  void dispose() {
+    for (final session in _sessions) {
+      session.dispose();
+    }
+    unawaited(_pairingAdvertisementSubscription?.cancel());
+    if (_discoveryEnabled) unawaited(_hostDirectory.stop());
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => MaterialApp(

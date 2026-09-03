@@ -4,6 +4,7 @@ import 'package:codepet_remote/app/codepet_remote_app.dart';
 import 'package:codepet_remote/core/domain/paired_device.dart';
 import 'package:codepet_remote/application/ports/device_identity.dart';
 import 'package:codepet_remote/devices/device_registry.dart';
+import 'package:codepet_remote/discovery/codepet_discovery.dart';
 import 'package:codepet_remote/application/ports/gateway_client.dart';
 import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/core/domain/models.dart';
@@ -11,6 +12,80 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('App owns the continuous Host discovery lifecycle', (tester) async {
+    final directory = _HostDirectory();
+
+    await tester.pumpWidget(CodePetRemoteApp(
+      registry: DeviceRegistry(
+        metadata: _Metadata(),
+        credentials: _Credentials(),
+      ),
+      descriptorProvider: const _DescriptorProvider(),
+      hostDirectory: directory,
+      gatewayClientBuilder: ({
+        required device,
+        required credential,
+        required clientDevice,
+        required debugAndroidEmulatorGatewayUri,
+      }) => _GatewayClient(),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(directory.startCalls, 1);
+    expect(directory.stopCalls, 0);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+
+    expect(directory.stopCalls, 1);
+  });
+
+  testWidgets('Host pairing advertisement opens a Remote confirmation prompt',
+      (tester) async {
+    final directory = _HostDirectory();
+    await tester.pumpWidget(CodePetRemoteApp(
+      registry: DeviceRegistry(
+        metadata: _Metadata(),
+        credentials: _Credentials(),
+      ),
+      descriptorProvider: const _DescriptorProvider(),
+      hostDirectory: directory,
+      gatewayClientBuilder: ({
+        required device,
+        required credential,
+        required clientDevice,
+        required debugAndroidEmulatorGatewayUri,
+      }) => _GatewayClient(),
+    ));
+    await tester.pumpAndSettle();
+
+    directory.advertisements.add(DiscoveredCodePetHost(
+      instanceName: 'Studio Mac._codepet._tcp.local.',
+      host: '192.168.1.10',
+      port: 47622,
+      txt: {
+        'id': 'host-invitation',
+        'name': 'Studio Mac',
+        'fp': 'a' * 64,
+        'vmin': '1',
+        'vmax': '1',
+        'pair': '1',
+      },
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('收到设备配对请求'), findsOneWidget);
+    expect(find.text('Studio Mac 希望与这台设备建立安全连接。'), findsOneWidget);
+    expect(find.text('接受并连接'), findsOneWidget);
+    await tester.tap(find.text('拒绝'));
+    await tester.pumpAndSettle();
+    expect(find.text('收到设备配对请求'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    await directory.advertisements.close();
+  });
+
   testWidgets(
     'ordinary app rebuild restores the registry credential and auto-connects',
     (tester) async {
@@ -162,6 +237,39 @@ void main() {
       expect(reloaded.single.endpointHints, device.endpointHints);
     },
   );
+}
+
+class _HostDirectory implements CodePetHostDirectory {
+  int startCalls = 0;
+  int stopCalls = 0;
+  final StreamController<DiscoveredCodePetHost> advertisements =
+      StreamController<DiscoveredCodePetHost>.broadcast();
+
+  @override
+  DiscoveredCodePetHost? currentHost(String deviceId) => null;
+
+  @override
+  List<DiscoveredCodePetHost> currentHosts() => const [];
+
+  @override
+  void start() {
+    startCalls++;
+  }
+
+  @override
+  Future<void> refresh() async {}
+
+  @override
+  Future<void> stop() async {
+    stopCalls++;
+  }
+
+  @override
+  Stream<DiscoveredCodePetHost> watchHost(String deviceId) =>
+      const Stream.empty();
+
+  @override
+  Stream<DiscoveredCodePetHost> watchHosts() => advertisements.stream;
 }
 
 const _persistedDevice = PairedDevice(

@@ -882,6 +882,57 @@ void main() {
     session.dispose();
   });
 
+  test('fresh discovery wakes a retryable failed session immediately', () async {
+    final discoverySignals = StreamController<void>.broadcast();
+    final failed = _FailingClient();
+    final successful = _FakeClient([
+      _conversation('discovery-recovered', '/repo', 1000),
+    ]);
+    final clients = <GatewayClient>[failed, successful];
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('discovery-retry'),
+      clientFactory: () => clients[factoryCalls++],
+      reconnectDelays: const [Duration(hours: 1)],
+      reconnectSignals: discoverySignals.stream,
+    );
+
+    await session.connect();
+    expect(session.connectionState, DeviceConnectionState.failed);
+    expect(factoryCalls, 1);
+
+    discoverySignals.add(null);
+    await pumpEventQueue();
+
+    expect(factoryCalls, 2);
+    expect(session.connectionState, DeviceConnectionState.online);
+    expect(session.conversations.single.id, 'discovery-recovered');
+    session.dispose();
+    await discoverySignals.close();
+  });
+
+  test('discovery does not retry a rejected credential', () async {
+    final discoverySignals = StreamController<void>.broadcast();
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('discovery-rejected'),
+      clientFactory: () {
+        factoryCalls++;
+        return _NonRetryableClient();
+      },
+      reconnectSignals: discoverySignals.stream,
+    );
+
+    await session.connect();
+    discoverySignals.add(null);
+    await pumpEventQueue();
+
+    expect(factoryCalls, 1);
+    expect(session.connectionState, DeviceConnectionState.failed);
+    session.dispose();
+    await discoverySignals.close();
+  });
+
   test('late failed cleanup cannot schedule over a manual healthy connection', () async {
     final failed = _DelayedCleanupFailingClient();
     final healthy = _FakeClient([

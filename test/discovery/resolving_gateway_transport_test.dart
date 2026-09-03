@@ -11,10 +11,18 @@ void main() {
   const trustedId = 'trusted-device';
   DiscoveredCodePetHost host(Map<String, String> txt) =>
       DiscoveredCodePetHost(instanceName: 'CodePet._codepet._tcp.local.', host: 'host.local.', port: 4321, txt: txt);
-  const valid = {'id': trustedId, 'name': 'Host', 'vmin': '1', 'vmax': '1', 'pair': '1'};
+  const valid = {
+    'id': trustedId,
+    'name': 'Host',
+    'fp': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'vmin': '1',
+    'vmax': '1',
+    'pair': '1',
+  };
 
   test('accepts only the trusted id and a Gateway v1 compatible range', () {
     expect(isTrustedDiscoveryCandidate(host(valid), trustedId), isTrue);
+    expect(isTrustedDiscoveryCandidate(host({...valid}..remove('fp')), trustedId), isTrue);
     expect(isTrustedDiscoveryCandidate(host({...valid, 'id': 'other'}), trustedId), isFalse);
     expect(isTrustedDiscoveryCandidate(host({...valid, 'vmin': '2'}), trustedId), isFalse);
     expect(isTrustedDiscoveryCandidate(host({...valid, 'vmax': '0'}), trustedId), isFalse);
@@ -23,6 +31,39 @@ void main() {
   test('rejects missing or additional TXT keys', () {
     expect(isTrustedDiscoveryCandidate(host({...valid}..remove('pair')), trustedId), isFalse);
     expect(isTrustedDiscoveryCandidate(host({...valid, 'pin': 'untrusted'}), trustedId), isFalse);
+  });
+
+  test('tries a fresh directory endpoint before the persisted stale address', () async {
+    final preferred = Uri.parse(
+      'wss://192.168.0.105:47622/remote/v1/gateway',
+    );
+    final current = DiscoveredCodePetHost(
+      instanceName: 'Replacement._codepet._tcp.local.',
+      host: '192.168.0.106',
+      port: 47622,
+      txt: valid,
+    );
+    final attempted = <Uri>[];
+    final fallbackDiscovery = _FakeDiscovery(const []);
+    final resolver = ResolvingPinnedGatewayTransport(
+      deviceId: trustedId,
+      preferredGatewayUri: preferred,
+      credential: 'opaque',
+      certSha256: '0' * 64,
+      discovery: fallbackDiscovery,
+      hostDirectory: _FakeHostDirectory(current),
+      transportFactory: (uri, credential, certSha256) {
+        attempted.add(uri);
+        return _FakeCandidateTransport(succeeds: uri.host == current.host);
+      },
+    );
+
+    await resolver.connect();
+
+    expect(attempted, [preferred.replace(host: current.host)]);
+    expect(resolver.selectedGatewayUri, attempted.single);
+    expect(fallbackDiscovery.discoverCalls, 0);
+    await resolver.close();
   });
 
   test('builds the emulator alias from the complete paired endpoint shape', () {
@@ -397,6 +438,35 @@ class _FakeDiscovery extends CodePetDiscovery {
     discoverCalls++;
     return Stream.fromIterable(hosts);
   }
+}
+
+class _FakeHostDirectory implements CodePetHostDirectory {
+  _FakeHostDirectory(this.host);
+
+  final DiscoveredCodePetHost? host;
+
+  @override
+  DiscoveredCodePetHost? currentHost(String deviceId) => host;
+
+  @override
+  List<DiscoveredCodePetHost> currentHosts() =>
+      host == null ? const [] : [host!];
+
+  @override
+  void start() {}
+
+  @override
+  Future<void> refresh() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Stream<DiscoveredCodePetHost> watchHost(String deviceId) =>
+      const Stream.empty();
+
+  @override
+  Stream<DiscoveredCodePetHost> watchHosts() => const Stream.empty();
 }
 
 class _FakeCandidateTransport implements GatewayTransport {
