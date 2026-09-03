@@ -68,7 +68,12 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     );
     _descriptorProvider =
         widget.descriptorProvider ?? LocalDeviceDescriptorProvider();
-    _hostDirectory = widget.hostDirectory ?? MdnsCodePetHostDirectory();
+    _hostDirectory = widget.hostDirectory ??
+        MdnsCodePetHostDirectory(
+          discovery: CodePetDiscovery(
+            fallbackProbe: _probeDebugAndroidEmulatorHost,
+          ),
+        );
     _discoveryEnabled = !widget.includeDemoDevices &&
         (widget.hostDirectory != null || widget.gatewayClientBuilder == null);
     if (_discoveryEnabled) _hostDirectory.start();
@@ -246,6 +251,18 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         gateway: const LanPairingRequestGateway(),
       );
 
+  Future<DiscoveredCodePetHost?> _probeDebugAndroidEmulatorHost() async {
+    final provider = _descriptorProvider;
+    if (provider is! DebugAndroidEmulatorProvider) return null;
+    final emulatorProvider = provider as DebugAndroidEmulatorProvider;
+    try {
+      if (!await emulatorProvider.isDebugAndroidEmulator()) return null;
+      return AndroidEmulatorCodePetHostProbe().probe();
+    } catch (_) {
+      return null;
+    }
+  }
+
   PairingCandidate _pairingCandidate(DiscoveredCodePetHost host) =>
       PairingCandidate(
         deviceId: host.txt['id']!,
@@ -276,7 +293,10 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
       _handledPairingInvitations.remove(invitationKey);
       return;
     }
-    if (_sessions.any((session) => session.device.deviceId == deviceId) ||
+    if (_sessions.any((session) =>
+            session.device.deviceId == deviceId &&
+            (session.connectionState == DeviceConnectionState.online ||
+                session.connectionState == DeviceConnectionState.connecting)) ||
         !_handledPairingInvitations.add(invitationKey)) {
       return;
     }

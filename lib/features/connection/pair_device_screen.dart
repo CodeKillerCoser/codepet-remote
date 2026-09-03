@@ -245,11 +245,14 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final connectedDeviceIds = widget.connectedSessions
+    final activeDeviceIds = widget.connectedSessions
+        .where((session) =>
+            session.connectionState == DeviceConnectionState.online ||
+            session.connectionState == DeviceConnectionState.connecting)
         .map((session) => session.device.deviceId)
         .toSet();
     final discoveredHosts = _hosts.values
-        .where((host) => !connectedDeviceIds.contains(host.deviceId))
+        .where((host) => !activeDeviceIds.contains(host.deviceId))
         .toList(growable: false);
     return Scaffold(
       appBar: AppBar(title: const Text('配对 CodePet Host')),
@@ -329,7 +332,10 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
                   : '${host.host}:${host.port}'),
               trailing: FilledButton(
                 onPressed: _busy ? null : () => _requestHost(host),
-                child: const Text('连接'),
+                child: Text(widget.connectedSessions.any((session) =>
+                        session.device.deviceId == host.deviceId)
+                    ? '重新配对'
+                    : '连接'),
               ),
             ),
           ),

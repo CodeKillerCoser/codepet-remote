@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:multicast_dns/multicast_dns.dart';
+
+import '../security/pinned_tls.dart';
 
 class DiscoveredCodePetHost {
   const DiscoveredCodePetHost({required this.instanceName, required this.host, required this.port, required this.txt});
@@ -220,12 +223,15 @@ class CodePetDiscovery {
   CodePetDiscovery({
     MDnsClient Function()? clientFactory,
     CodePetMulticastLock? multicastLock,
+    Future<DiscoveredCodePetHost?> Function()? fallbackProbe,
   })  : _clientFactory = clientFactory ?? _defaultClient,
-        _multicastLock = multicastLock ?? PlatformCodePetMulticastLock();
+        _multicastLock = multicastLock ?? PlatformCodePetMulticastLock(),
+        _fallbackProbe = fallbackProbe;
 
   static const serviceType = '_codepet._tcp.local.';
   final MDnsClient Function() _clientFactory;
   final CodePetMulticastLock _multicastLock;
+  final Future<DiscoveredCodePetHost?> Function()? _fallbackProbe;
 
   static MDnsClient _defaultClient() => MDnsClient(
     rawDatagramSocketFactory: codePetMdnsSocketFactory(
@@ -234,6 +240,13 @@ class CodePetDiscovery {
   );
 
   Stream<DiscoveredCodePetHost> discover({Duration timeout = const Duration(seconds: 4)}) async* {
+    final fallbackProbe = _fallbackProbe;
+    if (fallbackProbe != null) {
+      try {
+        final fallback = await fallbackProbe().timeout(timeout);
+        if (fallback != null) yield fallback;
+      } catch (_) {}
+    }
     final client = _clientFactory();
     var started = false;
     await _multicastLock.acquire();
@@ -283,6 +296,90 @@ class CodePetDiscovery {
     } finally {
       if (started) client.stop();
       await _multicastLock.release();
+    }
+  }
+}
+
+class AndroidEmulatorCodePetHostProbe {
+  AndroidEmulatorCodePetHostProbe({
+    Uri? endpoint,
+    this.timeout = const Duration(seconds: 2),
+  }) : endpoint = endpoint ??
+            Uri(
+              scheme: 'https',
+              host: '10.0.2.2',
+              port: 47622,
+              path: '/remote/v1/discovery',
+            );
+
+  final Uri endpoint;
+  final Duration timeout;
+
+  Future<DiscoveredCodePetHost?> probe() async {
+    String? presentedFingerprint;
+    final client = HttpClient(
+      context: SecurityContext(withTrustedRoots: false),
+    )..connectionTimeout = timeout;
+    client.badCertificateCallback = (certificate, host, port) {
+      if (host != endpoint.host || port != endpoint.port) return false;
+      presentedFingerprint = certificateSha256(certificate);
+      return true;
+    };
+    try {
+      final request = await client.getUrl(endpoint).timeout(timeout);
+      request.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
+      final response = await request.close().timeout(timeout);
+      if (response.statusCode != HttpStatus.ok) return null;
+      final bytes = <int>[];
+      await for (final chunk in response.timeout(timeout)) {
+        if (bytes.length + chunk.length > 64 * 1024) return null;
+        bytes.addAll(chunk);
+      }
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map) return null;
+      final json = Map<String, dynamic>.from(decoded);
+      const fields = {'id', 'name', 'fp', 'vmin', 'vmax', 'pair'};
+      if (json.keys.toSet().difference(fields).isNotEmpty ||
+          !fields.every(json.containsKey)) {
+        return null;
+      }
+      final id = json['id'];
+      final name = json['name'];
+      final fingerprint = json['fp'];
+      final minimumVersion = json['vmin'];
+      final maximumVersion = json['vmax'];
+      final pairingAvailable = json['pair'];
+      if (id is! String ||
+          id.isEmpty ||
+          name is! String ||
+          name.isEmpty ||
+          fingerprint is! String ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(fingerprint) ||
+          presentedFingerprint != fingerprint ||
+          minimumVersion is! int ||
+          maximumVersion is! int ||
+          minimumVersion < 1 ||
+          maximumVersion < minimumVersion ||
+          pairingAvailable is! int ||
+          pairingAvailable < 0 ||
+          pairingAvailable > 1) {
+        return null;
+      }
+      return DiscoveredCodePetHost(
+        instanceName: '$name (Android Emulator)',
+        host: endpoint.host,
+        port: endpoint.port,
+        txt: {
+          'id': id,
+          'name': name,
+          'fp': fingerprint,
+          'vmin': minimumVersion.toString(),
+          'vmax': maximumVersion.toString(),
+          'pair': pairingAvailable.toString(),
+        },
+      );
+    } finally {
+      client.close(force: true);
     }
   }
 }

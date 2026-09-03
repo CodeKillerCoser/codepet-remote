@@ -124,6 +124,49 @@ void main() {
     expect(find.byKey(const Key('pair-json-button')), findsOneWidget);
   });
 
+  testWidgets('shows a discovered Host again when its saved session failed', (
+    tester,
+  ) async {
+    final session = DeviceSession(
+      device: const PairedDevice(
+        deviceId: 'paired-host',
+        displayName: 'Studio Mac',
+        connectionKind: DeviceConnectionKind.pairedGateway,
+      ),
+      clientFactory: () => throw StateError('not used'),
+    )..connectionState = DeviceConnectionState.failed;
+
+    await tester.pumpWidget(MaterialApp(
+      home: PairDeviceScreen(
+        pairingService: _Pairer(),
+        connectedSessions: [session],
+        initialCandidates: const [
+          PairingCandidate(
+            deviceId: 'paired-host',
+            displayName: 'Studio Mac',
+            host: '10.0.2.2',
+            port: 47622,
+            tlsFingerprint:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            hostInitiated: false,
+          ),
+        ],
+        onPaired: (_) async {},
+      ),
+    ));
+
+    await tester.scrollUntilVisible(
+      find.text('重新配对'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Studio Mac'), findsNWidgets(2));
+    expect(find.text('重新配对'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
   testWidgets('manual passcode starts a discovered-host request before entry', (
     tester,
   ) async {

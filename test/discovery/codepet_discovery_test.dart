@@ -145,6 +145,34 @@ void main() {
     expect(lock.acquireCalls, 1);
     expect(lock.releaseCalls, 1);
   });
+
+  test('discovery yields an emulator fallback before mDNS results', () async {
+    final client = _FakeMdnsClient();
+    final fallback = _discoveredHost('10.0.2.2');
+    final discovery = CodePetDiscovery(
+      clientFactory: () => client,
+      multicastLock: _FakeMulticastLock(),
+      fallbackProbe: () async => fallback,
+    );
+
+    final hosts = await discovery.discover().toList();
+
+    expect(hosts, hasLength(2));
+    expect(hosts.first.host, '10.0.2.2');
+    expect(hosts.last.host, '192.0.2.10');
+  });
+
+  test('a failed emulator fallback does not prevent mDNS discovery', () async {
+    final discovery = CodePetDiscovery(
+      clientFactory: _FakeMdnsClient.new,
+      multicastLock: _FakeMulticastLock(),
+      fallbackProbe: () => Future.error(StateError('probe failed')),
+    );
+
+    final hosts = await discovery.discover().toList();
+
+    expect(hosts.single.host, '192.0.2.10');
+  });
 }
 
 DiscoveredCodePetHost _discoveredHost(
