@@ -65,9 +65,7 @@ class LanPairingGateway implements PairingGateway {
           response.device.identityFingerprint,
           qr.certSha256,
         ) ||
-        response.gatewayUrl.host != qr.httpsBaseUrl.host ||
-        response.gatewayUrl.port != qr.httpsBaseUrl.port ||
-        response.gatewayUrl.path != '/remote/v2/gateway') {
+        !_isGatewayLocator(response.gatewayUrl)) {
       throw const FormatException('Pairing identity or endpoint mismatch');
     }
     final credentialKey =
@@ -213,11 +211,7 @@ class LanPairingRequestGateway implements PairingRequestGateway {
     }
     final gatewayUrl = Uri.tryParse(response.gatewayUrl ?? '');
     final credential = response.credential;
-    if (gatewayUrl == null ||
-        gatewayUrl.scheme != 'wss' ||
-        !_gatewayHostMatchesCandidate(gatewayUrl, candidate) ||
-        gatewayUrl.port != candidate.port ||
-        gatewayUrl.path != '/remote/v2/gateway' ||
+    if (!_isGatewayLocator(gatewayUrl) ||
         credential == null ||
         credential.isEmpty) {
       throw const FormatException('Accepted pairing response is incomplete');
@@ -253,12 +247,14 @@ class LanPairingRequestGateway implements PairingRequestGateway {
   }
 }
 
-bool _gatewayHostMatchesCandidate(
-  Uri gatewayUrl,
-  PairingCandidate candidate,
-) =>
-    gatewayUrl.host == candidate.host ||
-    candidate.host == '10.0.2.2' && candidate.port == 47622;
+bool _isGatewayLocator(Uri? gatewayUrl) =>
+    gatewayUrl != null &&
+    gatewayUrl.scheme == 'wss' &&
+    gatewayUrl.host.isNotEmpty &&
+    gatewayUrl.path == '/remote/v2/gateway' &&
+    gatewayUrl.userInfo.isEmpty &&
+    gatewayUrl.query.isEmpty &&
+    gatewayUrl.fragment.isEmpty;
 
 String _secureNonce() {
   final random = Random.secure();

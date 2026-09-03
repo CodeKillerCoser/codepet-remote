@@ -201,7 +201,12 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
             if (endpoint == preferredGateway) return;
             preferredGateway = endpoint;
             try {
-              await _registry.updatePreferredEndpoint(device.deviceId, endpoint.toString());
+              await _registry.updatePreferredEndpoint(
+                deviceId: device.deviceId,
+                clientId: device.clientId!,
+                tlsFingerprint: device.tlsFingerprint!,
+                endpoint: endpoint.toString(),
+              );
             } catch (_) {}
           },
         );

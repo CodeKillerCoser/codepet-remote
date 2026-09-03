@@ -59,7 +59,7 @@ void main() {
     expect(persisted.descriptor?.deviceName, 'MacBook');
     expect(persisted.credentialKeyRef, device.credentialKeyRef);
     expect(persisted.preferredEndpoint,
-        'wss://192.168.1.10:49152/remote/v2/gateway');
+        'wss://codepet-new.local:47622/remote/v2/gateway');
     expect(persisted.autoConnect, isTrue);
     expect(metadata.values.toString(), isNot(contains('opaque-credential')));
   });
@@ -143,14 +143,14 @@ void main() {
     );
   });
 
-  test('accepted emulator pairing keeps the Host advertised Gateway URL', () async {
+  test('accepted pairing trusts the authenticated Host locator', () async {
     final registry = DeviceRegistry(
       metadata: _Metadata(),
       credentials: _Credentials(),
     );
     final exchangeClient = _RequestExchangeClient(
       acceptedGatewayUrl:
-          'wss://192.168.1.10:47622/remote/v2/gateway',
+          'wss://192.168.1.10:55000/remote/v2/gateway',
     );
     final service = PairDiscoveredDeviceUseCase(
       repository: registry,
@@ -178,13 +178,13 @@ void main() {
 
     expect(
       accepted.registration?.device.preferredEndpoint,
-      'wss://192.168.1.10:47622/remote/v2/gateway',
+      'wss://192.168.1.10:55000/remote/v2/gateway',
     );
   });
 
-  test('accepted pairing rejects an unrelated Gateway host', () async {
+  test('accepted pairing rejects a non-Gateway locator path', () async {
     final exchangeClient = _RequestExchangeClient(
-      acceptedGatewayUrl: 'wss://unrelated.test:49152/remote/v2/gateway',
+      acceptedGatewayUrl: 'wss://192.168.1.10:49152/not-the-gateway',
     );
     final service = PairDiscoveredDeviceUseCase(
       repository: DeviceRegistry(
@@ -266,7 +266,7 @@ class _ExchangeClient implements PairingExchangeClient {
         },
         'identityFingerprint': 'a' * 64,
       },
-      'gatewayUrl': 'wss://192.168.1.10:49152/remote/v2/gateway',
+      'gatewayUrl': 'wss://codepet-new.local:47622/remote/v2/gateway',
       'credential': 'opaque-credential',
     };
   }

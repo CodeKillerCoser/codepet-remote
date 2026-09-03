@@ -48,11 +48,11 @@ void main() {
     final metadata = _Metadata();
     final registry = DeviceRegistry(metadata: metadata, credentials: _Credentials());
     const first = PairedDevice(deviceId: 'one', displayName: 'One', tlsFingerprint: 'pin-one', endpointHints: ['https://old-one:443'], credentialKeyRef: 'secure:one', clientId: 'client-one', preferredEndpoint: 'wss://old-one/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
-    const second = PairedDevice(deviceId: 'two', displayName: 'Two', preferredEndpoint: 'wss://old-two/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
+    const second = PairedDevice(deviceId: 'two', displayName: 'Two', tlsFingerprint: 'pin-two', clientId: 'client-two', preferredEndpoint: 'wss://old-two/gateway', connectionKind: DeviceConnectionKind.pairedGateway);
     await registry.save([first, second]);
     await Future.wait([
-      registry.updatePreferredEndpoint('one', 'wss://new-one/gateway'),
-      registry.updatePreferredEndpoint('two', 'wss://new-two/gateway'),
+      registry.updatePreferredEndpoint(deviceId: 'one', clientId: 'client-one', tlsFingerprint: 'pin-one', endpoint: 'wss://new-one/gateway'),
+      registry.updatePreferredEndpoint(deviceId: 'two', clientId: 'client-two', tlsFingerprint: 'pin-two', endpoint: 'wss://new-two/gateway'),
     ]);
     final devices = await registry.load();
     expect(devices.map((device) => device.preferredEndpoint), ['wss://new-one/gateway', 'wss://new-two/gateway']);
@@ -61,7 +61,7 @@ void main() {
     expect(devices.first.credentialKeyRef, 'secure:one');
     expect(devices.first.clientId, 'client-one');
     final writes = metadata.writeCount;
-    await registry.updatePreferredEndpoint('one', 'wss://new-one/gateway');
+    await registry.updatePreferredEndpoint(deviceId: 'one', clientId: 'client-one', tlsFingerprint: 'pin-one', endpoint: 'wss://new-one/gateway');
     expect(metadata.writeCount, writes);
   });
 
@@ -113,6 +113,37 @@ void main() {
     expect((await registry.load()).single.displayName, 'New name');
   });
 
+  test('endpoint refresh cannot cross a re-paired certificate binding', () async {
+    final registry = DeviceRegistry(
+      metadata: _Metadata(),
+      credentials: _Credentials(),
+    );
+    const paired = PairedDevice(
+      deviceId: 'host-bound',
+      displayName: 'Host',
+      clientId: 'client-bound',
+      tlsFingerprint: 'new-fingerprint',
+      preferredEndpoint: 'wss://new-host/remote/v2/gateway',
+      connectionKind: DeviceConnectionKind.pairedGateway,
+    );
+    await registry.save([paired]);
+
+    await expectLater(
+      registry.updatePreferredEndpoint(
+        deviceId: 'host-bound',
+        clientId: 'client-bound',
+        tlsFingerprint: 'old-fingerprint',
+        endpoint: 'wss://stale-host/remote/v2/gateway',
+      ),
+      throwsStateError,
+    );
+
+    expect(
+      (await registry.load()).single.preferredEndpoint,
+      'wss://new-host/remote/v2/gateway',
+    );
+  });
+
   test('forget is ordered after an in-flight endpoint update', () async {
     final metadata = _BlockingMetadata();
     final registry = DeviceRegistry(
@@ -122,6 +153,8 @@ void main() {
     const device = PairedDevice(
       deviceId: 'ordered-host',
       displayName: 'Host',
+      clientId: 'ordered-client',
+      tlsFingerprint: 'ordered-fingerprint',
       preferredEndpoint: 'wss://old/remote/v2/gateway',
       connectionKind: DeviceConnectionKind.pairedGateway,
     );
@@ -129,8 +162,10 @@ void main() {
     metadata.blockNextWrite();
 
     final update = registry.updatePreferredEndpoint(
-      device.deviceId,
-      'wss://new/remote/v2/gateway',
+      deviceId: device.deviceId,
+      clientId: device.clientId!,
+      tlsFingerprint: device.tlsFingerprint!,
+      endpoint: 'wss://new/remote/v2/gateway',
     );
     await metadata.writeStarted.future;
     final forget = registry.forget(device);

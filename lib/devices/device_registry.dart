@@ -89,11 +89,22 @@ class DeviceRegistry implements DeviceRepository {
   }
 
   @override
-  Future<void> updatePreferredEndpoint(String deviceId, String endpoint) {
+  Future<void> updatePreferredEndpoint({
+    required String deviceId,
+    required String clientId,
+    required String tlsFingerprint,
+    required String endpoint,
+  }) {
     return _mutate(() async {
       final devices = await load();
-      final index = devices.indexWhere((device) => device.deviceId == deviceId);
-      if (index == -1 || devices[index].preferredEndpoint == endpoint) return;
+      final index = devices.indexWhere((device) =>
+          device.deviceId == deviceId &&
+          device.clientId == clientId &&
+          device.tlsFingerprint == tlsFingerprint);
+      if (index == -1) {
+        throw StateError('Endpoint does not match the paired identity');
+      }
+      if (devices[index].preferredEndpoint == endpoint) return;
       devices[index] = devices[index].withPreferredEndpoint(endpoint);
       await _writeDevices(devices);
     });

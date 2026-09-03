@@ -21,16 +21,17 @@ void main() {
   };
 
   test('accepts only the trusted id and a Gateway v1 compatible range', () {
-    expect(isTrustedDiscoveryCandidate(host(valid), trustedId), isTrue);
-    expect(isTrustedDiscoveryCandidate(host({...valid}..remove('fp')), trustedId), isTrue);
-    expect(isTrustedDiscoveryCandidate(host({...valid, 'id': 'other'}), trustedId), isFalse);
-    expect(isTrustedDiscoveryCandidate(host({...valid, 'vmin': '2'}), trustedId), isFalse);
-    expect(isTrustedDiscoveryCandidate(host({...valid, 'vmax': '0'}), trustedId), isFalse);
+    expect(isTrustedDiscoveryCandidate(host(valid), trustedId, 'a' * 64), isTrue);
+    expect(isTrustedDiscoveryCandidate(host({...valid}..remove('fp')), trustedId, 'a' * 64), isFalse);
+    expect(isTrustedDiscoveryCandidate(host({...valid, 'fp': 'b' * 64}), trustedId, 'a' * 64), isFalse);
+    expect(isTrustedDiscoveryCandidate(host({...valid, 'id': 'other'}), trustedId, 'a' * 64), isFalse);
+    expect(isTrustedDiscoveryCandidate(host({...valid, 'vmin': '2'}), trustedId, 'a' * 64), isFalse);
+    expect(isTrustedDiscoveryCandidate(host({...valid, 'vmax': '0'}), trustedId, 'a' * 64), isFalse);
   });
 
   test('rejects missing or additional TXT keys', () {
-    expect(isTrustedDiscoveryCandidate(host({...valid}..remove('pair')), trustedId), isFalse);
-    expect(isTrustedDiscoveryCandidate(host({...valid, 'pin': 'untrusted'}), trustedId), isFalse);
+    expect(isTrustedDiscoveryCandidate(host({...valid}..remove('pair')), trustedId, 'a' * 64), isFalse);
+    expect(isTrustedDiscoveryCandidate(host({...valid, 'pin': 'untrusted'}), trustedId, 'a' * 64), isFalse);
   });
 
   test('tries a fresh directory endpoint before the persisted stale address', () async {
@@ -49,7 +50,7 @@ void main() {
       deviceId: trustedId,
       preferredGatewayUri: preferred,
       credential: 'opaque',
-      certSha256: '0' * 64,
+      certSha256: 'a' * 64,
       discovery: fallbackDiscovery,
       hostDirectory: _FakeHostDirectory(current),
       transportFactory: (uri, credential, certSha256) {
@@ -128,7 +129,7 @@ void main() {
       preferredGatewayUri: preferred,
       debugAndroidEmulatorGatewayUri: alias,
       credential: 'opaque',
-      certSha256: '0' * 64,
+      certSha256: 'a' * 64,
       discovery: _FakeDiscovery([matching]),
       transportFactory: (uri, credential, certSha256) {
         attempted.add(uri);
@@ -164,9 +165,10 @@ void main() {
       deviceId: trustedId,
       preferredGatewayUri: Uri.parse('wss://old.local:1111/remote/v1/gateway'),
       credential: 'opaque',
-      certSha256: '0' * 64,
+      certSha256: 'a' * 64,
       discovery: _FakeDiscovery([
         host({...valid, 'id': 'other'}),
+        host({...valid, 'fp': 'b' * 64}),
         matching,
       ]),
       transportFactory: (uri, credential, certSha256) {
@@ -194,7 +196,7 @@ void main() {
         'wss://old.local:1111/remote/v1/gateway?mode=paired',
       ),
       credential: 'opaque',
-      certSha256: '0' * 64,
+      certSha256: 'a' * 64,
       discovery: discovery,
       transportFactory: (uri, credential, certSha256) {
         attempted.add(uri);
@@ -230,7 +232,7 @@ void main() {
       deviceId: trustedId,
       preferredGatewayUri: preferred,
       credential: 'opaque',
-      certSha256: '0' * 64,
+      certSha256: 'a' * 64,
       discovery: _FakeDiscovery([matching]),
       transportFactory: (uri, credential, certSha256) {
         attempted.add(uri);
@@ -253,7 +255,7 @@ void main() {
         'wss://old.local:1111/remote/v1/gateway',
       ),
       credential: 'same-opaque-credential',
-      certSha256: '0' * 64,
+      certSha256: 'a' * 64,
       discovery: _FakeDiscovery(const []),
       transportFactory: (uri, credential, certSha256) {
         attempted.add(uri);
@@ -298,7 +300,7 @@ void main() {
       deviceId: trustedId,
       preferredGatewayUri: preferred,
       credential: 'opaque',
-      certSha256: '0' * 64,
+      certSha256: 'a' * 64,
       connectTimeout: const Duration(milliseconds: 10),
       discovery: _FakeDiscovery([matching]),
       transportFactory: (uri, credential, certSha256) {
@@ -351,7 +353,7 @@ void main() {
       deviceId: trustedId,
       preferredGatewayUri: preferred,
       credential: 'opaque',
-      certSha256: '0' * 64,
+      certSha256: 'a' * 64,
       connectTimeout: const Duration(milliseconds: 10),
       discovery: _FakeDiscovery([first, second]),
       transportFactory: (uri, credential, certSha256) {
@@ -400,7 +402,7 @@ void main() {
       deviceId: trustedId,
       preferredGatewayUri: preferred,
       credential: 'opaque',
-      certSha256: '0' * 64,
+      certSha256: 'a' * 64,
       connectTimeout: const Duration(milliseconds: 10),
       discovery: _FakeDiscovery([matching]),
       transportFactory: (uri, credential, certSha256) {

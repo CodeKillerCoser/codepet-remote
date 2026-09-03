@@ -22,9 +22,11 @@ class PairedDevice {
   final String? alias;
   final DeviceDescriptor? descriptor;
   final String? tlsFingerprint;
+  /// Untrusted or previously validated network locators, never device identity.
   final List<String> endpointHints;
   final String? credentialKeyRef;
   final String? clientId;
+  /// The last Host-authorized or validated locator, never device identity.
   final String? preferredEndpoint;
   final bool autoConnect;
   final DeviceConnectionKind connectionKind;

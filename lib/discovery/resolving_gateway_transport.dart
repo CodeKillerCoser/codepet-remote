@@ -72,7 +72,8 @@ class ResolvingPinnedGatewayTransport
     final attempted = <Uri>{};
     Object? discoveryError;
     Future<bool> tryDiscoveredHost(DiscoveredCodePetHost? host) async {
-      if (host == null || !isTrustedDiscoveryCandidate(host, deviceId)) {
+      if (host == null ||
+          !isTrustedDiscoveryCandidate(host, deviceId, certSha256)) {
         return false;
       }
       final candidate = preferredGatewayUri.replace(
@@ -294,6 +295,7 @@ GatewayTransport _pinnedTransport(
 bool isTrustedDiscoveryCandidate(
   DiscoveredCodePetHost host,
   String trustedDeviceId,
+  String trustedFingerprint,
 ) {
   const allowedKeys = {'id', 'name', 'fp', 'vmin', 'vmax', 'pair'};
   const requiredKeys = {'id', 'name', 'vmin', 'vmax', 'pair'};
@@ -305,7 +307,7 @@ bool isTrustedDiscoveryCandidate(
   final minimum = int.tryParse(host.txt['vmin'] ?? '');
   final maximum = int.tryParse(host.txt['vmax'] ?? '');
   final fingerprint = host.txt['fp'];
-  return (fingerprint == null ||
-          RegExp(r'^[0-9a-f]{64}$').hasMatch(fingerprint)) &&
+  return fingerprint == trustedFingerprint &&
+      RegExp(r'^[0-9a-f]{64}$').hasMatch(fingerprint ?? '') &&
       minimum != null && maximum != null && minimum <= 1 && maximum >= 1;
 }
