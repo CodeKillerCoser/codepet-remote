@@ -857,6 +857,10 @@ class ConversationSummary {
     this.activeTurn,
     this.turnSendSelection,
     this.resource,
+    this.readState = const ConversationReadState(
+      unread: false,
+      activityVersion: 'activity-0',
+    ),
   });
 
   final String id;
@@ -875,6 +879,81 @@ class ConversationSummary {
   final TurnTask? activeTurn;
   final TurnSendSelection? turnSendSelection;
   final RoutedResourceId? resource;
+  final ConversationReadState readState;
+
+  ConversationSummary withReadState(ConversationReadState value) =>
+      ConversationSummary(
+        id: id,
+        providerId: providerId,
+        title: title,
+        status: status,
+        permissionLevel: permissionLevel,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        preview: preview,
+        model: model,
+        reasoningEffort: reasoningEffort,
+        workspaceRoot: workspaceRoot,
+        activeTurn: activeTurn,
+        turnSendSelection: turnSendSelection,
+        resource: resource,
+        readState: value,
+      );
+
+  ConversationSummary withTurn(TurnTask turn) => ConversationSummary(
+        id: id,
+        providerId: providerId,
+        title: title,
+        status: switch (turn.status) {
+          TurnStatus.queued || TurnStatus.running => ConversationStatus.running,
+          TurnStatus.waitingApproval => ConversationStatus.waitingApproval,
+          TurnStatus.failed => ConversationStatus.error,
+          TurnStatus.completed || TurnStatus.interrupted =>
+            ConversationStatus.idle,
+        },
+        permissionLevel: permissionLevel,
+        createdAt: createdAt,
+        updatedAt: updatedAt.isAfter(turn.updatedAt) ? updatedAt : turn.updatedAt,
+        preview: preview,
+        model: model,
+        reasoningEffort: reasoningEffort,
+        workspaceRoot: workspaceRoot,
+        activeTurn: turn.status.isTerminal ? null : turn,
+        turnSendSelection: turnSendSelection,
+        resource: resource,
+        readState: readState,
+      );
+}
+
+class ConversationReadState {
+  const ConversationReadState({
+    required this.unread,
+    required this.activityVersion,
+  });
+
+  final bool unread;
+  final String activityVersion;
+
+  ConversationReadState merge(ConversationReadState incoming) {
+    final currentVersion = _activityVersionNumber(activityVersion);
+    final incomingVersion = _activityVersionNumber(incoming.activityVersion);
+    if (currentVersion != null && incomingVersion != null) {
+      if (incomingVersion < currentVersion) return this;
+      if (incomingVersion > currentVersion) return incoming;
+    } else if (incoming.activityVersion != activityVersion) {
+      return incoming;
+    }
+    return ConversationReadState(
+      unread: unread && incoming.unread,
+      activityVersion: activityVersion,
+    );
+  }
+}
+
+int? _activityVersionNumber(String value) {
+  const prefix = 'activity-';
+  if (!value.startsWith(prefix)) return null;
+  return int.tryParse(value.substring(prefix.length));
 }
 
 class TurnSendReceipt {
@@ -981,6 +1060,15 @@ class ConversationDetail {
   final List<TurnTask> turns;
   final String? lastEventCursor;
 
+  ConversationDetail withSummary(ConversationSummary value) =>
+      ConversationDetail(
+        summary: value,
+        committedMessages: committedMessages,
+        liveOutputMessages: liveOutputMessages,
+        turns: turns,
+        lastEventCursor: lastEventCursor,
+      );
+
   TurnTask? get activeTurn {
     final byId = <String, TurnTask>{};
     final summaryTurn = summary.activeTurn;
@@ -994,6 +1082,23 @@ class ConversationDetail {
         .toList(growable: false)
       ..sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
     return active.isEmpty ? null : active.first;
+  }
+
+  ConversationStatus get effectiveStatus {
+    if (summary.status == ConversationStatus.waitingApproval ||
+        summary.status == ConversationStatus.waitingUserInput ||
+        summary.status == ConversationStatus.error ||
+        summary.status == ConversationStatus.archived) {
+      return summary.status;
+    }
+    final turn = activeTurn;
+    if (turn == null) return summary.status;
+    return switch (turn.status) {
+      TurnStatus.queued || TurnStatus.running => ConversationStatus.running,
+      TurnStatus.waitingApproval => ConversationStatus.waitingApproval,
+      TurnStatus.failed => ConversationStatus.error,
+      TurnStatus.completed || TurnStatus.interrupted => ConversationStatus.idle,
+    };
   }
 
   ConversationDetail installCommittedSnapshot(
@@ -1022,7 +1127,23 @@ class ConversationDetail {
     if (event is ConversationUpsertedEvent &&
         event.conversation.id == summary.id) {
       return ConversationDetail(
-        summary: event.conversation,
+        // Read state belongs to this client. Broadcast Provider metadata must
+        // not clear it while the Host sends a separate activity event.
+        summary: event.conversation.withReadState(summary.readState),
+        committedMessages: committedMessages,
+        liveOutputMessages: liveOutputMessages,
+        turns: turns,
+        lastEventCursor: event.eventCursor,
+      );
+    }
+
+    if (event is ConversationActivityChangedEvent &&
+        event.conversationId == summary.id) {
+      return ConversationDetail(
+        summary: summary.withReadState(ConversationReadState(
+          unread: true,
+          activityVersion: event.activityVersion,
+        )),
         committedMessages: committedMessages,
         liveOutputMessages: liveOutputMessages,
         turns: turns,
@@ -1032,7 +1153,7 @@ class ConversationDetail {
 
     if (event is TurnUpsertedEvent && event.turn.conversationId == summary.id) {
       return ConversationDetail(
-        summary: summary,
+        summary: summary.withTurn(event.turn),
         committedMessages: committedMessages,
         liveOutputMessages: liveOutputMessages,
         turns: _upsertTurn(turns, event.turn),
@@ -1308,6 +1429,17 @@ class ConversationUpsertedEvent extends GatewayEvent {
   });
 
   final ConversationSummary conversation;
+}
+
+class ConversationActivityChangedEvent extends GatewayEvent {
+  const ConversationActivityChangedEvent({
+    required super.eventCursor,
+    required this.conversationId,
+    required this.activityVersion,
+  });
+
+  final String conversationId;
+  final String activityVersion;
 }
 
 class TurnUpsertedEvent extends GatewayEvent {

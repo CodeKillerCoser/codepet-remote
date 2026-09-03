@@ -7,6 +7,7 @@ import '../../core/domain/models.dart';
 import '../common/identity_icons.dart';
 import '../conversations/conversation_detail_screen.dart';
 import '../conversations/conversation_search_screen.dart';
+import '../gomoku/gomoku_screen.dart';
 
 const int _projectPageSize = 6;
 const int _conversationPageSize = 8;
@@ -131,8 +132,14 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
             onSelected: (value) {
               if (value == 'connect') widget.onAddDevice();
               if (value == 'settings') widget.onOpenSettings();
+              if (value == 'gomoku') {
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute(builder: (_) => const GomokuScreen()),
+                );
+              }
             },
             itemBuilder: (context) => const [
+              PopupMenuItem(value: 'gomoku', child: Text('五子棋')),
               PopupMenuItem(value: 'connect', child: Text('连接设备')),
               PopupMenuItem(value: 'settings', child: Text('App 设置')),
             ],
@@ -872,15 +879,35 @@ class _ConversationTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListTile(
-        leading: Icon(
-          conversation.status == ConversationStatus.running
-              ? Icons.motion_photos_on_outlined
-              : Icons.chat_bubble_outline,
+        leading: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Icon(
+              conversation.status == ConversationStatus.running
+                  ? Icons.motion_photos_on_outlined
+                  : Icons.chat_bubble_outline,
+            ),
+            if (conversation.readState.unread)
+              Positioned(
+                right: -3,
+                top: -3,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.error,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const SizedBox(width: 8, height: 8),
+                ),
+              ),
+          ],
         ),
         title: Text(
           conversation.title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
+          style: conversation.readState.unread
+              ? const TextStyle(fontWeight: FontWeight.w700)
+              : null,
         ),
         subtitle: Text(
           conversation.preview ??

@@ -46,6 +46,12 @@ abstract interface class GatewayClient {
   Future<void> close();
 }
 
+abstract interface class ConversationReadGatewayClient {
+  Future<ConversationReadState> markConversationRead(
+    ConversationSummary conversation,
+  );
+}
+
 class ConversationSnapshot {
   const ConversationSnapshot({
     required this.detail,

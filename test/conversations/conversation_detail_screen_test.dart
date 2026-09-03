@@ -404,6 +404,55 @@ void main() {
     await client.close();
   });
 
+  testWidgets('keeps a running command collapsed until the user expands it',
+      (tester) async {
+    final client = _DetailClient(
+      committedMessages: [
+        _history(
+          'running-command',
+          MessageRole.system,
+          'command',
+          'find lib -type f',
+          title: '命令执行',
+          status: 'running',
+        ),
+      ],
+    );
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    final command = find.byKey(
+      const Key('timeline-command-running-command'),
+    );
+    expect(
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.text('运行中'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget<AnimatedCrossFade>(
+        find.descendant(of: command, matching: find.byType(AnimatedCrossFade)),
+      ).crossFadeState,
+      CrossFadeState.showFirst,
+    );
+
+    await tester.tap(
+      find.descendant(of: command, matching: find.text('命令执行')),
+    );
+    await tester.pump();
+    expect(
+      tester.widget<AnimatedCrossFade>(
+        find.descendant(of: command, matching: find.byType(AnimatedCrossFade)),
+      ).crossFadeState,
+      CrossFadeState.showSecond,
+    );
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('renders conversational text as Markdown', (tester) async {
     final client = _DetailClient(
       committedMessages: [
@@ -751,6 +800,13 @@ void main() {
       conversation: _idleConversation(activeTurn: activeTurn),
     );
     await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.text('运行中'),
+      ),
+      findsOneWidget,
+    );
     expect(
       tester.widget<IconButton>(find.byKey(const Key('turn-send'))).onPressed,
       isNull,
@@ -1213,6 +1269,33 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
+
+  testWidgets('acknowledges the visible activity version as read',
+      (tester) async {
+    final client = _DetailClient();
+    final conversation = _idleConversation().withReadState(
+      const ConversationReadState(
+        unread: true,
+        activityVersion: 'activity-3',
+      ),
+    );
+
+    await _pumpDetail(tester, client, conversation: conversation);
+    await tester.pumpAndSettle();
+
+    expect(client.markReadCalls, ['activity-3']);
+
+    client.emit(const ConversationActivityChangedEvent(
+      eventCursor: 'E4',
+      conversationId: 'conversation',
+      activityVersion: 'activity-4',
+    ));
+    await tester.pumpAndSettle();
+
+    expect(client.markReadCalls, ['activity-3', 'activity-4']);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
 }
 
 Future<DeviceSession> _pumpDetail(
@@ -1355,7 +1438,7 @@ ConversationSummary _idleConversation({
       resource: _conversation.resource,
     );
 
-class _DetailClient implements GatewayClient {
+class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
   _DetailClient({
     this.committedMessages = const [],
     this.eventDuringFirstGet,
@@ -1374,6 +1457,7 @@ class _DetailClient implements GatewayClient {
   String _cursor = 'H';
   int getCalls = 0;
   int acquireCalls = 0;
+  final List<String> markReadCalls = [];
 
   @override Stream<GatewayEvent> get events => eventsController.stream;
   @override String? get latestEventCursor => _cursor;
@@ -1401,6 +1485,16 @@ class _DetailClient implements GatewayClient {
         : handler(conversation);
   }
   @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
+  @override
+  Future<ConversationReadState> markConversationRead(
+    ConversationSummary conversation,
+  ) async {
+    markReadCalls.add(conversation.readState.activityVersion);
+    return ConversationReadState(
+      unread: false,
+      activityVersion: conversation.readState.activityVersion,
+    );
+  }
   @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) {
     final call = _SendCall(

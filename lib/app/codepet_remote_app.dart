@@ -15,6 +15,7 @@ import '../core/domain/models.dart';
 import '../application/ports/gateway_client.dart';
 import '../devices/local_device_descriptor.dart';
 import '../features/connection/pair_device_screen.dart';
+import '../features/common/app_toast.dart';
 import '../features/home/remote_home_screen.dart';
 import '../gateway/demo_gateway_client.dart';
 import '../gateway/gateway_client.dart';
@@ -229,6 +230,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   Widget build(BuildContext context) => MaterialApp(
     navigatorKey: _navigatorKey,
     title: 'CodePet Remote', debugShowCheckedModeBanner: false,
+    builder: (context, child) => AppToastHost(child: child!),
     theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF326B66)), useMaterial3: true, scaffoldBackgroundColor: const Color(0xFFF7F9F8), inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder())),
     home: _loading ? const Scaffold(body: Center(child: CircularProgressIndicator())) : RemoteHomeScreen(
       sessions: _sessions, selectedIndex: _selectedIndex,

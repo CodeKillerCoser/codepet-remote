@@ -238,6 +238,11 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     final providerIdentity = provider?.providerType ??
         widget.conversation.providerId;
     final summary = _detail?.summary ?? widget.conversation;
+    final detailStatus = _detail?.effectiveStatus ?? summary.status;
+    final displayStatus = detailStatus == ConversationStatus.idle &&
+            _timeline.any((block) => block.isRunning)
+        ? ConversationStatus.running
+        : detailStatus;
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
     return Scaffold(
       resizeToAvoidBottomInset: false,
@@ -247,6 +252,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         toolbarHeight: 64,
         title: _ConversationTitle(
           summary: summary,
+          status: displayStatus,
           expanded: _metadataExpanded,
           onTap: () => setState(() {
             _metadataExpanded = !_metadataExpanded;
@@ -643,12 +649,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
 class _ConversationTitle extends StatelessWidget {
   const _ConversationTitle({
     required this.summary,
+    required this.status,
     required this.providerIcon,
     required this.expanded,
     required this.onTap,
   });
 
   final ConversationSummary summary;
+  final ConversationStatus status;
   final Widget providerIcon;
   final bool expanded;
   final VoidCallback onTap;
@@ -656,7 +664,7 @@ class _ConversationTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final statusColor = switch (summary.status) {
+    final statusColor = switch (status) {
       ConversationStatus.running => Colors.green,
       ConversationStatus.waitingApproval => colorScheme.tertiary,
       ConversationStatus.waitingUserInput => colorScheme.primary,
@@ -696,7 +704,7 @@ class _ConversationTitle extends StatelessWidget {
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      _statusLabel(summary.status),
+                      _statusLabel(status),
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                             color: colorScheme.onSurfaceVariant,
                           ),

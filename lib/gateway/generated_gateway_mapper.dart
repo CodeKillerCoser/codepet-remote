@@ -59,6 +59,15 @@ final class GeneratedGatewayMapper {
               Map<String, dynamic>.from(value.selection!.toJson()),
             ),
       resource: resourceId(resource),
+      readState: value.readState == null
+          ? const ConversationReadState(
+              unread: false,
+              activityVersion: 'activity-0',
+            )
+          : ConversationReadState(
+              unread: value.readState!.unread,
+              activityVersion: value.readState!.activityVersion,
+            ),
     );
   }
 
@@ -157,6 +166,18 @@ final class GeneratedGatewayMapper {
         return ConversationUpsertedEvent(
           eventCursor: cursor,
           conversation: conversation(payload.conversation),
+        );
+      case sdk.ProtocolEventName.conversationActivityChanged:
+        final payload = envelope.payload as sdk.ConversationActivityChangedEvent;
+        _requireResourceRoute(
+          payload.conversation,
+          expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: expectedProviderRouteKeys,
+        );
+        return ConversationActivityChangedEvent(
+          eventCursor: cursor,
+          conversationId: resourceKey(payload.conversation),
+          activityVersion: payload.activityVersion,
         );
       case sdk.ProtocolEventName.turnUpserted:
         final payload = envelope.payload as sdk.TurnUpsertedEvent;

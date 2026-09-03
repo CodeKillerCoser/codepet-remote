@@ -51,6 +51,7 @@ class ConversationDetailController extends ApplicationNotifier {
   bool _staleCapabilities = false;
   bool _refreshingTerminal = false;
   bool _followOutputRequested = false;
+  String? _markingReadToken;
 
   DeviceSession get session => _session;
   GatewayProvider? get provider => _provider;
@@ -120,6 +121,7 @@ class ConversationDetailController extends ApplicationNotifier {
 
   Future<void> reload() async {
     final epoch = ++_runtimeEpoch;
+    _markingReadToken = null;
     _interactionTimer?.cancel();
     _interactionTimer = null;
     final previousBinding = _binding;
@@ -351,6 +353,7 @@ class ConversationDetailController extends ApplicationNotifier {
           unawaited(window.close());
         },
       );
+      _markReadIfVisible(detail.summary, epoch, lease, binding);
     } catch (error) {
       await window.close();
       if (_acceptsRuntime(epoch, lease, binding)) {
@@ -444,6 +447,9 @@ class ConversationDetailController extends ApplicationNotifier {
     _detail = next;
     _followOutputRequested |= event is TurnOutputDeltaEvent;
     notifyApplicationListeners();
+    if (event is ConversationActivityChangedEvent) {
+      _markReadIfVisible(next.summary, epoch, lease, binding);
+    }
     if (event is TurnUpsertedEvent &&
         event.turn.conversationId == detail.summary.id &&
         event.turn.status.isTerminal &&
@@ -454,6 +460,52 @@ class ConversationDetailController extends ApplicationNotifier {
         lease: lease,
         binding: binding,
       ));
+    }
+  }
+
+  void _markReadIfVisible(
+    ConversationSummary conversation,
+    int epoch,
+    DeviceSessionRuntimeLease lease,
+    _CapabilityBinding binding,
+  ) {
+    if (!conversation.readState.unread ||
+        !_acceptsRuntime(epoch, lease, binding)) {
+      return;
+    }
+    final token = '$epoch\u0000${conversation.readState.activityVersion}';
+    if (_markingReadToken == token) return;
+    _markingReadToken = token;
+    unawaited(_markRead(
+      conversation,
+      token: token,
+      epoch: epoch,
+      lease: lease,
+      binding: binding,
+    ));
+  }
+
+  Future<void> _markRead(
+    ConversationSummary conversation, {
+    required String token,
+    required int epoch,
+    required DeviceSessionRuntimeLease lease,
+    required _CapabilityBinding binding,
+  }) async {
+    try {
+      final state = await _session.markConversationRead(conversation);
+      if (!_acceptsRuntime(epoch, lease, binding)) return;
+      final detail = _detail;
+      if (detail == null || detail.summary.id != conversation.id) return;
+      _detail = detail.withSummary(
+        detail.summary.withReadState(detail.summary.readState.merge(state)),
+      );
+      notifyApplicationListeners();
+    } catch (_) {
+      // Read acknowledgement is best-effort. Keeping the unread marker lets a
+      // later snapshot or activity event safely retry it.
+    } finally {
+      if (_markingReadToken == token) _markingReadToken = null;
     }
   }
 

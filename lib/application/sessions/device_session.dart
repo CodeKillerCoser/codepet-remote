@@ -65,6 +65,7 @@ class DeviceSessionRuntimeLease {
         text: text,
         selection: selection,
       );
+
 }
 
 class DeviceSession extends ApplicationNotifier {
@@ -122,6 +123,23 @@ class DeviceSession extends ApplicationNotifier {
   bool ownsRuntimeLease(DeviceSessionRuntimeLease lease) =>
       connectionState == DeviceConnectionState.online &&
       _ownsRuntime(lease.generation, lease._client);
+
+  Future<ConversationReadState> markConversationRead(
+    ConversationSummary conversation,
+  ) async {
+    final client = _client;
+    if (client == null || client is! ConversationReadGatewayClient) {
+      return conversation.readState;
+    }
+    final readClient = client as ConversationReadGatewayClient;
+    final generation = _runtimeGeneration;
+    final state = await readClient.markConversationRead(conversation);
+    if (_ownsRuntime(generation, client)) {
+      _setConversationReadState(conversation, state);
+      _notifyListenersImmediately();
+    }
+    return state;
+  }
   List<GatewayProvider> get conversationListProviders => handshake?.providers
           .where((provider) => provider.methods.contains('conversation.list'))
           .toList(growable: false) ??
@@ -496,6 +514,29 @@ class DeviceSession extends ApplicationNotifier {
       _notifyListenersImmediately();
       return;
     }
+    if (event is ConversationActivityChangedEvent) {
+      final index = conversations.indexWhere(
+        (conversation) =>
+            conversationRoutingKey(conversation) == event.conversationId ||
+            conversation.id == event.conversationId,
+      );
+      if (index == -1) return;
+      final current = conversations[index];
+      conversations = [
+        for (var itemIndex = 0;
+            itemIndex < conversations.length;
+            itemIndex++)
+          if (itemIndex == index)
+            current.withReadState(ConversationReadState(
+              unread: true,
+              activityVersion: event.activityVersion,
+            ))
+          else
+            conversations[itemIndex],
+      ];
+      _notifyListenersImmediately();
+      return;
+    }
     if (event is TurnOutputDeltaEvent) {
       if (_applyDeltaToConversation(event)) {
         _scheduleConversationNotification();
@@ -522,26 +563,30 @@ class DeviceSession extends ApplicationNotifier {
         break;
       }
     }
+    final eventConversation = current == null
+        ? incoming
+        : incoming.withReadState(current.readState);
     // Event cursors define stream order. Provider timestamps can lag metadata
     // notifications, so accept the event while keeping list order monotonic.
     final next = current != null && current.updatedAt.isAfter(incoming.updatedAt)
         ? ConversationSummary(
-            id: incoming.id,
-            providerId: incoming.providerId,
-            title: incoming.title,
-            preview: incoming.preview,
-            status: incoming.status,
-            permissionLevel: incoming.permissionLevel,
-            model: incoming.model,
-            reasoningEffort: incoming.reasoningEffort,
-            workspaceRoot: incoming.workspaceRoot,
-            createdAt: incoming.createdAt,
+            id: eventConversation.id,
+            providerId: eventConversation.providerId,
+            title: eventConversation.title,
+            preview: eventConversation.preview,
+            status: eventConversation.status,
+            permissionLevel: eventConversation.permissionLevel,
+            model: eventConversation.model,
+            reasoningEffort: eventConversation.reasoningEffort,
+            workspaceRoot: eventConversation.workspaceRoot,
+            createdAt: eventConversation.createdAt,
             updatedAt: current.updatedAt,
-            activeTurn: incoming.activeTurn,
-            turnSendSelection: incoming.turnSendSelection,
-            resource: incoming.resource,
+            activeTurn: eventConversation.activeTurn,
+            turnSendSelection: eventConversation.turnSendSelection,
+            resource: eventConversation.resource,
+            readState: eventConversation.readState,
           )
-        : incoming;
+        : eventConversation;
     conversations = sortRecentConversations([
       for (final conversation in conversations)
         if (conversationRoutingKey(conversation) != key) conversation,
@@ -581,6 +626,7 @@ class DeviceSession extends ApplicationNotifier {
       activeTurn: turn.status.isTerminal ? null : turn,
       turnSendSelection: current.turnSendSelection,
       resource: current.resource,
+      readState: current.readState,
     );
     conversations = sortRecentConversations([
       for (var itemIndex = 0; itemIndex < conversations.length; itemIndex++)
@@ -617,6 +663,7 @@ class DeviceSession extends ApplicationNotifier {
       activeTurn: current.activeTurn,
       turnSendSelection: current.turnSendSelection,
       resource: current.resource,
+      readState: current.readState,
     );
     conversations = [
       for (var itemIndex = 0; itemIndex < conversations.length; itemIndex++)
@@ -627,6 +674,20 @@ class DeviceSession extends ApplicationNotifier {
 
   GatewayProviderRoute? _routeForTurn(TurnTask turn) {
     return (turn.conversationResource ?? turn.resource)?.route;
+  }
+
+  void _setConversationReadState(
+    ConversationSummary conversation,
+    ConversationReadState state,
+  ) {
+    final key = conversationRoutingKey(conversation);
+    conversations = [
+      for (final current in conversations)
+        if (conversationRoutingKey(current) == key)
+          current.withReadState(current.readState.merge(state))
+        else
+          current,
+    ];
   }
 
   Future<void> _refreshConversationsForEvent(

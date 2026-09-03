@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import '../../../application/conversations/conversation_timeline.dart';
+import '../../common/app_toast.dart';
 
 class ConversationTimelineBlockView extends StatelessWidget {
   const ConversationTimelineBlockView({
@@ -139,7 +140,7 @@ class _CommandActivity extends StatefulWidget {
 }
 
 class _CommandActivityState extends State<_CommandActivity> {
-  late bool _expanded = widget.block.isRunning;
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
@@ -149,6 +150,7 @@ class _CommandActivityState extends State<_CommandActivity> {
       if (block.output.isNotEmpty) block.output,
     ].join('\n\n');
     return _ExpandableActivity(
+      key: Key('timeline-command-${block.id}'),
       icon: Icons.terminal_outlined,
       title: block.title,
       status: block.status,
@@ -383,6 +385,7 @@ class _MarkdownContentState extends State<_MarkdownContent> {
 
 class _ExpandableActivity extends StatelessWidget {
   const _ExpandableActivity({
+    super.key,
     required this.icon,
     required this.title,
     required this.status,
@@ -559,10 +562,17 @@ class _CopyAction extends StatelessWidget {
             : () async {
                 await Clipboard.setData(ClipboardData(text: text));
                 if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('已复制'),
-                    duration: Duration(seconds: 1),
+                AppToast.show(
+                  type: AppToastType.success,
+                  duration: const Duration(seconds: 2),
+                  content: const TextSpan(
+                    children: [
+                      TextSpan(
+                        text: '已复制',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      TextSpan(text: '到剪贴板'),
+                    ],
                   ),
                 );
               },

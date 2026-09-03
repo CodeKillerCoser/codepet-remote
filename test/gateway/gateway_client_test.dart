@@ -116,6 +116,44 @@ void main() {
     await client.close();
   });
 
+  test('marks only the observed conversation activity as read', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'conversation.markRead': {
+        'readState': {
+          'unread': true,
+          'activityVersion': 'activity-8',
+        },
+      },
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+    final conversation = _domainConversation().withReadState(
+      const ConversationReadState(
+        unread: true,
+        activityVersion: 'activity-7',
+      ),
+    );
+
+    final state = await client.markConversationRead(conversation);
+
+    expect(transport.requests.last.method, 'conversation.markRead');
+    expect(transport.requests.last.params, {
+      'conversation': _resourceJson(conversation.resource!),
+      'observedActivityVersion': 'activity-7',
+    });
+    expect(state.unread, isTrue);
+    expect(state.activityVersion, 'activity-8');
+    await client.close();
+  });
+
   test('generated Gateway SDK rejects non-HTTPS Provider icons', () {
     final provider = Map<String, dynamic>.from(
       (_handshakeJson()['providers'] as List).single as Map,
@@ -851,6 +889,37 @@ void main() {
     final event = await eventFuture;
     expect(event, isA<ConversationUpsertedEvent>());
     expect((event as ConversationUpsertedEvent).conversation.resource!.nativeResourceId, 'conversation-1');
+    await client.close();
+  });
+
+  test('projects conversation activity with its Host version', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+    final eventFuture = client.events.first;
+
+    transport.emit({
+      'protocolVersion': 1,
+      'eventCursor': 'opaque-activity-8',
+      'event': 'conversation.activityChanged',
+      'payload': {
+        'conversation': _conversationJson()['resource'],
+        'activityVersion': 'activity-8',
+      },
+    });
+
+    final event = await eventFuture as ConversationActivityChangedEvent;
+    expect(event.conversationId, _domainConversation().id);
+    expect(event.activityVersion, 'activity-8');
     await client.close();
   });
 

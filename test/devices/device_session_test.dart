@@ -490,6 +490,53 @@ void main() {
     session.dispose();
   });
 
+  test('activity marks a conversation unread and metadata events preserve it',
+      () async {
+    final conversation = _routedConversation(
+      nativeId: 'unread-thread',
+      providerPluginId: _primaryRoute.providerPluginId,
+      providerInstanceId: _primaryRoute.providerInstanceId,
+      workspaceRoot: '/repo',
+      updatedAt: 1000,
+    );
+    final client = _FakeClient([conversation]);
+    final session = DeviceSession(
+      device: _device('unread-event'),
+      clientFactory: () => client,
+    );
+    await session.connect();
+
+    client.emit(ConversationActivityChangedEvent(
+      eventCursor: 'activity-event',
+      conversationId: conversationRoutingKey(conversation),
+      activityVersion: 'activity-1',
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.conversations.single.readState.unread, isTrue);
+    expect(
+      session.conversations.single.readState.activityVersion,
+      'activity-1',
+    );
+
+    client.emit(ConversationUpsertedEvent(
+      eventCursor: 'metadata-event',
+      conversation: _routedConversation(
+        nativeId: 'unread-thread',
+        providerPluginId: _primaryRoute.providerPluginId,
+        providerInstanceId: _primaryRoute.providerInstanceId,
+        workspaceRoot: '/repo',
+        updatedAt: 2000,
+        title: '新标题',
+      ),
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.conversations.single.title, '新标题');
+    expect(session.conversations.single.readState.unread, isTrue);
+    session.dispose();
+  });
+
   test('turn events keep the conversation list running state live', () async {
     final conversation = _routedConversation(
       nativeId: 'live-thread',

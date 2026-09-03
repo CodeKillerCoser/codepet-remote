@@ -599,6 +599,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  sonner_toast:
+    dependency: "direct main"
+    description:
+      name: sonner_toast
+      sha256: "94aaf752575cd4f186b627c3c7fd48f80c7088532e07475835efba2502b89e17"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.2"
   source_span:
     dependency: transitive
     description:

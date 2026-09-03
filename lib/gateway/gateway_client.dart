@@ -11,7 +11,8 @@ import 'generated_gateway_mapper.dart';
 import 'transport.dart';
 
 /// Infrastructure adapter backed exclusively by CodePet's generated SDK.
-final class ProtocolGatewayClient implements GatewayClient {
+final class ProtocolGatewayClient
+    implements GatewayClient, ConversationReadGatewayClient {
   ProtocolGatewayClient({
     required this.transport,
     required this.clientId,
@@ -375,6 +376,28 @@ final class ProtocolGatewayClient implements GatewayClient {
         lastEventCursor: snapshotCursor,
       ),
       snapshotCursor: snapshotCursor,
+    );
+  }
+
+  @override
+  Future<ConversationReadState> markConversationRead(
+    ConversationSummary conversation,
+  ) async {
+    final resource = conversation.resource;
+    if (resource == null) {
+      throw const FormatException('Conversation has no routed identity');
+    }
+    final response = await _call(
+      () => _protocol.conversationMarkRead(
+        sdk.ConversationMarkReadRequest(
+          conversation: _mapper.sdkResourceId(resource),
+          observedActivityVersion: conversation.readState.activityVersion,
+        ),
+      ),
+    );
+    return ConversationReadState(
+      unread: response.readState.unread,
+      activityVersion: response.readState.activityVersion,
     );
   }
 

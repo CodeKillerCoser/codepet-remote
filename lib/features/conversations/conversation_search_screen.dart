@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../application/conversations/conversation_search_controller.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
+import '../common/app_toast.dart';
 import 'conversation_detail_screen.dart';
 
 class ConversationSearchScreen extends StatefulWidget {
@@ -84,8 +85,17 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
 
   void _openConversation(ConversationSummary conversation) {
     if (!_controller.resultsAreCurrent) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('搜索结果已失效，请重新搜索')),
+      AppToast.show(
+        type: AppToastType.warning,
+        content: const TextSpan(
+          children: [
+            TextSpan(
+              text: '搜索结果已失效',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            TextSpan(text: '，请重新搜索'),
+          ],
+        ),
       );
       return;
     }
