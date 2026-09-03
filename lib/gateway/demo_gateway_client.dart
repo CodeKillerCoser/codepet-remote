@@ -26,7 +26,7 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
         status: ProviderStatus.ready,
         runtimeVersion: '1.0.0',
         executablePath: '/demo/codex',
-        authenticationStatus: 'authenticated',
+        authenticationStatus: 'signed-in',
         authenticationDisplayText: '演示账号已登录',
         usageDisplayText: '演示用量充足',
         capabilities: const GatewayCapabilities(

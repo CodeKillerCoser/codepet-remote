@@ -367,7 +367,7 @@ enum ApprovalStatus {
 
 final class ChoiceOption {
   factory ChoiceOption({
-    required String id,
+    required ProviderId id,
     required String displayName,
     String? description,
     bool? enabled,
@@ -395,7 +395,7 @@ final class ChoiceOption {
     required this.disabledReason,
   });
 
-  final String id;
+  final ProviderId id;
   final String displayName;
   final String? description;
   final bool? enabled;
@@ -822,7 +822,7 @@ final class ConversationCreateRequest {
     String? workspaceMode,
     RoutedResourceId? project,
   }) {
-    final validatedProviderId = providerId;
+    final validatedProviderId = _string(providerId, 'ConversationCreateRequest.providerId', minLength: 1);
     final validatedTitle = title == null ? null : _string(title, 'ConversationCreateRequest.title', minLength: 1);
     final validatedPermissionLevel = _string(permissionLevel, 'ConversationCreateRequest.permissionLevel', minLength: 1);
     final validatedModel = model == null ? null : _string(model, 'ConversationCreateRequest.model', minLength: 1);
@@ -866,7 +866,7 @@ final class ConversationCreateRequest {
     final json = _object(value, path);
     _expectKeys(json, const {'providerId', 'title', 'permissionLevel', 'model', 'reasoningEffort', 'workspaceRoot', 'workspaceMode', 'project'}, path);
     return ConversationCreateRequest(
-      providerId: decodeProviderId(_required(json, 'providerId', path), path: '$path.providerId'),
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       title: json.containsKey('title') && json['title'] != null ? _string(json['title'], '$path.title', minLength: 1) : null,
       permissionLevel: _string(_required(json, 'permissionLevel', path), '$path.permissionLevel', minLength: 1),
       model: json.containsKey('model') && json['model'] != null ? _string(json['model'], '$path.model', minLength: 1) : null,
@@ -878,7 +878,7 @@ final class ConversationCreateRequest {
   }
 
   Map<String, Object?> toJson() => {
-    'providerId': encodeProviderId(providerId),
+    'providerId': providerId,
     if (title != null) 'title': title!,
     'permissionLevel': permissionLevel,
     if (model != null) 'model': model!,
@@ -1262,7 +1262,7 @@ final class ConversationListRequest {
     final json = _object(value, path);
     _expectKeys(json, const {'providerId', 'projectFilter', 'cursor', 'limit'}, path);
     return ConversationListRequest(
-      providerId: decodeProviderId(_required(json, 'providerId', path), path: '$path.providerId'),
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       projectFilter: ConversationProjectFilter.fromJson(_required(json, 'projectFilter', path), path: '$path.projectFilter'),
       cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
       limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
@@ -1270,7 +1270,7 @@ final class ConversationListRequest {
   }
 
   Map<String, Object?> toJson() => {
-    'providerId': encodeProviderId(providerId),
+    'providerId': providerId,
     'projectFilter': projectFilter.toJson(),
     if (cursor != null) 'cursor': cursor!,
     if (limit != null) 'limit': limit!,
@@ -1624,7 +1624,7 @@ final class ConversationSearchRequest {
     Cursor? cursor,
     int? limit,
   }) {
-    final validatedProviderId = providerId;
+    final validatedProviderId = _string(providerId, 'ConversationSearchRequest.providerId', minLength: 1);
     final validatedSearchTerm = _string(searchTerm, 'ConversationSearchRequest.searchTerm', minLength: 1);
     final validatedCursor = cursor == null ? null : _string(cursor, 'ConversationSearchRequest.cursor', minLength: 1);
     final validatedLimit = limit == null ? null : _integer(limit, 'ConversationSearchRequest.limit', minimum: 1, maximum: 100);
@@ -1652,7 +1652,7 @@ final class ConversationSearchRequest {
     final json = _object(value, path);
     _expectKeys(json, const {'providerId', 'searchTerm', 'cursor', 'limit'}, path);
     return ConversationSearchRequest(
-      providerId: decodeProviderId(_required(json, 'providerId', path), path: '$path.providerId'),
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       searchTerm: _string(_required(json, 'searchTerm', path), '$path.searchTerm', minLength: 1),
       cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
       limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
@@ -1660,7 +1660,7 @@ final class ConversationSearchRequest {
   }
 
   Map<String, Object?> toJson() => {
-    'providerId': encodeProviderId(providerId),
+    'providerId': providerId,
     'searchTerm': searchTerm,
     if (cursor != null) 'cursor': cursor!,
     if (limit != null) 'limit': limit!,
@@ -2022,6 +2022,84 @@ enum GatewayCapability {
   String toJson() => wireValue;
 }
 
+final class GatewayDevice {
+  factory GatewayDevice({
+    required String name,
+    required String operatingSystem,
+    required String systemVersion,
+  }) {
+    final validatedName = _string(name, 'GatewayDevice.name', minLength: 1);
+    final validatedOperatingSystem = _string(operatingSystem, 'GatewayDevice.operatingSystem', minLength: 1);
+    final validatedSystemVersion = _string(systemVersion, 'GatewayDevice.systemVersion', minLength: 1);
+    return GatewayDevice._(
+      name: validatedName,
+      operatingSystem: validatedOperatingSystem,
+      systemVersion: validatedSystemVersion,
+    );
+  }
+
+  GatewayDevice._({
+    required this.name,
+    required this.operatingSystem,
+    required this.systemVersion,
+  });
+
+  final String name;
+  final String operatingSystem;
+  final String systemVersion;
+
+  factory GatewayDevice.fromJson(Object? value, {String path = 'GatewayDevice'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'name', 'operatingSystem', 'systemVersion'}, path);
+    return GatewayDevice(
+      name: _string(_required(json, 'name', path), '$path.name', minLength: 1),
+      operatingSystem: _string(_required(json, 'operatingSystem', path), '$path.operatingSystem', minLength: 1),
+      systemVersion: _string(_required(json, 'systemVersion', path), '$path.systemVersion', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'operatingSystem': operatingSystem,
+    'systemVersion': systemVersion,
+  };
+
+  @override
+  String toString() => 'GatewayDevice(name: $name, operatingSystem: $operatingSystem, systemVersion: $systemVersion)';
+}
+
+final class GatewayProtocol {
+  factory GatewayProtocol({
+    required ProtocolVersion version,
+  }) {
+    final validatedVersion = _integer(version, 'GatewayProtocol.version', minimum: 0, maximum: 4294967295);
+    return GatewayProtocol._(
+      version: validatedVersion,
+    );
+  }
+
+  GatewayProtocol._({
+    required this.version,
+  });
+
+  final ProtocolVersion version;
+
+  factory GatewayProtocol.fromJson(Object? value, {String path = 'GatewayProtocol'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'version'}, path);
+    return GatewayProtocol(
+      version: _integer(_required(json, 'version', path), '$path.version', minimum: 0, maximum: 4294967295),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'version': version,
+  };
+
+  @override
+  String toString() => 'GatewayProtocol(version: $version)';
+}
+
 final class GroupedModelCatalog extends ModelCatalog {
   factory GroupedModelCatalog({
     required GroupedModelCatalogKind kind,
@@ -2249,17 +2327,17 @@ final class HandshakeRequest {
 
 final class HandshakeResponse {
   factory HandshakeResponse({
-    required ProtocolVersion selectedVersion,
-    required DeviceDescriptor device,
+    required GatewayProtocol protocol,
+    required GatewayDevice device,
     required List<ProviderSummary> providers,
     required EventCursor eventCursor,
   }) {
-    final validatedSelectedVersion = _integer(selectedVersion, 'HandshakeResponse.selectedVersion', minimum: 0, maximum: 4294967295);
+    final validatedProtocol = protocol;
     final validatedDevice = device;
     final validatedProviders = _freezeList<ProviderSummary>(providers, 'HandshakeResponse.providers', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     final validatedEventCursor = _string(eventCursor, 'HandshakeResponse.eventCursor', minLength: 1);
     return HandshakeResponse._(
-      selectedVersion: validatedSelectedVersion,
+      protocol: validatedProtocol,
       device: validatedDevice,
       providers: validatedProviders,
       eventCursor: validatedEventCursor,
@@ -2267,37 +2345,37 @@ final class HandshakeResponse {
   }
 
   HandshakeResponse._({
-    required this.selectedVersion,
+    required this.protocol,
     required this.device,
     required this.providers,
     required this.eventCursor,
   });
 
-  final ProtocolVersion selectedVersion;
-  final DeviceDescriptor device;
+  final GatewayProtocol protocol;
+  final GatewayDevice device;
   final List<ProviderSummary> providers;
   final EventCursor eventCursor;
 
   factory HandshakeResponse.fromJson(Object? value, {String path = 'HandshakeResponse'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'selectedVersion', 'device', 'providers', 'eventCursor'}, path);
+    _expectKeys(json, const {'protocol', 'device', 'providers', 'eventCursor'}, path);
     return HandshakeResponse(
-      selectedVersion: _integer(_required(json, 'selectedVersion', path), '$path.selectedVersion', minimum: 0, maximum: 4294967295),
-      device: DeviceDescriptor.fromJson(_required(json, 'device', path), path: '$path.device'),
+      protocol: GatewayProtocol.fromJson(_required(json, 'protocol', path), path: '$path.protocol'),
+      device: GatewayDevice.fromJson(_required(json, 'device', path), path: '$path.device'),
       providers: _decodeList<ProviderSummary>(_required(json, 'providers', path), '$path.providers', (item, itemPath) => ProviderSummary.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
       eventCursor: _string(_required(json, 'eventCursor', path), '$path.eventCursor', minLength: 1),
     );
   }
 
   Map<String, Object?> toJson() => {
-    'selectedVersion': selectedVersion,
+    'protocol': protocol.toJson(),
     'device': device.toJson(),
     'providers': providers.map((item) => item.toJson()).toList(growable: false),
     'eventCursor': eventCursor,
   };
 
   @override
-  String toString() => 'HandshakeResponse(selectedVersion: $selectedVersion, device: $device, providers: $providers, eventCursor: $eventCursor)';
+  String toString() => 'HandshakeResponse(protocol: $protocol, device: $device, providers: $providers, eventCursor: $eventCursor)';
 }
 
 sealed class ModelCatalog {
@@ -2479,7 +2557,7 @@ final class ProjectCreateRequest {
     required List<ProjectRoot> roots,
     required Map<String, String> metadata,
   }) {
-    final validatedProviderId = providerId;
+    final validatedProviderId = _string(providerId, 'ProjectCreateRequest.providerId', minLength: 1);
     final validatedIdempotencyKey = _string(idempotencyKey, 'ProjectCreateRequest.idempotencyKey', minLength: 1);
     final validatedName = _string(name, 'ProjectCreateRequest.name', minLength: 1);
     final validatedRoots = _freezeList<ProjectRoot>(roots, 'ProjectCreateRequest.roots', (item, itemPath) => item, encodeItem: (item) => item.toJson());
@@ -2511,7 +2589,7 @@ final class ProjectCreateRequest {
     final json = _object(value, path);
     _expectKeys(json, const {'providerId', 'idempotencyKey', 'name', 'roots', 'metadata'}, path);
     return ProjectCreateRequest(
-      providerId: decodeProviderId(_required(json, 'providerId', path), path: '$path.providerId'),
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       idempotencyKey: _string(_required(json, 'idempotencyKey', path), '$path.idempotencyKey', minLength: 1),
       name: _string(_required(json, 'name', path), '$path.name', minLength: 1),
       roots: _decodeList<ProjectRoot>(_required(json, 'roots', path), '$path.roots', (item, itemPath) => ProjectRoot.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
@@ -2520,7 +2598,7 @@ final class ProjectCreateRequest {
   }
 
   Map<String, Object?> toJson() => {
-    'providerId': encodeProviderId(providerId),
+    'providerId': providerId,
     'idempotencyKey': idempotencyKey,
     'name': name,
     'roots': roots.map((item) => item.toJson()).toList(growable: false),
@@ -2687,7 +2765,7 @@ final class ProjectListRequest {
     Cursor? cursor,
     int? limit,
   }) {
-    final validatedProviderId = providerId;
+    final validatedProviderId = _string(providerId, 'ProjectListRequest.providerId', minLength: 1);
     final validatedCursor = cursor == null ? null : _string(cursor, 'ProjectListRequest.cursor', minLength: 1);
     final validatedLimit = limit == null ? null : _integer(limit, 'ProjectListRequest.limit', minimum: 1, maximum: 100);
     return ProjectListRequest._(
@@ -2711,14 +2789,14 @@ final class ProjectListRequest {
     final json = _object(value, path);
     _expectKeys(json, const {'providerId', 'cursor', 'limit'}, path);
     return ProjectListRequest(
-      providerId: decodeProviderId(_required(json, 'providerId', path), path: '$path.providerId'),
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
       limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
     );
   }
 
   Map<String, Object?> toJson() => {
-    'providerId': encodeProviderId(providerId),
+    'providerId': providerId,
     if (cursor != null) 'cursor': cursor!,
     if (limit != null) 'limit': limit!,
   };
@@ -2896,7 +2974,7 @@ final class ProviderAuthentication {
     String? displayText,
   }) {
     final validatedStatus = status;
-    final validatedDisplayText = displayText == null ? null : _string(displayText, 'ProviderAuthentication.displayText');
+    final validatedDisplayText = displayText == null ? null : _string(displayText, 'ProviderAuthentication.displayText', minLength: 1);
     return ProviderAuthentication._(
       status: validatedStatus,
       displayText: validatedDisplayText,
@@ -2916,7 +2994,7 @@ final class ProviderAuthentication {
     _expectKeys(json, const {'status', 'displayText'}, path);
     return ProviderAuthentication(
       status: ProviderAuthenticationStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
-      displayText: json.containsKey('displayText') && json['displayText'] != null ? _string(json['displayText'], '$path.displayText') : null,
+      displayText: json.containsKey('displayText') && json['displayText'] != null ? _string(json['displayText'], '$path.displayText', minLength: 1) : null,
     );
   }
 
@@ -2930,9 +3008,12 @@ final class ProviderAuthentication {
 }
 
 enum ProviderAuthenticationStatus {
-  authenticated('authenticated'),
-  unauthenticated('unauthenticated'),
-  unknown('unknown');
+  unknown('unknown'),
+  signedIn('signed-in'),
+  signedOut('signed-out'),
+  expired('expired'),
+  error('error'),
+  unsupported('unsupported');
 
   const ProviderAuthenticationStatus(this.wireValue);
 
@@ -2943,32 +3024,32 @@ enum ProviderAuthenticationStatus {
     for (final candidate in values) {
       if (candidate.wireValue == wireValue) return candidate;
     }
-    throw ProtocolCodecException(path, 'expected one of: authenticated, unauthenticated, unknown');
+    throw ProtocolCodecException(path, 'expected one of: unknown, signed-in, signed-out, expired, error, unsupported');
   }
 
   String toJson() => wireValue;
 }
 
-final class ProviderCapabilitySummary {
-  factory ProviderCapabilitySummary({
+final class ProviderCapabilitiesSummary {
+  factory ProviderCapabilitiesSummary({
     required String revision,
   }) {
-    final validatedRevision = _string(revision, 'ProviderCapabilitySummary.revision', minLength: 1);
-    return ProviderCapabilitySummary._(
+    final validatedRevision = _string(revision, 'ProviderCapabilitiesSummary.revision', minLength: 1);
+    return ProviderCapabilitiesSummary._(
       revision: validatedRevision,
     );
   }
 
-  ProviderCapabilitySummary._({
+  ProviderCapabilitiesSummary._({
     required this.revision,
   });
 
   final String revision;
 
-  factory ProviderCapabilitySummary.fromJson(Object? value, {String path = 'ProviderCapabilitySummary'}) {
+  factory ProviderCapabilitiesSummary.fromJson(Object? value, {String path = 'ProviderCapabilitiesSummary'}) {
     final json = _object(value, path);
     _expectKeys(json, const {'revision'}, path);
-    return ProviderCapabilitySummary(
+    return ProviderCapabilitiesSummary(
       revision: _string(_required(json, 'revision', path), '$path.revision', minLength: 1),
     );
   }
@@ -2978,7 +3059,7 @@ final class ProviderCapabilitySummary {
   };
 
   @override
-  String toString() => 'ProviderCapabilitySummary(revision: $revision)';
+  String toString() => 'ProviderCapabilitiesSummary(revision: $revision)';
 }
 
 final class ProviderChangedEvent {
@@ -3246,9 +3327,9 @@ final class ProviderRuntime {
 }
 
 enum ProviderStatus {
-  disconnected('disconnected'),
   connecting('connecting'),
   ready('ready'),
+  stopped('stopped'),
   unavailable('unavailable'),
   error('error');
 
@@ -3261,7 +3342,7 @@ enum ProviderStatus {
     for (final candidate in values) {
       if (candidate.wireValue == wireValue) return candidate;
     }
-    throw ProtocolCodecException(path, 'expected one of: disconnected, connecting, ready, unavailable, error');
+    throw ProtocolCodecException(path, 'expected one of: connecting, ready, stopped, unavailable, error');
   }
 
   String toJson() => wireValue;
@@ -3269,10 +3350,10 @@ enum ProviderStatus {
 
 final class ProviderSummary {
   factory ProviderSummary({
-    required ProviderId id,
+    required String id,
     required ProviderIdentity identity,
     required ProviderRuntime runtime,
-    required ProviderCapabilitySummary capabilities,
+    required ProviderCapabilitiesSummary capabilities,
   }) {
     final validatedId = _string(id, 'ProviderSummary.id', minLength: 1);
     final validatedIdentity = identity;
@@ -3293,10 +3374,10 @@ final class ProviderSummary {
     required this.capabilities,
   });
 
-  final ProviderId id;
+  final String id;
   final ProviderIdentity identity;
   final ProviderRuntime runtime;
-  final ProviderCapabilitySummary capabilities;
+  final ProviderCapabilitiesSummary capabilities;
 
   factory ProviderSummary.fromJson(Object? value, {String path = 'ProviderSummary'}) {
     final json = _object(value, path);
@@ -3305,7 +3386,7 @@ final class ProviderSummary {
       id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
       identity: ProviderIdentity.fromJson(_required(json, 'identity', path), path: '$path.identity'),
       runtime: ProviderRuntime.fromJson(_required(json, 'runtime', path), path: '$path.runtime'),
-      capabilities: ProviderCapabilitySummary.fromJson(_required(json, 'capabilities', path), path: '$path.capabilities'),
+      capabilities: ProviderCapabilitiesSummary.fromJson(_required(json, 'capabilities', path), path: '$path.capabilities'),
     );
   }
 
@@ -3323,50 +3404,57 @@ final class ProviderSummary {
 final class ProviderUsage {
   factory ProviderUsage({
     required String displayText,
-    required List<ProviderUsageDetail> details,
+    TimestampMs? observedAt,
+    List<ProviderUsageDetail>? details,
   }) {
-    final validatedDisplayText = _string(displayText, 'ProviderUsage.displayText');
-    final validatedDetails = _freezeList<ProviderUsageDetail>(details, 'ProviderUsage.details', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedDisplayText = _string(displayText, 'ProviderUsage.displayText', minLength: 1);
+    final validatedObservedAt = observedAt == null ? null : _integer(observedAt, 'ProviderUsage.observedAt', minimum: 0, maximum: 9007199254740991);
+    final validatedDetails = details == null ? null : _freezeList<ProviderUsageDetail>(details, 'ProviderUsage.details', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     return ProviderUsage._(
       displayText: validatedDisplayText,
+      observedAt: validatedObservedAt,
       details: validatedDetails,
     );
   }
 
   ProviderUsage._({
     required this.displayText,
+    required this.observedAt,
     required this.details,
   });
 
   final String displayText;
-  final List<ProviderUsageDetail> details;
+  final TimestampMs? observedAt;
+  final List<ProviderUsageDetail>? details;
 
   factory ProviderUsage.fromJson(Object? value, {String path = 'ProviderUsage'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'displayText', 'details'}, path);
+    _expectKeys(json, const {'displayText', 'observedAt', 'details'}, path);
     return ProviderUsage(
-      displayText: _string(_required(json, 'displayText', path), '$path.displayText'),
-      details: _decodeList<ProviderUsageDetail>(_required(json, 'details', path), '$path.details', (item, itemPath) => ProviderUsageDetail.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      displayText: _string(_required(json, 'displayText', path), '$path.displayText', minLength: 1),
+      observedAt: json.containsKey('observedAt') && json['observedAt'] != null ? _integer(json['observedAt'], '$path.observedAt', minimum: 0, maximum: 9007199254740991) : null,
+      details: json.containsKey('details') && json['details'] != null ? _decodeList<ProviderUsageDetail>(json['details'], '$path.details', (item, itemPath) => ProviderUsageDetail.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
     );
   }
 
   Map<String, Object?> toJson() => {
     'displayText': displayText,
-    'details': details.map((item) => item.toJson()).toList(growable: false),
+    if (observedAt != null) 'observedAt': observedAt!,
+    if (details != null) 'details': details!.map((item) => item.toJson()).toList(growable: false),
   };
 
   @override
-  String toString() => 'ProviderUsage(displayText: $displayText, details: $details)';
+  String toString() => 'ProviderUsage(displayText: $displayText, observedAt: $observedAt, details: $details)';
 }
 
 final class ProviderUsageDetail {
   factory ProviderUsageDetail({
     required String namespace,
-    required int schemaVersion,
+    required String schemaVersion,
     required JsonObject data,
   }) {
     final validatedNamespace = _string(namespace, 'ProviderUsageDetail.namespace', minLength: 1);
-    final validatedSchemaVersion = _integer(schemaVersion, 'ProviderUsageDetail.schemaVersion', minimum: 1);
+    final validatedSchemaVersion = _string(schemaVersion, 'ProviderUsageDetail.schemaVersion', minLength: 1);
     final validatedData = _jsonObject(data, 'ProviderUsageDetail.data');
     return ProviderUsageDetail._(
       namespace: validatedNamespace,
@@ -3382,7 +3470,7 @@ final class ProviderUsageDetail {
   });
 
   final String namespace;
-  final int schemaVersion;
+  final String schemaVersion;
   final JsonObject data;
 
   factory ProviderUsageDetail.fromJson(Object? value, {String path = 'ProviderUsageDetail'}) {
@@ -3390,7 +3478,7 @@ final class ProviderUsageDetail {
     _expectKeys(json, const {'namespace', 'schemaVersion', 'data'}, path);
     return ProviderUsageDetail(
       namespace: _string(_required(json, 'namespace', path), '$path.namespace', minLength: 1),
-      schemaVersion: _integer(_required(json, 'schemaVersion', path), '$path.schemaVersion', minimum: 1),
+      schemaVersion: _string(_required(json, 'schemaVersion', path), '$path.schemaVersion', minLength: 1),
       data: _jsonObject(_required(json, 'data', path), '$path.data'),
     );
   }

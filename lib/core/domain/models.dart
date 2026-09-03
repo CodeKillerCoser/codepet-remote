@@ -62,9 +62,9 @@ class DeviceDescriptor {
 }
 
 enum ProviderStatus {
-  disconnected('disconnected'),
   connecting('connecting'),
   ready('ready'),
+  stopped('stopped'),
   unavailable('unavailable'),
   error('error');
 

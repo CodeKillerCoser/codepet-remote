@@ -1399,13 +1399,6 @@ class _FakeTransport
     if (response == null) {
       throw StateError('No response for $method');
     }
-    if (method == 'protocol.handshake') {
-      response = Map<String, dynamic>.from(response);
-      response['selectedVersion'] = 1;
-      final device = Map<String, dynamic>.from(response['device'] as Map);
-      device.remove('identityFingerprint');
-      response['device'] = device;
-    }
     return {
       'jsonrpc': '2.0',
       'id': request['id'],
@@ -1440,9 +1433,9 @@ class _RequestRecord {
 
 JsonMap _handshakeJson() {
   return {
-    'selectedVersion': 1,
+    'protocol': {'version': 1},
     'device': {
-      'deviceName': 'Test Host',
+      'name': 'Test Host',
       'operatingSystem': 'TestOS',
       'systemVersion': '1.0',
     },
@@ -1462,7 +1455,7 @@ JsonMap _providerSummaryJson() => {
         'version': '1.0.0',
         'executablePath': '/usr/local/bin/codex',
         'authentication': {
-          'status': 'authenticated',
+          'status': 'signed-in',
           'displayText': 'Signed in',
         },
         'usage': {
@@ -1470,7 +1463,7 @@ JsonMap _providerSummaryJson() => {
           'details': [
             {
               'namespace': 'dev.codepet.codex',
-              'schemaVersion': 1,
+              'schemaVersion': '1',
               'data': {'opaque': true},
             },
           ],

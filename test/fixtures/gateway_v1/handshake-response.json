@@ -5,9 +5,9 @@
   "response": {
     "status": "ok",
     "result": {
-      "selectedVersion": 1,
+      "protocol": {"version": 1},
       "device": {
-        "deviceName": "MacBook",
+        "name": "MacBook",
         "operatingSystem": "macOS",
         "systemVersion": "15.6"
       },
@@ -23,7 +23,7 @@
             "version": "0.151.0",
             "executablePath": "/usr/local/bin/codex",
             "authentication": {
-              "status": "authenticated",
+              "status": "signed-in",
               "displayText": "Signed in"
             },
             "usage": {

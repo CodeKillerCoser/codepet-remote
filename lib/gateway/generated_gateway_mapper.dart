@@ -26,7 +26,7 @@ final class GeneratedGatewayMapper {
             value.runtime.authentication?.displayText,
         usageDisplayText: value.runtime.usage?.displayText,
         usageDetails: value.runtime.usage?.details
-                .map((detail) => Map<String, dynamic>.from(detail.toJson()))
+                ?.map((detail) => Map<String, dynamic>.from(detail.toJson()))
                 .toList(growable: false) ??
             const [],
         capabilities: capabilities == null

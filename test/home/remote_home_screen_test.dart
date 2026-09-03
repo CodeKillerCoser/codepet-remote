@@ -781,7 +781,7 @@ const _homeListProvider = GatewayProvider(
   status: ProviderStatus.ready,
   runtimeVersion: '0.151.0',
   executablePath: '/usr/local/bin/codex',
-  authenticationStatus: 'authenticated',
+  authenticationStatus: 'signed-in',
   authenticationDisplayText: 'Signed in',
   usageDisplayText: '72% remaining',
   capabilities: GatewayCapabilities(

@@ -110,7 +110,7 @@ final class ProtocolGatewayClient
         ),
       ),
     );
-    if (generated.selectedVersion != sdk.protocolVersion) {
+    if (generated.protocol.version != sdk.protocolVersion) {
       await transport.close();
       throw const GatewayConnectionException(
         'Gateway identity mismatch',
@@ -125,7 +125,7 @@ final class ProtocolGatewayClient
       providers.map((value) => MapEntry(value.id, value)),
     );
     final descriptor = DeviceDescriptor(
-      deviceName: generated.device.deviceName,
+      deviceName: generated.device.name,
       operatingSystem: generated.device.operatingSystem,
       systemVersion: generated.device.systemVersion,
     );
