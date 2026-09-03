@@ -7,7 +7,6 @@ import '../../core/domain/models.dart';
 import '../common/identity_icons.dart';
 import '../conversations/conversation_detail_screen.dart';
 import '../conversations/conversation_search_screen.dart';
-import '../gomoku/gomoku_screen.dart';
 
 const int _projectPageSize = 6;
 const int _conversationPageSize = 8;
@@ -132,14 +131,8 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
             onSelected: (value) {
               if (value == 'connect') widget.onAddDevice();
               if (value == 'settings') widget.onOpenSettings();
-              if (value == 'gomoku') {
-                Navigator.of(context).push<void>(
-                  MaterialPageRoute(builder: (_) => const GomokuScreen()),
-                );
-              }
             },
             itemBuilder: (context) => const [
-              PopupMenuItem(value: 'gomoku', child: Text('五子棋')),
               PopupMenuItem(value: 'connect', child: Text('连接设备')),
               PopupMenuItem(value: 'settings', child: Text('App 设置')),
             ],
