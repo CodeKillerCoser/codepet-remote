@@ -4,6 +4,21 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val releaseStoreFile = providers.gradleProperty("CODEPET_RELEASE_STORE_FILE")
+    .orNull ?: System.getenv("CODEPET_RELEASE_STORE_FILE")
+val releaseStorePassword = providers.gradleProperty("CODEPET_RELEASE_STORE_PASSWORD")
+    .orNull ?: System.getenv("CODEPET_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = providers.gradleProperty("CODEPET_RELEASE_KEY_ALIAS")
+    .orNull ?: System.getenv("CODEPET_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = providers.gradleProperty("CODEPET_RELEASE_KEY_PASSWORD")
+    .orNull ?: System.getenv("CODEPET_RELEASE_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.codepet.remote"
     compileSdk = flutter.compileSdkVersion
@@ -28,11 +43,22 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfigs.findByName("release")?.let {
+                signingConfig = it
+            }
         }
     }
 }

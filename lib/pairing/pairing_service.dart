@@ -1,6 +1,5 @@
-import '../devices/device_models.dart';
-import '../devices/device_registry.dart';
-import '../devices/local_device_descriptor.dart';
+import '../core/domain/paired_device.dart';
+import '../application/ports/pairing_gateway.dart';
 import '../core/domain/models.dart';
 import '../security/pinned_tls.dart';
 import 'pairing_models.dart';
@@ -30,29 +29,27 @@ class PinnedPairingExchangeClient implements PairingExchangeClient {
       );
 }
 
-class LanAdmissionService {
-  LanAdmissionService({
-    required this.registry,
-    DeviceDescriptorProvider? descriptorProvider,
+class LanPairingGateway implements PairingGateway {
+  const LanPairingGateway({
     this.exchangeClient = const PinnedPairingExchangeClient(),
-  }) : descriptorProvider =
-            descriptorProvider ?? LocalDeviceDescriptorProvider();
+  });
 
-  final DeviceRegistry registry;
-  final DeviceDescriptorProvider descriptorProvider;
   final PairingExchangeClient exchangeClient;
 
-  Future<PairedDevice> pair(String rawPayload) async {
+  @override
+  Future<PairingRegistration> exchange({
+    required String rawPayload,
+    required String clientId,
+    required DeviceDescriptor clientDevice,
+  }) async {
     final qr = PairingQrPayload.parse(rawPayload);
-    final clientId = await registry.loadOrCreateClientId();
-    final descriptor = await descriptorProvider.load();
     final json = await exchangeClient.exchange(
       expectedFingerprint: qr.certSha256,
       uri: qr.exchangeUrl,
       body: sdk.PairingExchangeRequest.fromJson({
         'pairingSecret': qr.pairingSecret,
         'clientId': clientId,
-        'device': descriptor.toJson(),
+        'device': clientDevice.toJson(),
       }).toJson(),
     );
     final response = PairingExchangeResponse.fromJson(json);
@@ -80,7 +77,9 @@ class LanAdmissionService {
       autoConnect: true,
       connectionKind: DeviceConnectionKind.pairedGateway,
     );
-    await registry.register(device, response.credential);
-    return device;
+    return PairingRegistration(
+      device: device,
+      credential: response.credential,
+    );
   }
 }

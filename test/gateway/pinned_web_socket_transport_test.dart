@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:codepet_remote/core/errors/gateway_failures.dart';
+import 'package:codepet_remote/application/errors/application_failures.dart';
 import 'package:codepet_remote/gateway/pinned_web_socket_transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -41,12 +41,19 @@ void main() {
       isFalse,
     );
     expect(
-      isRetryableGatewayFailure(const WebSocketException('unavailable', 503)),
+      isRetryableGatewayFailure(const GatewayConnectionException(
+        'unavailable',
+        retryable: true,
+      )),
       isTrue,
     );
   });
 
-  test('retries only an abnormal network close code', () {
+  test('retries transient network and server close codes', () {
+    expect(
+      isRetryableWebSocketCloseCode(WebSocketStatus.goingAway),
+      isTrue,
+    );
     expect(
       isRetryableWebSocketCloseCode(WebSocketStatus.abnormalClosure),
       isTrue,
@@ -65,8 +72,10 @@ void main() {
     );
     expect(
       isRetryableWebSocketCloseCode(WebSocketStatus.internalServerError),
-      isFalse,
+      isTrue,
     );
+    expect(isRetryableWebSocketCloseCode(1012), isTrue);
+    expect(isRetryableWebSocketCloseCode(1013), isTrue);
     expect(isRetryableWebSocketCloseCode(null), isFalse);
   });
 }

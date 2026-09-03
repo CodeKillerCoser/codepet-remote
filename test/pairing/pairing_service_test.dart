@@ -1,7 +1,8 @@
 import 'dart:convert';
 
 import 'package:codepet_remote/devices/device_registry.dart';
-import 'package:codepet_remote/devices/local_device_descriptor.dart';
+import 'package:codepet_remote/application/ports/device_identity.dart';
+import 'package:codepet_remote/application/pairing/pair_device.dart';
 import 'package:codepet_remote/core/domain/models.dart';
 import 'package:codepet_remote/pairing/pairing_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,10 +22,10 @@ void main() {
       operatingSystem: 'Android',
       systemVersion: '16',
     );
-    final service = LanAdmissionService(
-      registry: registry,
+    final service = PairDeviceUseCase(
+      repository: registry,
       descriptorProvider: const _DescriptorProvider(descriptor),
-      exchangeClient: exchange,
+      gateway: LanPairingGateway(exchangeClient: exchange),
     );
 
     final device = await service.pair(_qrPayload());

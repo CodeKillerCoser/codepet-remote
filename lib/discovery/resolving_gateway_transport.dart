@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import '../core/domain/models.dart';
-import '../core/errors/gateway_failures.dart';
+import '../application/errors/application_failures.dart';
 import '../gateway/pinned_web_socket_transport.dart';
 import '../gateway/transport.dart';
 import 'codepet_discovery.dart';

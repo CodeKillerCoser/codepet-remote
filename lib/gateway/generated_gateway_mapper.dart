@@ -58,7 +58,7 @@ final class GeneratedGatewayMapper {
           : TurnSendSelection.fromJson(
               Map<String, dynamic>.from(value.selection!.toJson()),
             ),
-      wireResource: Map<String, dynamic>.from(resource.toJson()),
+      resource: resourceId(resource),
     );
   }
 
@@ -73,9 +73,8 @@ final class GeneratedGatewayMapper {
       startedAt: startedAt,
       updatedAt: _time(value.updatedAt) ?? startedAt ?? _epoch,
       completedAt: _time(value.completedAt),
-      wireResource: Map<String, dynamic>.from(value.resource.toJson()),
-      conversationWireResource:
-          Map<String, dynamic>.from(value.conversation.toJson()),
+      resource: resourceId(value.resource),
+      conversationResource: resourceId(value.conversation),
     );
   }
 
@@ -189,15 +188,64 @@ final class GeneratedGatewayMapper {
           kind: payload.kind.wireValue,
           delta: payload.delta,
         );
-      case sdk.ProtocolEventName.deviceStatusChanged:
       case sdk.ProtocolEventName.approvalRequested:
+        final payload = envelope.payload as sdk.ApprovalRequestedEvent;
+        return _approvalEvent(
+          cursor,
+          payload.approval,
+          expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: expectedProviderRouteKeys,
+        );
       case sdk.ProtocolEventName.approvalResolved:
+        final payload = envelope.payload as sdk.ApprovalResolvedEvent;
+        return _approvalEvent(
+          cursor,
+          payload.approval,
+          expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: expectedProviderRouteKeys,
+        );
+      case sdk.ProtocolEventName.deviceStatusChanged:
         return UnknownGatewayEvent(
           eventCursor: cursor,
           name: envelope.event.wireName,
           payload: _unsupportedEventPayload(envelope),
         );
     }
+  }
+
+  ApprovalChangedEvent _approvalEvent(
+    String cursor,
+    sdk.Approval approval, {
+    required String expectedDeviceId,
+    required Set<String> expectedProviderRouteKeys,
+  }) {
+    _requireSameRoute(approval.resource, approval.conversation);
+    _requireSameRoute(approval.resource, approval.turn);
+    _requireResourceRoute(
+      approval.resource,
+      expectedDeviceId: expectedDeviceId,
+      expectedProviderRouteKeys: expectedProviderRouteKeys,
+    );
+    final requestedAt = _time(approval.requestedAt) ?? _epoch;
+    final message = GatewayMessage(
+      id: resourceKey(approval.resource),
+      itemId: approval.resource.nativeResourceId,
+      turnId: resourceKey(approval.turn),
+      role: MessageRole.system,
+      kind: 'approval',
+      content: approval.description ?? approval.title,
+      createdAt: requestedAt,
+      isStreaming: false,
+      title: approval.title,
+      status: approval.status.wireValue,
+      approvalStatus: approval.status.wireValue,
+      approvalDescription: approval.description,
+    );
+    return ApprovalChangedEvent(
+      eventCursor: cursor,
+      conversationId: resourceKey(approval.conversation),
+      approval: message,
+    );
   }
 
   sdk.GatewayProviderRoute sdkProviderRoute(GatewayProviderRoute route) =>
@@ -207,8 +255,23 @@ final class GeneratedGatewayMapper {
         providerInstanceId: route.providerInstanceId,
       );
 
-  sdk.RoutedResourceId sdkResource(JsonMap value) =>
-      sdk.RoutedResourceId.fromJson(value);
+  sdk.RoutedResourceId sdkResourceId(RoutedResourceId value) =>
+      sdk.RoutedResourceId(
+        deviceId: value.route.deviceId,
+        providerPluginId: value.route.providerPluginId,
+        providerInstanceId: value.route.providerInstanceId,
+        nativeResourceId: value.nativeResourceId,
+      );
+
+  RoutedResourceId resourceId(sdk.RoutedResourceId value) =>
+      RoutedResourceId(
+        route: GatewayProviderRoute(
+          deviceId: value.deviceId,
+          providerPluginId: value.providerPluginId,
+          providerInstanceId: value.providerInstanceId,
+        ),
+        nativeResourceId: value.nativeResourceId,
+      );
 
   String resourceKey(sdk.RoutedResourceId value) =>
       '${value.deviceId}\u0000${value.providerPluginId}\u0000'

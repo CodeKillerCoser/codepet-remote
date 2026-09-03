@@ -1,10 +1,11 @@
 import 'dart:async';
 
 import 'package:codepet_remote/app/codepet_remote_app.dart';
-import 'package:codepet_remote/devices/device_models.dart';
+import 'package:codepet_remote/core/domain/paired_device.dart';
+import 'package:codepet_remote/application/ports/device_identity.dart';
 import 'package:codepet_remote/devices/device_registry.dart';
-import 'package:codepet_remote/devices/local_device_descriptor.dart';
-import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/application/ports/gateway_client.dart';
+import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

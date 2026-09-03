@@ -1,7 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 
-import '../domain/models.dart';
+import '../../core/domain/models.dart';
 
 class GatewayProtocolException implements Exception {
   const GatewayProtocolException({
@@ -35,19 +34,20 @@ class GatewayConnectionException implements Exception {
   String toString() => message;
 }
 
-bool isRetryableGatewayFailure(Object error) {
-  if (error is GatewayConnectionException) return error.retryable;
-  if (error is GatewayProtocolException) return error.retryable;
-  if (error is TimeoutException || error is SocketException) return true;
-  if (error is WebSocketException) {
-    final status = error.httpStatusCode;
-    return status == null || status == 408 || status == 429 || status >= 500;
-  }
-  return false;
+class GatewayCursorGapException implements Exception {
+  const GatewayCursorGapException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
+bool isRetryableGatewayFailure(Object error) =>
+    error is GatewayConnectionException && error.retryable ||
+    error is GatewayProtocolException && error.retryable ||
+    error is TimeoutException;
+
 bool isGatewayOutcomeUnknown(Object error) =>
-    (error is GatewayConnectionException && error.outcomeUnknown) ||
-    error is TimeoutException ||
-    error is SocketException ||
-    error is WebSocketException;
+    error is GatewayConnectionException && error.outcomeUnknown ||
+    error is TimeoutException;

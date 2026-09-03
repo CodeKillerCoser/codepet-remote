@@ -26,21 +26,58 @@ class PinnedTlsConnection {
   }
 
   Future<Map<String, dynamic>> jsonRequest({required String method, required Uri uri, String? bearer, Object? body}) async {
-    final socket = await connect(uri);
-    final encoded = body == null ? <int>[] : utf8.encode(jsonEncode(body));
-    final path = uri.hasQuery ? '${uri.path}?${uri.query}' : (uri.path.isEmpty ? '/' : uri.path);
-    socket.add(utf8.encode('$method $path HTTP/1.1\r\nHost: ${uri.host}:${uri.hasPort ? uri.port : 443}\r\nContent-Type: application/json\r\nContent-Length: ${encoded.length}\r\n${bearer == null ? '' : 'Authorization: Bearer $bearer\r\n'}Connection: close\r\n\r\n'));
-    socket.add(encoded);
-    await socket.flush();
-    final bytes = await socket.fold<List<int>>(<int>[], (all, chunk) => all..addAll(chunk));
-    final marker = _indexOf(bytes, const [13, 10, 13, 10]);
-    if (marker < 0) throw const HttpException('Invalid HTTPS response');
-    final headers = ascii.decode(bytes.sublist(0, marker));
-    final status = int.tryParse(headers.split('\r\n').first.split(' ')[1]);
-    final payload = jsonDecode(utf8.decode(bytes.sublist(marker + 4)));
-    if (payload is! Map) throw const FormatException('HTTPS JSON response must be an object');
-    if (status == null || status < 200 || status >= 300) throw HttpException('Remote request failed ($status): ${payload['message'] ?? payload['code'] ?? 'unknown'}');
-    return Map<String, dynamic>.from(payload);
+    const timeout = Duration(seconds: 10);
+    const maximumResponseBytes = 1024 * 1024;
+    if (uri.scheme != 'https') {
+      throw const FormatException('HTTPS endpoint required');
+    }
+    var pinValidated = false;
+    final client = HttpClient(
+      context: SecurityContext(withTrustedRoots: false),
+    )..connectionTimeout = timeout;
+    client.badCertificateCallback = (certificate, _, _) {
+      final matches = constantTimeEquals(
+        certificateSha256(certificate),
+        expectedSha256,
+      );
+      pinValidated |= matches;
+      return matches;
+    };
+    try {
+      final request = await client.openUrl(method, uri).timeout(timeout);
+      request.headers.contentType = ContentType.json;
+      if (bearer != null) {
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $bearer');
+      }
+      if (body != null) request.add(utf8.encode(jsonEncode(body)));
+      final response = await request.close().timeout(timeout);
+      final bytes = <int>[];
+      await for (final chunk in response.timeout(timeout)) {
+        if (bytes.length + chunk.length > maximumResponseBytes) {
+          throw const HttpException('HTTPS response is too large');
+        }
+        bytes.addAll(chunk);
+      }
+      if (!pinValidated) {
+        throw const HandshakeException(
+          'TLS leaf certificate fingerprint was not validated',
+        );
+      }
+      final payload = jsonDecode(utf8.decode(bytes));
+      if (payload is! Map) {
+        throw const FormatException('HTTPS JSON response must be an object');
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(
+          'Remote request failed (${response.statusCode}): '
+          '${payload['message'] ?? payload['code'] ?? 'unknown'}',
+          uri: uri,
+        );
+      }
+      return Map<String, dynamic>.from(payload);
+    } finally {
+      client.close(force: true);
+    }
   }
 }
 
@@ -53,13 +90,4 @@ bool constantTimeEquals(String left, String right) {
   final length = a.length < b.length ? a.length : b.length;
   for (var index = 0; index < length; index++) { difference |= a[index] ^ b[index]; }
   return difference == 0;
-}
-
-int _indexOf(List<int> source, List<int> pattern) {
-  for (var index = 0; index <= source.length - pattern.length; index++) {
-    var matches = true;
-    for (var offset = 0; offset < pattern.length; offset++) { if (source[index + offset] != pattern[offset]) { matches = false; break; } }
-    if (matches) return index;
-  }
-  return -1;
 }

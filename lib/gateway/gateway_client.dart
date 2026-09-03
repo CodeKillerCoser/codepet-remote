@@ -4,8 +4,9 @@ import 'dart:collection';
 import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 
 import '../core/domain/models.dart';
-import '../core/errors/gateway_failures.dart';
-import '../core/ports/gateway_client.dart';
+import '../application/errors/application_failures.dart';
+import '../application/ports/gateway_client.dart';
+import '../application/sync/gateway_event_window.dart';
 import 'generated_gateway_mapper.dart';
 import 'transport.dart';
 
@@ -270,58 +271,110 @@ final class ProtocolGatewayClient implements GatewayClient {
   Future<ConversationSnapshot> getConversation(
     ConversationSummary conversation,
   ) async {
-    final resourceJson = conversation.wireResource;
-    if (resourceJson == null) {
+    final resourceId = conversation.resource;
+    if (resourceId == null) {
       throw const FormatException('Conversation has no routed identity');
     }
-    final requested = _mapper.sdkResource(resourceJson);
-    final response = await _call(
-      () => _protocol.conversationGet(
-        sdk.ConversationGetRequest(conversation: requested),
-      ),
-    );
-    final returned = response.conversation.resource;
-    if (_mapper.resourceKey(returned) != _mapper.resourceKey(requested) ||
-        returned.deviceId != expectedDeviceId) {
-      throw const FormatException(
-        'conversation.get returned a different routed conversation',
-      );
-    }
-    final activeTurn = response.conversation.activeTurn;
-    if (activeTurn != null &&
-        (_mapper.resourceKey(activeTurn.conversation) !=
-                _mapper.resourceKey(requested) ||
-            !_mapper.hasSameRoute(activeTurn.resource, requested))) {
-      throw const FormatException('Conversation active turn route mismatch');
-    }
-    for (final item in response.items) {
-      final approval = item.approval;
-      if (_mapper.resourceKey(item.conversation) !=
-              _mapper.resourceKey(requested) ||
-          !_mapper.hasSameRoute(item.resource, requested) ||
-          !_mapper.hasSameRoute(item.turn, requested) ||
-          (item.relatedItem != null &&
-              !_mapper.hasSameRoute(item.relatedItem!, requested)) ||
-          (approval != null &&
-              (_mapper.resourceKey(approval.conversation) !=
-                      _mapper.resourceKey(requested) ||
-                  _mapper.resourceKey(approval.turn) !=
-                      _mapper.resourceKey(item.turn) ||
-                  !_mapper.hasSameRoute(approval.resource, requested)))) {
-        throw const FormatException('Conversation history route mismatch');
+    final requested = _mapper.sdkResourceId(resourceId);
+    const desiredLimit = 40;
+    var effectiveLimit = desiredLimit;
+    String? cursor;
+    final seenCursors = <String>{};
+    final pages = <List<sdk.ConversationItem>>[];
+    ConversationSummary? summary;
+    TurnTask? activeTurn;
+    String? snapshotCursor;
+    var pageCount = 0;
+
+    while (true) {
+      pageCount++;
+      if (pageCount > 10000) {
+        throw const FormatException(
+          'conversation.get exceeded the 10000-page safety limit',
+        );
       }
+      sdk.ConversationGetResponse response;
+      while (true) {
+        try {
+          response = await _call(
+            () => _protocol.conversationGet(
+              sdk.ConversationGetRequest(
+                conversation: requested,
+                cursor: cursor,
+                limit: effectiveLimit,
+              ),
+            ),
+          );
+          break;
+        } on GatewayProtocolException catch (error) {
+          if (error.code != 'provider_response_too_large' ||
+              effectiveLimit == 1) {
+            rethrow;
+          }
+          effectiveLimit = effectiveLimit ~/ 2;
+        }
+      }
+
+      final returned = response.conversation.resource;
+      if (_mapper.resourceKey(returned) != _mapper.resourceKey(requested) ||
+          returned.deviceId != expectedDeviceId) {
+        throw const FormatException(
+          'conversation.get returned a different routed conversation',
+        );
+      }
+      final responseActiveTurn = response.conversation.activeTurn;
+      if (responseActiveTurn != null &&
+          (_mapper.resourceKey(responseActiveTurn.conversation) !=
+                  _mapper.resourceKey(requested) ||
+              !_mapper.hasSameRoute(responseActiveTurn.resource, requested))) {
+        throw const FormatException('Conversation active turn route mismatch');
+      }
+      for (final item in response.items) {
+        final approval = item.approval;
+        if (_mapper.resourceKey(item.conversation) !=
+                _mapper.resourceKey(requested) ||
+            !_mapper.hasSameRoute(item.resource, requested) ||
+            !_mapper.hasSameRoute(item.turn, requested) ||
+            (item.relatedItem != null &&
+                !_mapper.hasSameRoute(item.relatedItem!, requested)) ||
+            (approval != null &&
+                (_mapper.resourceKey(approval.conversation) !=
+                        _mapper.resourceKey(requested) ||
+                    _mapper.resourceKey(approval.turn) !=
+                        _mapper.resourceKey(item.turn) ||
+                    !_mapper.hasSameRoute(approval.resource, requested)))) {
+          throw const FormatException('Conversation history route mismatch');
+        }
+      }
+
+      summary ??= _mapper.conversation(response.conversation);
+      activeTurn ??=
+          responseActiveTurn == null ? null : _mapper.turn(responseActiveTurn);
+      snapshotCursor ??= response.snapshotCursor;
+      pages.add(response.items);
+
+      final nextCursor = response.pageInfo?.nextCursor;
+      if (nextCursor == null) break;
+      if (!seenCursors.add(nextCursor)) {
+        throw const FormatException(
+          'conversation.get returned a repeated page cursor',
+        );
+      }
+      cursor = nextCursor;
     }
+
+    final orderedItems = pages.reversed.expand((page) => page).toList();
     return ConversationSnapshot(
       detail: ConversationDetail(
-        summary: _mapper.conversation(response.conversation),
+        summary: summary,
         committedMessages: [
-          for (var index = 0; index < response.items.length; index++)
-            _mapper.message(response.items[index], index),
+          for (var index = 0; index < orderedItems.length; index++)
+            _mapper.message(orderedItems[index], index),
         ],
-        turns: [if (activeTurn != null) _mapper.turn(activeTurn)],
-        lastEventCursor: response.snapshotCursor,
+        turns: [?activeTurn],
+        lastEventCursor: snapshotCursor,
       ),
-      snapshotCursor: response.snapshotCursor,
+      snapshotCursor: snapshotCursor,
     );
   }
 
@@ -329,11 +382,11 @@ final class ProtocolGatewayClient implements GatewayClient {
   Future<ConversationInteraction> acquireInteraction(
     ConversationSummary conversation,
   ) async {
-    final resourceJson = conversation.wireResource;
-    if (resourceJson == null) {
+    final resourceId = conversation.resource;
+    if (resourceId == null) {
       throw const FormatException('Conversation has no routed identity');
     }
-    final requested = _mapper.sdkResource(resourceJson);
+    final requested = _mapper.sdkResourceId(resourceId);
     final response = await _call(
       () => _protocol.conversationAcquireInteraction(
         sdk.ConversationAcquireInteractionRequest(conversation: requested),
@@ -440,11 +493,11 @@ final class ProtocolGatewayClient implements GatewayClient {
     if (!provider.capabilities.turnSend!.accepts(selection)) {
       throw const FormatException('Turn selection is invalid or unavailable');
     }
-    final resourceJson = conversation.wireResource;
-    if (resourceJson == null) {
+    final resourceId = conversation.resource;
+    if (resourceId == null) {
       throw const FormatException('Conversation has no routed identity');
     }
-    final resource = _mapper.sdkResource(resourceJson);
+    final resource = _mapper.sdkResourceId(resourceId);
     if (resource.deviceId != route.deviceId ||
         resource.providerPluginId != route.providerPluginId ||
         resource.providerInstanceId != route.providerInstanceId) {

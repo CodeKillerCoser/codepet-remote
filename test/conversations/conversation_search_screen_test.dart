@@ -1,10 +1,11 @@
 import 'dart:async';
 
-import 'package:codepet_remote/devices/device_models.dart';
+import 'package:codepet_remote/core/domain/paired_device.dart';
 import 'package:codepet_remote/application/sessions/device_session.dart';
 import 'package:codepet_remote/features/conversations/conversation_search_screen.dart';
 import 'package:codepet_remote/features/home/remote_home_screen.dart';
-import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/application/ports/gateway_client.dart';
+import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -265,6 +266,47 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
+
+  testWidgets('search results follow title updates from the session event stream', (tester) async {
+    _useTallSurface(tester);
+    final client = _SearchClient(
+      providers: const [_primaryProvider],
+      listValues: {
+        _primaryRoute: [
+          _conversation(_primaryRoute, 'shared', '列表旧标题', 3000),
+        ],
+      },
+      onSearch: ({required GatewayProviderRoute route, required String searchTerm, required String? cursor, required int limit}) async =>
+          ConversationPage(
+            conversations: [
+              _conversation(route, 'shared', '搜索旧标题', 3000),
+            ],
+            snapshotCursor: 'handshake',
+          ),
+    );
+    final session = _session(client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: ConversationSearchScreen(session: session)),
+    );
+    await tester.enterText(find.byKey(const Key('search-input')), 'shared');
+    await tester.tap(find.byKey(const Key('search-submit')));
+    await _pumpAsync(tester);
+    expect(find.text('搜索旧标题'), findsOneWidget);
+
+    client.controller.add(
+      ConversationUpsertedEvent(
+        eventCursor: 'event-2',
+        conversation: _conversation(_primaryRoute, 'shared', '新标题', 2000),
+      ),
+    );
+    await _pumpAsync(tester);
+
+    expect(find.text('新标题'), findsOneWidget);
+    expect(find.text('搜索旧标题'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
 }
 
 void _useTallSurface(WidgetTester tester) {
@@ -310,10 +352,10 @@ ConversationSummary _conversation(
   String title,
   int updatedAt,
 ) {
-  final resource = {
-    ...route.toJson(),
-    'nativeResourceId': nativeId,
-  };
+  final resource = RoutedResourceId(
+    route: route,
+    nativeResourceId: nativeId,
+  );
   return ConversationSummary(
     id: '${route.key}\u0000$nativeId',
     providerId: route.providerInstanceId,
@@ -324,7 +366,7 @@ ConversationSummary _conversation(
     workspaceRoot: '/repo',
     createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
     updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt, isUtc: true),
-    wireResource: resource,
+    resource: resource,
   );
 }
 

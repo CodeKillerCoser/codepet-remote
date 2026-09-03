@@ -1,9 +1,10 @@
 import 'dart:async';
 
-import 'package:codepet_remote/devices/device_models.dart';
+import 'package:codepet_remote/core/domain/paired_device.dart';
 import 'package:codepet_remote/application/sessions/device_session.dart';
-import 'package:codepet_remote/core/errors/gateway_failures.dart';
-import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/application/errors/application_failures.dart';
+import 'package:codepet_remote/application/ports/gateway_client.dart';
+import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -88,6 +89,30 @@ void main() {
     expect(
       deduplicateRoutedConversations([codex, claude, otherHost]),
       hasLength(3),
+    );
+  });
+
+  test('an equal-timestamp projection replaces the earlier routed value', () {
+    final earlier = _routedConversation(
+      nativeId: 'shared-thread',
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: 'codex-work',
+      workspaceRoot: '/logical/project',
+      updatedAt: 2000,
+      title: '旧标题',
+    );
+    final later = _routedConversation(
+      nativeId: 'shared-thread',
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: 'codex-work',
+      workspaceRoot: '/logical/project',
+      updatedAt: 2000,
+      title: '新标题',
+    );
+
+    expect(
+      deduplicateRoutedConversations([earlier, later]).single.title,
+      '新标题',
     );
   });
 
@@ -429,6 +454,42 @@ void main() {
     session.dispose();
   });
 
+  test('a routed event refreshes title without regressing list ordering time', () async {
+    final original = _routedConversation(
+      nativeId: 'renamed',
+      providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: 'codex-work',
+      workspaceRoot: '/repo',
+      updatedAt: 3000,
+      title: '旧标题',
+    );
+    final client = _FakeClient([original]);
+    final session = DeviceSession(
+      device: _device('title-event'),
+      clientFactory: () => client,
+    );
+    await session.connect();
+
+    client.emit(
+      ConversationUpsertedEvent(
+        eventCursor: 'event-2',
+        conversation: _routedConversation(
+          nativeId: 'renamed',
+          providerPluginId: 'dev.codepet.codex',
+          providerInstanceId: 'codex-work',
+          workspaceRoot: '/repo',
+          updatedAt: 2000,
+          title: '新标题',
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.conversations.single.title, '新标题');
+    expect(session.conversations.single.updatedAt, original.updatedAt);
+    session.dispose();
+  });
+
   test('turn events keep the conversation list running state live', () async {
     final conversation = _routedConversation(
       nativeId: 'live-thread',
@@ -508,11 +569,7 @@ void main() {
     );
     await session.connect();
     var sessionNotifications = 0;
-    var rowNotifications = 0;
     session.addListener(() => sessionNotifications++);
-    session.conversationListenable(conversation).addListener(
-          () => rowNotifications++,
-        );
 
     for (var index = 0; index < 20; index++) {
       client.emit(TurnOutputDeltaEvent(
@@ -527,10 +584,9 @@ void main() {
       ));
     }
     await tester.pump();
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1));
 
-    expect(sessionNotifications, 0);
-    expect(rowNotifications, 1);
+    expect(sessionNotifications, 1);
     expect(session.conversations.single.preview, contains('19'));
     session.dispose();
   });
@@ -579,6 +635,83 @@ void main() {
     session.dispose();
   });
 
+  test('unknown turn events arriving during refresh are drained', () async {
+    final firstRefresh = Completer<ConversationPage>();
+    final firstRefreshStarted = Completer<void>();
+    late ConversationSummary first;
+    late ConversationSummary second;
+    var listCalls = 0;
+    final client = _FakeClient(
+      const [],
+      onListConversations: ({
+        required GatewayProviderRoute route,
+        required String? cursor,
+        required int limit,
+      }) {
+        listCalls++;
+        if (listCalls == 1) {
+          return Future.value(const ConversationPage(
+            conversations: [],
+            snapshotCursor: 'handshake',
+          ));
+        }
+        if (listCalls == 2) {
+          firstRefreshStarted.complete();
+          return firstRefresh.future;
+        }
+        return Future.value(ConversationPage(
+          conversations: [second],
+          snapshotCursor: 'second-running',
+        ));
+      },
+    );
+    final session = DeviceSession(
+      device: _device('drain-turn-refresh'),
+      clientFactory: () => client,
+    );
+    await session.connect();
+    first = _routedConversation(
+      nativeId: 'first-during-refresh',
+      providerPluginId: _primaryRoute.providerPluginId,
+      providerInstanceId: _primaryRoute.providerInstanceId,
+      workspaceRoot: '/repo',
+      updatedAt: 1000,
+    );
+    second = _routedConversation(
+      nativeId: 'second-during-refresh',
+      providerPluginId: _primaryRoute.providerPluginId,
+      providerInstanceId: _primaryRoute.providerInstanceId,
+      workspaceRoot: '/repo',
+      updatedAt: 2000,
+    );
+
+    client.emit(TurnUpsertedEvent(
+      eventCursor: 'first-running',
+      turn: _turnFor(first, TurnStatus.running, 3000),
+    ));
+    await firstRefreshStarted.future;
+    client.emit(TurnUpsertedEvent(
+      eventCursor: 'second-running',
+      turn: _turnFor(second, TurnStatus.running, 4000),
+    ));
+    firstRefresh.complete(ConversationPage(
+      conversations: [first],
+      snapshotCursor: 'first-running',
+    ));
+    await pumpEventQueue(times: 4);
+
+    expect(listCalls, 3);
+    expect(
+      session.conversations.map((conversation) => conversation.title),
+      containsAll(['first-during-refresh', 'second-during-refresh']),
+    );
+    expect(
+      session.conversations.map((conversation) => conversation.status),
+      everyElement(ConversationStatus.running),
+    );
+    session.dispose();
+  });
+
   test('sessions isolate projections and disconnect clears runtime data', () async {
     final firstClient = _FakeClient([_conversation('first', '/one', 1000)]);
     final secondClient = _FakeClient([_conversation('second', '/two', 2000)]);
@@ -616,7 +749,7 @@ void main() {
     final secondLease = session.runtimeLease!;
     expect(session.ownsRuntimeLease(firstLease), isFalse);
     expect(session.ownsRuntimeLease(secondLease), isTrue);
-    expect(identical(firstLease.client, secondLease.client), isFalse);
+    expect(firstLease.sameRuntime(secondLease), isFalse);
 
     await session.disconnect();
     expect(session.runtimeLease, isNull);
@@ -997,13 +1130,13 @@ ConversationSummary _routedConversation({
   required int updatedAt,
   String? title,
 }) {
-  final resource = {
-    'deviceId': hostDeviceId,
-    'providerPluginId': providerPluginId,
-    'providerInstanceId': providerInstanceId,
-    'nativeResourceId': nativeId,
-  };
-  final id = resource.values.join('\u0000');
+  final route = GatewayProviderRoute(
+    deviceId: hostDeviceId,
+    providerPluginId: providerPluginId,
+    providerInstanceId: providerInstanceId,
+  );
+  final resource = RoutedResourceId(route: route, nativeResourceId: nativeId);
+  final id = resource.key;
   return ConversationSummary(
     id: domainId ?? id,
     providerId: providerInstanceId,
@@ -1013,7 +1146,7 @@ ConversationSummary _routedConversation({
     workspaceRoot: workspaceRoot,
     createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
     updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt, isUtc: true),
-    wireResource: resource,
+    resource: resource,
   );
 }
 
@@ -1022,17 +1155,19 @@ TurnTask _turnFor(
   TurnStatus status,
   int updatedAt,
 ) {
-  final conversationResource = conversation.wireResource!;
-  final turnResource = Map<String, dynamic>.from(conversationResource)
-    ..['nativeResourceId'] = 'turn-live';
+  final conversationResource = conversation.resource!;
+  final turnResource = RoutedResourceId(
+    route: conversationResource.route,
+    nativeResourceId: 'turn-live',
+  );
   return TurnTask(
-    id: turnResource.values.join('\u0000'),
+    id: turnResource.key,
     providerId: conversation.providerId,
     conversationId: conversationRoutingKey(conversation),
     status: status,
     updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt, isUtc: true),
-    wireResource: turnResource,
-    conversationWireResource: conversationResource,
+    resource: turnResource,
+    conversationResource: conversationResource,
   );
 }
 

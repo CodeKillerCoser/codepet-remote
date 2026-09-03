@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../core/domain/models.dart';
-import '../core/errors/gateway_failures.dart';
+import '../application/errors/application_failures.dart';
 import '../security/pinned_tls.dart';
 import 'transport.dart';
 
@@ -95,6 +95,13 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
         'Gateway WebSocket connection failed: ${error.message}',
         retryable: true,
       );
+    } on WebSocketException catch (error) {
+      if (identical(_httpClient, client)) _httpClient = null;
+      client.close(force: true);
+      throw GatewayConnectionException(
+        'Gateway WebSocket upgrade failed: $error',
+        retryable: _isRetryableWebSocketException(error),
+      );
     } catch (_) {
       if (identical(_httpClient, client)) _httpClient = null;
       client.close(force: true);
@@ -160,8 +167,9 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   }
 
   void _handleError(Object error, StackTrace stack) {
-    _fail(error);
-    if (!_closing && !_events.isClosed) _events.addError(error, stack);
+    final failure = _connectionFailure(error);
+    _fail(failure);
+    if (!_closing && !_events.isClosed) _events.addError(failure, stack);
   }
   void _handleDone() {
     final socket = _socket;
@@ -201,4 +209,35 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
 }
 
 bool isRetryableWebSocketCloseCode(int? closeCode) =>
-    closeCode == WebSocketStatus.abnormalClosure;
+    closeCode == WebSocketStatus.goingAway ||
+    closeCode == WebSocketStatus.abnormalClosure ||
+    closeCode == 1011 ||
+    closeCode == 1012 ||
+    closeCode == 1013;
+
+bool _isRetryableWebSocketException(WebSocketException error) {
+  final status = error.httpStatusCode;
+  return status == null || status == 408 || status == 429 || status >= 500;
+}
+
+GatewayConnectionException _connectionFailure(Object error) {
+  if (error is GatewayConnectionException) return error;
+  if (error is WebSocketException) {
+    return GatewayConnectionException(
+      'Gateway WebSocket failed: $error',
+      retryable: _isRetryableWebSocketException(error),
+      outcomeUnknown: true,
+    );
+  }
+  if (error is SocketException || error is TimeoutException) {
+    return GatewayConnectionException(
+      'Gateway connection failed: $error',
+      retryable: true,
+      outcomeUnknown: true,
+    );
+  }
+  return GatewayConnectionException(
+    'Gateway connection failed: $error',
+    outcomeUnknown: true,
+  );
+}

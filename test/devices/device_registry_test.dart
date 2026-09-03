@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 
-import 'package:codepet_remote/devices/device_models.dart';
+import 'package:codepet_remote/core/domain/paired_device.dart';
 import 'package:codepet_remote/devices/device_registry.dart';
 import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -111,6 +112,115 @@ void main() {
     );
     expect((await registry.load()).single.displayName, 'New name');
   });
+
+  test('forget is ordered after an in-flight endpoint update', () async {
+    final metadata = _BlockingMetadata();
+    final registry = DeviceRegistry(
+      metadata: metadata,
+      credentials: _Credentials(),
+    );
+    const device = PairedDevice(
+      deviceId: 'ordered-host',
+      displayName: 'Host',
+      preferredEndpoint: 'wss://old/remote/v2/gateway',
+      connectionKind: DeviceConnectionKind.pairedGateway,
+    );
+    await registry.save([device]);
+    metadata.blockNextWrite();
+
+    final update = registry.updatePreferredEndpoint(
+      device.deviceId,
+      'wss://new/remote/v2/gateway',
+    );
+    await metadata.writeStarted.future;
+    final forget = registry.forget(device);
+    metadata.releaseWrite();
+    await Future.wait([update, forget]);
+
+    expect(await registry.load(), isEmpty);
+  });
+
+  test('failed metadata commit restores the previous credential', () async {
+    final metadata = _FailingMetadata();
+    final credentials = _Credentials();
+    final registry = DeviceRegistry(
+      metadata: metadata,
+      credentials: credentials,
+    );
+    const original = PairedDevice(
+      deviceId: 'same-host',
+      displayName: 'Original',
+      credentialKeyRef: 'secure:same-host',
+      connectionKind: DeviceConnectionKind.pairedGateway,
+    );
+    await registry.register(original, 'original-credential');
+    metadata.failNextWrite = true;
+
+    await expectLater(
+      registry.register(
+        const PairedDevice(
+          deviceId: 'same-host',
+          displayName: 'Replacement',
+          credentialKeyRef: 'secure:same-host',
+          connectionKind: DeviceConnectionKind.pairedGateway,
+        ),
+        'replacement-credential',
+      ),
+      throwsStateError,
+    );
+
+    expect(await credentials.read('secure:same-host'), 'original-credential');
+    expect((await registry.load()).single.displayName, 'Original');
+  });
+
+  test('failed metadata read after credential write restores credential', () async {
+    final metadata = _ReadFailMetadata();
+    final credentials = _Credentials();
+    final registry = DeviceRegistry(
+      metadata: metadata,
+      credentials: credentials,
+    );
+    const device = PairedDevice(
+      deviceId: 'read-failure-host',
+      displayName: 'Original',
+      credentialKeyRef: 'secure:read-failure',
+      connectionKind: DeviceConnectionKind.pairedGateway,
+    );
+    await registry.register(device, 'original-credential');
+    metadata.failNextDevicesRead = true;
+
+    await expectLater(
+      registry.register(device, 'replacement-credential'),
+      throwsStateError,
+    );
+
+    expect(
+      await credentials.read('secure:read-failure'),
+      'original-credential',
+    );
+  });
+
+  test('credential read failure does not prevent local forgetting', () async {
+    final metadata = _Metadata();
+    final credentials = _ReadFailCredentials();
+    final registry = DeviceRegistry(
+      metadata: metadata,
+      credentials: credentials,
+    );
+    const device = PairedDevice(
+      deviceId: 'unreadable-host',
+      displayName: 'Unreadable',
+      credentialKeyRef: 'secure:unreadable',
+      connectionKind: DeviceConnectionKind.pairedGateway,
+    );
+    await registry.save([device]);
+    await credentials.write('secure:unreadable', 'opaque');
+
+    await registry.forget(device);
+
+    expect(await registry.load(), isEmpty);
+    expect(credentials.values, isEmpty);
+  });
 }
 
 class _Metadata implements DeviceMetadataStore {
@@ -124,4 +234,62 @@ class _Credentials implements CredentialStore {
   @override Future<void> delete(String key) async { values.remove(key); }
   @override Future<String?> read(String key) async => values[key];
   @override Future<void> write(String key, String value) async { values[key] = value; }
+}
+
+class _BlockingMetadata extends _Metadata {
+  Completer<void>? _nextWriteRelease;
+  Completer<void>? _blockedWriteRelease;
+  Completer<void> writeStarted = Completer<void>();
+
+  void blockNextWrite() {
+    _nextWriteRelease = Completer<void>();
+    writeStarted = Completer<void>();
+  }
+
+  void releaseWrite() => _blockedWriteRelease?.complete();
+
+  @override
+  Future<void> write(String key, String value) async {
+    final release = _nextWriteRelease;
+    if (release != null) {
+      _nextWriteRelease = null;
+      _blockedWriteRelease = release;
+      writeStarted.complete();
+      await release.future;
+      _blockedWriteRelease = null;
+    }
+    await super.write(key, value);
+  }
+}
+
+class _FailingMetadata extends _Metadata {
+  bool failNextWrite = false;
+
+  @override
+  Future<void> write(String key, String value) async {
+    if (failNextWrite) {
+      failNextWrite = false;
+      throw StateError('metadata commit failed');
+    }
+    await super.write(key, value);
+  }
+}
+
+class _ReadFailMetadata extends _Metadata {
+  bool failNextDevicesRead = false;
+
+  @override
+  Future<String?> read(String key) {
+    if (key == DeviceRegistry.devicesKey && failNextDevicesRead) {
+      failNextDevicesRead = false;
+      return Future<String?>.error(StateError('metadata read failed'));
+    }
+    return super.read(key);
+  }
+}
+
+class _ReadFailCredentials extends _Credentials {
+  @override
+  Future<String?> read(String key) =>
+      Future<String?>.error(StateError('credential unavailable'));
 }

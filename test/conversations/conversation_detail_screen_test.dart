@@ -1,10 +1,11 @@
 import 'dart:async';
 
-import 'package:codepet_remote/devices/device_models.dart';
+import 'package:codepet_remote/core/domain/paired_device.dart';
 import 'package:codepet_remote/application/sessions/device_session.dart';
 import 'package:codepet_remote/features/conversations/conversation_detail_screen.dart';
-import 'package:codepet_remote/core/errors/gateway_failures.dart';
-import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/application/errors/application_failures.dart';
+import 'package:codepet_remote/application/ports/gateway_client.dart';
+import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,20 +27,54 @@ void main() {
       workspaceRoot: '/workspace/project',
       createdAt: _conversation.createdAt,
       updatedAt: _conversation.updatedAt,
-      wireResource: _conversation.wireResource,
+      resource: _conversation.resource,
     );
 
     await _pumpDetail(tester, client, conversation: conversation);
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('conversation-provider-icon')), findsOneWidget);
+    final appBar = tester.widget<AppBar>(find.byType(AppBar));
+    expect(appBar.leadingWidth, 48);
+    expect(appBar.titleSpacing, 0);
+    expect(appBar.toolbarHeight, 64);
+    expect(
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.byKey(const Key('conversation-title-status')),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('空闲'), findsOneWidget);
+    expect(find.byKey(const Key('conversation-metadata-toggle')), findsNothing);
+    expect(find.byKey(const Key('conversation-title-metadata')), findsNothing);
+    expect(
+      tester
+          .widget<AnimatedSwitcher>(
+            find.byKey(const Key('conversation-title-metadata-animation')),
+          )
+          .duration,
+      const Duration(milliseconds: 220),
+    );
+    expect(
+      tester
+          .widget<AnimatedRotation>(
+            find.byKey(const Key('conversation-title-metadata-arrow')),
+          )
+          .duration,
+      const Duration(milliseconds: 200),
+    );
     expect(find.text('默认隐藏的会话摘要'), findsNothing);
     expect(find.text('test-model · high'), findsNothing);
     expect(find.text('/workspace/project'), findsNothing);
 
-    await tester.tap(find.byKey(const Key('conversation-metadata-toggle')));
+    await tester.tap(
+      find.byKey(const Key('conversation-title-metadata-toggle')),
+    );
     await tester.pump();
 
+    expect(find.byKey(const Key('conversation-title-metadata')), findsOneWidget);
+    expect(find.text('权限 · workspace-write'), findsOneWidget);
     expect(find.text('默认隐藏的会话摘要'), findsOneWidget);
     expect(find.text('test-model · high'), findsOneWidget);
     expect(find.text('/workspace/project'), findsOneWidget);
@@ -155,7 +190,7 @@ void main() {
     await client.close();
   });
 
-  testWidgets('collapses history and accumulates new output while collapsed', (tester) async {
+  testWidgets('renders history directly without a collapsible section', (tester) async {
     final client = _DetailClient(
       committedMessages: [
         _history('one', MessageRole.user, 'message', '第一条'),
@@ -165,30 +200,37 @@ void main() {
     await _pumpDetail(tester, client);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('messages-section-toggle')));
-    await tester.pump();
-    expect(find.byKey(const Key('message-one')), findsNothing);
-    expect(find.byKey(const Key('message-two')), findsNothing);
+    final firstMessageTop = tester
+        .getTopLeft(find.byKey(const Key('message-one')))
+        .dy;
+    expect(find.byKey(const Key('messages-section-toggle')), findsNothing);
+    expect(find.text('消息与事件'), findsNothing);
+    expect(find.byKey(const Key('message-one')), findsOneWidget);
+    expect(find.byKey(const Key('message-two')), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const Key('conversation-title-metadata-toggle')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.byKey(const Key('message-one'))).dy,
+      firstMessageTop,
+    );
 
     client.emit(const TurnOutputDeltaEvent(
-      eventCursor: 'collapsed-live',
+      eventCursor: 'direct-live',
       providerId: 'provider',
       conversationId: 'conversation',
-      turnId: 'collapsed-turn',
-      itemId: 'collapsed-item',
-      contentId: 'collapsed-item:text',
+      turnId: 'direct-turn',
+      itemId: 'direct-item',
+      contentId: 'direct-item:text',
       kind: 'text',
-      delta: '折叠期间的新消息',
+      delta: '直接显示的新消息',
     ));
     await tester.pump();
-    expect(find.text('折叠期间的新消息'), findsNothing);
-
-    await tester.tap(find.byKey(const Key('messages-section-toggle')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('第一条'), findsOneWidget);
     expect(find.text('第二条'), findsOneWidget);
-    expect(find.text('折叠期间的新消息'), findsOneWidget);
+    expect(find.text('直接显示的新消息'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
     await client.close();
@@ -385,7 +427,9 @@ void main() {
     final assistantBodyBefore = tester
         .widgetList<MarkdownBody>(find.byType(MarkdownBody))
         .singleWhere((body) => body.data == '**assistant bold**');
-    await tester.tap(find.byKey(const Key('conversation-metadata-toggle')));
+    await tester.tap(
+      find.byKey(const Key('conversation-title-metadata-toggle')),
+    );
     await tester.pump();
     final assistantBodyAfter = tester
         .widgetList<MarkdownBody>(find.byType(MarkdownBody))
@@ -618,14 +662,10 @@ void main() {
       tester.widget<Text>(find.byKey(const Key('interaction-error'))).data,
       '该会话正在被另一个客户端写入，暂时无法继续对话。',
     );
-    expect(
-      tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
-      isFalse,
-    );
-    expect(
-      tester.widget<IconButton>(find.byKey(const Key('turn-send'))).onPressed,
-      isNull,
-    );
+    expect(find.byKey(const Key('interaction-unavailable')), findsOneWidget);
+    expect(find.byKey(const Key('turn-input')), findsNothing);
+    expect(find.byKey(const Key('composer-toolbar')), findsNothing);
+    expect(find.byKey(const Key('turn-send')), findsNothing);
 
     await tester.pumpWidget(const SizedBox());
     await client.close();
@@ -912,6 +952,30 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const Key('turn-send')));
     await tester.pump();
+    final pendingMessageKey = Key(
+      'message-pending-user:${client.sendCalls.single.clientRequestId}',
+    );
+    expect(find.byKey(pendingMessageKey), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('turn-input')))
+          .controller!
+          .text,
+      'pending',
+    );
+    client.emit(TurnOutputDeltaEvent(
+      eventCursor: 'pending-delta',
+      providerId: 'provider',
+      conversationId: 'conversation',
+      turnId: 'turn-pending',
+      itemId: 'answer-pending',
+      contentId: 'answer-pending:text',
+      kind: 'text',
+      delta: 'answer while send is pending',
+    ));
+    await tester.pump();
+    expect(find.byKey(pendingMessageKey), findsOneWidget);
+    expect(find.text('answer while send is pending'), findsOneWidget);
     await tester.tap(find.byKey(const Key('turn-send')));
     await tester.pump();
     expect(client.sendCalls, hasLength(1));
@@ -1128,6 +1192,27 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
+
+  testWidgets('renews interaction from the server lease expiry', (tester) async {
+    final client = _DetailClient(
+      onAcquire: (conversation) async => ConversationInteraction(
+        selection:
+            conversation.turnSendSelection ?? const TurnSendSelection(),
+        leaseExpiresAt:
+            DateTime.now().toUtc().add(const Duration(seconds: 1)),
+      ),
+    );
+    await _pumpDetail(tester, client);
+    await tester.pump();
+    expect(client.acquireCalls, 1);
+
+    await tester.pump(const Duration(milliseconds: 750));
+    await tester.pump();
+
+    expect(client.acquireCalls, greaterThanOrEqualTo(2));
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
 }
 
 Future<DeviceSession> _pumpDetail(
@@ -1208,12 +1293,10 @@ final _conversation = ConversationSummary(
   permissionLevel: PermissionLevel.readOnly,
   createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
   updatedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
-  wireResource: const {
-    'deviceId': 'host',
-    'providerPluginId': 'plugin',
-    'providerInstanceId': 'provider',
-    'nativeResourceId': 'conversation',
-  },
+  resource: const RoutedResourceId(
+    route: _detailRoute,
+    nativeResourceId: 'conversation',
+  ),
 );
 
 const _detailRoute = GatewayProviderRoute(
@@ -1269,7 +1352,7 @@ ConversationSummary _idleConversation({
       updatedAt: _conversation.updatedAt,
       activeTurn: activeTurn,
       turnSendSelection: selection,
-      wireResource: _conversation.wireResource,
+      resource: _conversation.resource,
     );
 
 class _DetailClient implements GatewayClient {

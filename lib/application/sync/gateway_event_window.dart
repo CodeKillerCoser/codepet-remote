@@ -1,69 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 
-import '../domain/models.dart';
-
-/// Protocol-neutral application port exposed by a connected Host adapter.
-abstract interface class GatewayClient {
-  Stream<GatewayEvent> get events;
-  String? get latestEventCursor;
-  GatewayEventWindow openEventWindow();
-  Future<GatewayHandshake> connect();
-  Future<ConversationPage> listConversations({
-    required GatewayProviderRoute route,
-    String? cursor,
-    int limit = 50,
-  });
-  Future<ConversationPage> searchConversations({
-    required GatewayProviderRoute route,
-    required String searchTerm,
-    String? cursor,
-    int limit = 50,
-  });
-  Future<ConversationSnapshot> getConversation(
-    ConversationSummary conversation,
-  );
-  Future<ConversationInteraction> acquireInteraction(
-    ConversationSummary conversation,
-  );
-  Future<ConversationSummary> createConversation({
-    required GatewayProviderRoute route,
-    String? title,
-    required String permissionLevel,
-    String? model,
-    String? reasoningEffort,
-    String? workspaceRoot,
-    String? workspaceMode,
-  });
-  Future<TurnSendReceipt> sendTurn({
-    required GatewayProviderRoute route,
-    required ConversationSummary conversation,
-    required String clientRequestId,
-    required String capabilityRevision,
-    required String text,
-    required TurnSendSelection selection,
-  });
-  Future<void> close();
-}
-
-class ConversationSnapshot {
-  const ConversationSnapshot({
-    required this.detail,
-    required this.snapshotCursor,
-  });
-
-  final ConversationDetail detail;
-  final String snapshotCursor;
-}
-
-class GatewayCursorGapException implements Exception {
-  const GatewayCursorGapException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
+import '../../core/domain/models.dart';
+import '../errors/application_failures.dart';
 
 /// Buffers subscribed events while an application snapshot is loading, then
 /// installs an exact cursor fence before delivering live updates.

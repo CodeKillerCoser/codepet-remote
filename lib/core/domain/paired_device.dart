@@ -1,4 +1,4 @@
-import '../core/domain/models.dart';
+import 'models.dart';
 
 enum DeviceConnectionKind { pairedGateway, demo }
 
@@ -29,7 +29,8 @@ class PairedDevice {
   final bool autoConnect;
   final DeviceConnectionKind connectionKind;
 
-  String get effectiveName => alias?.trim().isNotEmpty == true ? alias! : displayName;
+  String get effectiveName =>
+      alias?.trim().isNotEmpty == true ? alias! : displayName;
 
   PairedDevice withPreferredEndpoint(String endpoint) => PairedDevice(
         deviceId: deviceId,
@@ -86,7 +87,8 @@ class PairedDevice {
       endpointHints: (json['endpointHints'] as List? ?? const []).cast<String>(),
       credentialKeyRef: json['credentialKeyRef'] as String?,
       clientId: json['clientId'] as String?,
-      preferredEndpoint: _migrateGatewayEndpoint(json['preferredEndpoint'] as String?),
+      preferredEndpoint:
+          _migrateGatewayEndpoint(json['preferredEndpoint'] as String?),
       autoConnect: json['autoConnect'] == true,
       connectionKind: _connectionKindFromJson(json['connectionKind'] as String),
     );

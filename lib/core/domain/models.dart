@@ -2,6 +2,32 @@ typedef JsonMap = Map<String, dynamic>;
 
 const gatewayProtocolVersion = 2;
 
+/// Stable, protocol-independent identity for a resource owned by a Provider.
+///
+/// JSON conversion is intentionally kept at the infrastructure boundary; the
+/// rest of the application works with this value object instead of inspecting
+/// wire maps.
+class RoutedResourceId {
+  const RoutedResourceId({
+    required this.route,
+    required this.nativeResourceId,
+  });
+
+  final GatewayProviderRoute route;
+  final String nativeResourceId;
+
+  String get key => '${route.key}\u0000$nativeResourceId';
+
+  @override
+  bool operator ==(Object other) =>
+      other is RoutedResourceId &&
+      other.route == route &&
+      other.nativeResourceId == nativeResourceId;
+
+  @override
+  int get hashCode => Object.hash(route, nativeResourceId);
+}
+
 class DeviceDescriptor {
   const DeviceDescriptor({
     required this.deviceName,
@@ -798,8 +824,8 @@ class TurnTask {
     this.startedAt,
     this.completedAt,
     this.clientRequestId,
-    this.wireResource,
-    this.conversationWireResource,
+    this.resource,
+    this.conversationResource,
   });
 
   final String id;
@@ -811,8 +837,8 @@ class TurnTask {
   final DateTime updatedAt;
   final DateTime? completedAt;
   final String? clientRequestId;
-  final JsonMap? wireResource;
-  final JsonMap? conversationWireResource;
+  final RoutedResourceId? resource;
+  final RoutedResourceId? conversationResource;
 }
 
 class ConversationSummary {
@@ -830,7 +856,7 @@ class ConversationSummary {
     this.workspaceRoot,
     this.activeTurn,
     this.turnSendSelection,
-    this.wireResource,
+    this.resource,
   });
 
   final String id;
@@ -848,7 +874,7 @@ class ConversationSummary {
   final DateTime updatedAt;
   final TurnTask? activeTurn;
   final TurnSendSelection? turnSendSelection;
-  final JsonMap? wireResource;
+  final RoutedResourceId? resource;
 }
 
 class TurnSendReceipt {
@@ -907,6 +933,7 @@ class GatewayMessage {
   final int? sequence;
 
   GatewayMessage copyWith({
+    String? turnId,
     String? content,
     bool? isStreaming,
     List<String>? contentIds,
@@ -914,7 +941,7 @@ class GatewayMessage {
   }) {
     return GatewayMessage(
       id: id,
-      turnId: turnId,
+      turnId: turnId ?? this.turnId,
       role: role,
       kind: kind,
       content: content ?? this.content,
@@ -1105,13 +1132,35 @@ class ConversationDetail {
       );
     }
 
+    if (event is ApprovalChangedEvent &&
+        event.conversationId == summary.id) {
+      final nextMessages = [...committedMessages];
+      final index = nextMessages.indexWhere(
+        (message) => message.id == event.approval.id,
+      );
+      if (index == -1) {
+        nextMessages.add(event.approval);
+      } else {
+        nextMessages[index] = event.approval;
+      }
+      return ConversationDetail(
+        summary: summary,
+        committedMessages: nextMessages,
+        liveOutputMessages: liveOutputMessages,
+        turns: turns,
+        lastEventCursor: event.eventCursor,
+      );
+    }
+
     return this;
   }
 
   ConversationDetail accept(TurnSendReceipt receipt) {
     final nextMessages = [...committedMessages];
+    final pendingId = _pendingUserMessageId(receipt.clientRequestId);
     final inputItem = receipt.inputItem;
     if (inputItem != null) {
+      nextMessages.removeWhere((message) => message.id == pendingId);
       final messageIndex = nextMessages.indexWhere(
         (message) => message.id == inputItem.id,
       );
@@ -1119,6 +1168,15 @@ class ConversationDetail {
         nextMessages.add(inputItem);
       } else {
         nextMessages[messageIndex] = inputItem;
+      }
+    } else {
+      final pendingIndex = nextMessages.indexWhere(
+        (message) => message.id == pendingId,
+      );
+      if (pendingIndex != -1) {
+        nextMessages[pendingIndex] = nextMessages[pendingIndex].copyWith(
+          turnId: receipt.turn.id,
+        );
       }
     }
     return ConversationDetail(
@@ -1129,7 +1187,49 @@ class ConversationDetail {
       lastEventCursor: lastEventCursor,
     );
   }
+
+  ConversationDetail stageUserInput({
+    required String clientRequestId,
+    required String text,
+    required DateTime createdAt,
+  }) {
+    final id = _pendingUserMessageId(clientRequestId);
+    if (committedMessages.any((message) => message.id == id)) return this;
+    return ConversationDetail(
+      summary: summary,
+      committedMessages: [
+        ...committedMessages,
+        GatewayMessage(
+          id: id,
+          turnId: 'pending-turn:$clientRequestId',
+          role: MessageRole.user,
+          kind: 'message',
+          content: text,
+          createdAt: createdAt,
+          isStreaming: false,
+        ),
+      ],
+      liveOutputMessages: liveOutputMessages,
+      turns: turns,
+      lastEventCursor: lastEventCursor,
+    );
+  }
+
+  ConversationDetail rejectStagedUserInput(String clientRequestId) =>
+      ConversationDetail(
+        summary: summary,
+        committedMessages: committedMessages
+            .where((message) =>
+                message.id != _pendingUserMessageId(clientRequestId))
+            .toList(growable: false),
+        liveOutputMessages: liveOutputMessages,
+        turns: turns,
+        lastEventCursor: lastEventCursor,
+      );
 }
+
+String _pendingUserMessageId(String clientRequestId) =>
+    'pending-user:$clientRequestId';
 
 String _itemKindForContentKind(String kind) => switch (kind) {
       'text' => 'message',
@@ -1238,6 +1338,17 @@ class TurnOutputDeltaEvent extends GatewayEvent {
   final String contentId;
   final String kind;
   final String delta;
+}
+
+class ApprovalChangedEvent extends GatewayEvent {
+  const ApprovalChangedEvent({
+    required super.eventCursor,
+    required this.conversationId,
+    required this.approval,
+  });
+
+  final String conversationId;
+  final GatewayMessage approval;
 }
 
 class UnknownGatewayEvent extends GatewayEvent {

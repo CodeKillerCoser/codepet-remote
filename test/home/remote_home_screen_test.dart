@@ -1,9 +1,10 @@
 import 'dart:async';
 
-import 'package:codepet_remote/devices/device_models.dart';
+import 'package:codepet_remote/core/domain/paired_device.dart';
 import 'package:codepet_remote/application/sessions/device_session.dart';
 import 'package:codepet_remote/features/home/remote_home_screen.dart';
-import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/application/ports/gateway_client.dart';
+import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -723,11 +724,28 @@ void main() {
 
     client.emit(ConversationUpsertedEvent(
       eventCursor: 'event-1',
-      conversation: _conversation('dynamic', '动态事件会话'),
+      conversation: _conversation(
+        'dynamic',
+        '动态事件会话',
+        updatedMilliseconds: 3000,
+      ),
     ));
     await tester.pumpAndSettle();
 
     expect(find.text('动态事件会话'), findsOneWidget);
+
+    client.emit(ConversationUpsertedEvent(
+      eventCursor: 'event-2',
+      conversation: _conversation(
+        'dynamic',
+        '刷新后的标题',
+        updatedMilliseconds: 2000,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('动态事件会话'), findsNothing);
+    expect(find.text('刷新后的标题'), findsOneWidget);
   });
 }
 

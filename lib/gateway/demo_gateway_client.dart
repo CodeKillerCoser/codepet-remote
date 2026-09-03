@@ -1,7 +1,8 @@
 import 'dart:async';
 
 import '../core/domain/models.dart';
-import '../core/ports/gateway_client.dart';
+import '../application/ports/gateway_client.dart';
+import '../application/sync/gateway_event_window.dart';
 
 class DemoGatewayClient implements GatewayClient {
   DemoGatewayClient({this.profileId = 'studio'}) : _now = DateTime.now().toUtc();
@@ -41,7 +42,7 @@ class DemoGatewayClient implements GatewayClient {
             workspaceRoot: '/workspace/mobile-client',
             createdAt: _now.subtract(const Duration(days: 2)),
             updatedAt: _now.subtract(const Duration(days: 1)),
-            wireResource: _conversationResource('laptop-review'),
+            resource: _conversationResource('laptop-review'),
           ),
           ConversationSummary(
             id: 'laptop-unscoped',
@@ -51,7 +52,7 @@ class DemoGatewayClient implements GatewayClient {
             permissionLevel: PermissionLevel.readOnly,
             createdAt: _now.subtract(const Duration(days: 4)),
             updatedAt: _now.subtract(const Duration(days: 3)),
-            wireResource: _conversationResource('laptop-unscoped'),
+            resource: _conversationResource('laptop-unscoped'),
           ),
         ]
       : [
@@ -76,7 +77,7 @@ class DemoGatewayClient implements GatewayClient {
         startedAt: _now.subtract(const Duration(minutes: 1)),
         updatedAt: _now.subtract(const Duration(seconds: 10)),
       ),
-      wireResource: _conversationResource('demo-running'),
+      resource: _conversationResource('demo-running'),
     ),
     ConversationSummary(
       id: 'demo-idle',
@@ -87,7 +88,7 @@ class DemoGatewayClient implements GatewayClient {
       permissionLevel: PermissionLevel.readOnly,
       createdAt: _now.subtract(const Duration(days: 1)),
       updatedAt: _now.subtract(const Duration(hours: 3)),
-      wireResource: _conversationResource('demo-idle'),
+      resource: _conversationResource('demo-idle'),
     ),
         ];
 
@@ -312,7 +313,7 @@ class DemoGatewayClient implements GatewayClient {
       workspaceRoot: workspaceRoot,
       createdAt: now,
       updatedAt: now,
-      wireResource: _conversationResource(id),
+      resource: _conversationResource(id),
     );
     _conversations.insert(0, conversation);
     _events.add(ConversationUpsertedEvent(
@@ -496,10 +497,10 @@ class DemoGatewayClient implements GatewayClient {
     await _events.close();
   }
 
-  JsonMap _conversationResource(String id) => {
-        ..._route.toJson(),
-        'nativeResourceId': id,
-      };
+  RoutedResourceId _conversationResource(String id) => RoutedResourceId(
+        route: _route,
+        nativeResourceId: id,
+      );
 
   ConversationSummary _withoutActiveTurn(ConversationSummary conversation) =>
       ConversationSummary(
@@ -515,6 +516,6 @@ class DemoGatewayClient implements GatewayClient {
         createdAt: conversation.createdAt,
         updatedAt: DateTime.now().toUtc(),
         turnSendSelection: conversation.turnSendSelection,
-        wireResource: conversation.wireResource,
+        resource: conversation.resource,
       );
 }

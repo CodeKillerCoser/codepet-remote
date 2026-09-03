@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import '../../admission/lan_admission.dart';
-import '../../devices/device_models.dart';
+import '../../application/pairing/pair_device.dart';
+import '../../core/domain/paired_device.dart';
 
 class PairDeviceScreen extends StatefulWidget {
   const PairDeviceScreen({super.key, required this.pairingService, required this.onPaired, this.onAddDemo});
-  final LanAdmissionService pairingService;
+  final DevicePairer pairingService;
   final Future<void> Function(PairedDevice device) onPaired;
   final Future<void> Function()? onAddDemo;
   @override State<PairDeviceScreen> createState() => _PairDeviceScreenState();

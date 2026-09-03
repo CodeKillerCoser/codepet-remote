@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
-import 'package:codepet_remote/core/errors/gateway_failures.dart';
-import 'package:codepet_remote/core/ports/gateway_client.dart';
+import 'package:codepet_remote/application/errors/application_failures.dart';
+import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/gateway/gateway_client.dart';
 import 'package:codepet_remote/gateway/generated_gateway_mapper.dart';
 import 'package:codepet_remote/core/domain/models.dart';
@@ -55,7 +55,7 @@ void main() {
     expect(transport.requests[2].params['route'], _route.toJson());
     expect(transport.requests[2].params['limit'], 25);
     expect(transport.requests[3].method, 'conversation.get');
-    expect(detail.detail.summary.wireResource!['nativeResourceId'], 'conversation-1');
+    expect(detail.detail.summary.resource!.nativeResourceId, 'conversation-1');
     expect(detail.detail.messages, isEmpty);
 
     await client.close();
@@ -101,7 +101,7 @@ void main() {
     expect(transport.requests.last.method, 'conversation.acquireInteraction');
     expect(
       transport.requests.last.params['conversation'],
-      _domainConversation().wireResource,
+      _resourceJson(_domainConversation().resource!),
     );
     expect(interaction.selection.accessModeId, 'workspace-write');
     expect(interaction.selection.reasoningEffortId, 'high');
@@ -173,7 +173,7 @@ void main() {
 
     expect(transport.requests.last.method, 'turn.send');
     expect(transport.requests.last.params, {
-      'conversation': conversation.wireResource,
+      'conversation': _resourceJson(conversation.resource!),
       'clientRequestId': 'request-1',
       'capabilityRevision': 'revision-1',
       'input': {'kind': 'text', 'text': '  keep whitespace\n'},
@@ -388,6 +388,73 @@ void main() {
     await client.close();
   });
 
+  test('shrinks conversation history pages after an oversized response',
+      () async {
+    final transport = _FakeTransport(
+      {
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      },
+      responseBuilder: (method, params, id) {
+        if (method != 'conversation.get') return null;
+        final limit = params['limit'] as int;
+        final cursor = params['cursor'] as String?;
+        if (cursor == null && limit == 40) {
+          return {
+            'jsonrpc': '2.0',
+            'id': id,
+            'error': {
+              'code': -32000,
+              'message':
+                  'Provider response exceeds the 16777216-byte JSON-line limit',
+              'data': {
+                'code': 'provider_response_too_large',
+                'retryable': false,
+              },
+            },
+          };
+        }
+        final older = cursor == 'older-page';
+        return {
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': {
+            'conversation': _conversationJson(),
+            'items': [
+              _historyItemJson(
+                older ? 'older-item' : 'newer-item',
+                older ? 'older' : 'newer',
+              ),
+            ],
+            'pageInfo': older ? <String, dynamic>{} : {'nextCursor': 'older-page'},
+            'snapshotCursor': 'opaque-snapshot',
+          },
+        };
+      },
+    );
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+
+    final snapshot = await client.getConversation(_domainConversation());
+
+    final requests = transport.requests
+        .where((request) => request.method == 'conversation.get')
+        .toList(growable: false);
+    expect(requests.map((request) => request.params['limit']), [40, 20, 20]);
+    expect(requests.map((request) => request.params['cursor']), [null, null, 'older-page']);
+    expect(
+      snapshot.detail.committedMessages.map((message) => message.content),
+      ['older', 'newer'],
+    );
+    await client.close();
+  });
+
   test('maps conversation selection and active turn from the routed snapshot', () async {
     final handshakeJson = _handshakeJson();
     final provider = (handshakeJson['providers'] as List).single
@@ -523,7 +590,7 @@ void main() {
     expect(transport.requests.last.method, 'conversation.get');
     expect(
       transport.requests.last.params['conversation'],
-      page.conversations.single.wireResource,
+      _resourceJson(page.conversations.single.resource!),
     );
 
     transport.responses['conversation.search'] = {
@@ -783,7 +850,7 @@ void main() {
 
     final event = await eventFuture;
     expect(event, isA<ConversationUpsertedEvent>());
-    expect((event as ConversationUpsertedEvent).conversation.wireResource!['nativeResourceId'], 'conversation-1');
+    expect((event as ConversationUpsertedEvent).conversation.resource!.nativeResourceId, 'conversation-1');
     await client.close();
   });
 
@@ -855,6 +922,46 @@ void main() {
     expect(delta.turnId, turn.turn.id);
     expect(delta.conversationId, turn.turn.conversationId);
     expect(delta.eventCursor, 'cursor-delta');
+    await subscription.cancel();
+    await client.close();
+  });
+
+  test('projects approval requested and resolved events', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    final received = <GatewayEvent>[];
+    final subscription = client.events.listen(received.add);
+    await client.connect();
+
+    transport.emit(_approvalEvent(
+      'approval.requested',
+      'cursor-approval-requested',
+      status: 'pending',
+    ));
+    transport.emit(_approvalEvent(
+      'approval.resolved',
+      'cursor-approval-resolved',
+      status: 'approved',
+      decision: 'approve',
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(received, everyElement(isA<ApprovalChangedEvent>()));
+    final requested = received[0] as ApprovalChangedEvent;
+    final resolved = received[1] as ApprovalChangedEvent;
+    expect(requested.approval.approvalStatus, 'pending');
+    expect(requested.approval.content, 'Run the command');
+    expect(resolved.approval.approvalStatus, 'approved');
+    expect(resolved.conversationId, contains('conversation-1'));
     await subscription.cancel();
     await client.close();
   });
@@ -1006,12 +1113,45 @@ JsonMap _turnEvent(String name, String cursor) {
   };
 }
 
+JsonMap _approvalEvent(
+  String name,
+  String cursor, {
+  required String status,
+  String? decision,
+}) {
+  final route = _route.toJson();
+  final approval = <String, Object?>{
+    'resource': {...route, 'nativeResourceId': 'approval-1'},
+    'conversation': {...route, 'nativeResourceId': 'conversation-1'},
+    'turn': {...route, 'nativeResourceId': 'turn-1'},
+    'kind': 'command',
+    'title': 'Run command',
+    'description': 'Run the command',
+    'status': status,
+    'decisions': ['approve', 'deny'],
+    'requestedAt': 3000,
+  };
+  if (decision != null) {
+    approval['resolvedAt'] = 4000;
+    approval['decision'] = decision;
+  }
+  return {
+    'protocolVersion': 1,
+    'eventCursor': cursor,
+    'event': name,
+    'payload': {
+      'approval': approval,
+    },
+  };
+}
+
 class _FakeTransport
     implements GatewayTransport, EndpointAwareGatewayTransport,
         EndpointPersistenceAwareGatewayTransport {
   _FakeTransport(
     this.responses, {
     this.beforeResponse,
+    this.responseBuilder,
     this.selectedGatewayUri,
     this.shouldPersistSelectedGatewayUri = true,
     this.connectError,
@@ -1019,6 +1159,8 @@ class _FakeTransport
 
   final Map<String, JsonMap> responses;
   final void Function(String method)? beforeResponse;
+  final Object? Function(String method, JsonMap params, String id)?
+      responseBuilder;
   @override
   final Uri? selectedGatewayUri;
   @override
@@ -1046,6 +1188,12 @@ class _FakeTransport
     final params = Map<String, dynamic>.from(request['params'] as Map);
     requests.add(_RequestRecord(method, params));
     beforeResponse?.call(method);
+    final customResponse = responseBuilder?.call(
+      method,
+      params,
+      request['id'] as String,
+    );
+    if (customResponse != null) return customResponse;
     var response = responses[method];
     if (response == null) {
       throw StateError('No response for $method');
@@ -1142,6 +1290,24 @@ JsonMap _conversationJson() {
   };
 }
 
+JsonMap _historyItemJson(String itemId, String text) {
+  final conversation = {
+    ..._route.toJson(),
+    'nativeResourceId': 'conversation-1',
+  };
+  return {
+    'resource': {..._route.toJson(), 'nativeResourceId': itemId},
+    'turn': {..._route.toJson(), 'nativeResourceId': '$itemId-turn'},
+    'conversation': conversation,
+    'kind': 'message',
+    'status': 'completed',
+    'role': 'assistant',
+    'contents': [
+      {'contentId': '$itemId:text', 'kind': 'text', 'text': text},
+    ],
+  };
+}
+
 JsonMap _turnSendResult({required JsonMap selection}) {
   final conversation = {
     ..._route.toJson(),
@@ -1185,6 +1351,11 @@ ConversationSummary _domainConversation() =>
     const GeneratedGatewayMapper().conversation(
       sdk.Conversation.fromJson(_conversationJson()),
     );
+
+JsonMap _resourceJson(RoutedResourceId resource) => {
+      ...resource.route.toJson(),
+      'nativeResourceId': resource.nativeResourceId,
+    };
 
 const _fingerprint = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 

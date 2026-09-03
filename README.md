@@ -21,7 +21,12 @@ Gateway v2 的事实来源是 CodePet `protocol/gateway/v2` 与 `protocol/core/v
 
 ```text
 lib/
-  app/                         应用生命周期与连接会话
+  app/                         Composition Root 与 Flutter 应用生命周期
+  core/domain/                 稳定领域模型、资源身份与状态转换
+  application/ports/           Gateway、设备仓储、身份与配对端口
+  application/sessions/        Host 运行时、重连与列表投影
+  application/conversations/   搜索/详情用例控制器
+  application/pairing/         配对用例编排
   admission/                   pairing/credential 准入公开边界
   channel/                     discovery、TLS pin、WSS transport 公开边界
   features/connection/         设备连接入口
@@ -41,6 +46,21 @@ flutter pub get
 flutter analyze
 flutter test
 flutter run
+```
+
+CI 会在 `main` push 和 Pull Request 上执行 analyze、全量测试和 Android
+debug 构建。
+
+## Android 发布签名
+
+Release 不再回退使用 debug keystore。发布前通过 Gradle property 或环境变量
+提供以下四项；缺少任一项时 release variant 保持未签名，避免误发 debug 签名包：
+
+```text
+CODEPET_RELEASE_STORE_FILE
+CODEPET_RELEASE_STORE_PASSWORD
+CODEPET_RELEASE_KEY_ALIAS
+CODEPET_RELEASE_KEY_PASSWORD
 ```
 
 Android SDK 首次使用需要由开发者本人阅读并接受 Google 许可证：
@@ -66,6 +86,10 @@ flutter doctor --android-licenses
 
 ## 分层约束
 
+- core/domain：不依赖 Flutter、I/O、生成 SDK 或外层代码。
+- application：只依赖 core 和 application 自己定义的 ports；控制器为纯 Dart。
+- features：只调用 application 用例/控制器和领域投影，不直接访问 Gateway、TLS、存储或生成 DTO。
+- app：唯一的 composition root，负责选择并注入基础设施实现。
 - discovery：只产生 endpoint candidate。
 - channel：只传输 JSON-RPC object，并负责 TLS pin、Bearer 和连接生命周期。
 - admission：通过 pinned HTTPS pairing 建立设备级 credential；成功后可访问 Host 的全部 Provider。

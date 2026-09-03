@@ -1,7 +1,7 @@
 import 'package:codepet_remote/discovery/codepet_discovery.dart';
 import 'package:codepet_remote/discovery/resolving_gateway_transport.dart';
 import 'package:codepet_remote/core/domain/models.dart';
-import 'package:codepet_remote/core/errors/gateway_failures.dart';
+import 'package:codepet_remote/application/errors/application_failures.dart';
 import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'dart:async';

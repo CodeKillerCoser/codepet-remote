@@ -1,22 +1,16 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
+import '../../application/conversations/conversation_detail_controller.dart';
 import '../../application/conversations/conversation_timeline.dart';
 import '../../application/sessions/device_session.dart';
-import '../../core/errors/gateway_failures.dart';
-import '../../core/ports/gateway_client.dart';
 import '../../core/domain/models.dart';
 import '../common/identity_icons.dart';
 import 'widgets/conversation_timeline_view.dart';
 
 const int _messagePageSize = 40;
 const double _nearBottomThreshold = 160;
-const Duration _interactionAcquireInterval = Duration(seconds: 10);
-const String _unknownOutcomeMessage =
-    '上次发送结果未知。请先刷新会话核对；确认后再次发送会创建新请求，仍可能产生重复任务。';
 const ConversationTimelineProjector _timelineProjector =
     ConversationTimelineProjector();
 
@@ -39,47 +33,34 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _messagesCenterKey = GlobalKey();
   final TextEditingController _draftController = TextEditingController();
-  GatewayEventWindow? _eventWindow;
-  Timer? _interactionTimer;
-  final Set<String> _appliedCursors = {};
-  final Set<String> _refreshingTurns = {};
-  DeviceSessionRuntimeLease? _observedLease;
-  _CapabilityBinding? _binding;
-  GatewayProvider? _provider;
-  ConversationDetail? _detail;
+  late ConversationDetailController _controller;
   List<ConversationTimelineBlock> _timeline = const [];
-  int? _detailFrameCallbackId;
-  bool _followPendingDetailFrame = false;
-  String? _error;
-  String? _sendError;
-  String? _interactionError;
-  String? _accessModeId;
-  String? _reasoningEffortId;
-  ModelSelection? _modelSelection;
-  _PendingTurnSend? _pendingSend;
-  int _runtimeEpoch = 0;
-  bool _sending = false;
-  bool _interactionAcquired = false;
-  bool _interactionRequestInFlight = false;
-  bool _selectionInitializedFromInteraction = false;
-  bool _outcomeUnknown = false;
-  bool _staleCapabilities = false;
-  bool _refreshingTerminal = false;
   bool _metadataExpanded = false;
-  bool _messagesExpanded = true;
   int _hiddenMessageCount = 0;
   bool _showScrollToBottom = false;
-  bool _followOnExpand = true;
   int _scrollRequest = 0;
+
+  GatewayProvider? get _provider => _controller.provider;
+  ConversationDetail? get _detail => _controller.detail;
+  String? get _error => _controller.error;
+  String? get _sendError => _controller.sendError;
+  String? get _interactionError => _controller.interactionError;
+  String? get _accessModeId => _controller.accessModeId;
+  String? get _reasoningEffortId => _controller.reasoningEffortId;
+  ModelSelection? get _modelSelection => _controller.modelSelection;
+  bool get _sending => _controller.sending;
+  bool get _outcomeUnknown => _controller.outcomeUnknown;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_handleScroll);
     _draftController.addListener(_draftChanged);
-    widget.session.addListener(_sessionChanged);
-    _observedLease = widget.session.runtimeLease;
-    unawaited(_bindRuntime());
+    _controller = ConversationDetailController(
+      session: widget.session,
+      conversation: widget.conversation,
+    )..addListener(_controllerChanged);
+    unawaited(_controller.reload());
   }
 
   @override
@@ -90,19 +71,21 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             conversationRoutingKey(widget.conversation)) {
       return;
     }
-    oldWidget.session.removeListener(_sessionChanged);
-    widget.session.addListener(_sessionChanged);
-    _observedLease = widget.session.runtimeLease;
-    unawaited(_bindRuntime());
+    _controller
+      ..removeListener(_controllerChanged)
+      ..dispose();
+    _controller = ConversationDetailController(
+      session: widget.session,
+      conversation: widget.conversation,
+    )..addListener(_controllerChanged);
+    unawaited(_controller.reload());
   }
 
   @override
   void dispose() {
-    widget.session.removeListener(_sessionChanged);
-    _runtimeEpoch++;
-    _interactionTimer?.cancel();
-    _cancelPendingDetailFrame();
-    unawaited(_eventWindow?.close());
+    _controller
+      ..removeListener(_controllerChanged)
+      ..dispose();
     _draftController.removeListener(_draftChanged);
     _draftController.dispose();
     _scrollController.removeListener(_handleScroll);
@@ -114,591 +97,53 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     if (mounted) setState(() {});
   }
 
-  void _sessionChanged() {
-    final lease = widget.session.runtimeLease;
-    final conversation = _currentConversation;
-    final provider = widget.session.providerForConversation(conversation);
-    final nextBinding = lease == null || provider == null
-        ? null
-        : _CapabilityBinding.from(lease, provider);
-    if (_sameLease(_observedLease, lease) && _binding == nextBinding) {
-      if (mounted && _provider != provider) {
-        setState(() {
-          _provider = provider;
-        });
+  void _controllerChanged() {
+    if (!mounted) return;
+    final wasNearBottom = _isNearBottom();
+    final previousWasEmpty = _timeline.isEmpty;
+    final detail = _controller.detail;
+    final firstDetail = previousWasEmpty && detail != null;
+    final nextTimeline = detail == null
+        ? const <ConversationTimelineBlock>[]
+        : _timelineProjector.project(detail);
+    final followOutput = _controller.consumeFollowOutputRequest();
+    setState(() {
+      _timeline = nextTimeline;
+      if (previousWasEmpty && detail != null) {
+        _hiddenMessageCount = nextTimeline.length > _messagePageSize
+            ? nextTimeline.length - _messagePageSize
+            : 0;
+      } else {
+        _convergeHiddenMessageCount(nextTimeline.length);
       }
-      return;
-    }
-    _observedLease = lease;
-    unawaited(_bindRuntime());
-  }
-
-  ConversationSummary get _currentConversation {
-    final key = conversationRoutingKey(widget.conversation);
-    for (final conversation in widget.session.conversations) {
-      if (conversationRoutingKey(conversation) == key) return conversation;
-    }
-    return widget.conversation;
-  }
-
-  bool _sameLease(
-    DeviceSessionRuntimeLease? left,
-    DeviceSessionRuntimeLease? right,
-  ) =>
-      left?.generation == right?.generation &&
-      identical(left?.client, right?.client);
-
-  Future<void> _bindRuntime() async {
-    final epoch = ++_runtimeEpoch;
-    _interactionTimer?.cancel();
-    _interactionTimer = null;
-    _cancelPendingDetailFrame();
-    final previousBinding = _binding;
-    final previousWindow = _eventWindow;
-    _eventWindow = null;
-    _appliedCursors.clear();
-    _refreshingTurns.clear();
-    final lease = widget.session.runtimeLease;
-    final conversation = _currentConversation;
-    final provider = widget.session.providerForConversation(conversation);
-    final binding = lease == null || provider == null
-        ? null
-        : _CapabilityBinding.from(lease, provider);
-    final pendingSend = _pendingSend;
-    final sameConversation = pendingSend != null &&
-        conversationRoutingKey(pendingSend.conversation) ==
-            conversationRoutingKey(conversation);
-    final preserveUnknown = sameConversation &&
-        (_outcomeUnknown ||
-            (_sending && previousBinding != binding));
-    if (mounted) {
-      setState(() {
-        _observedLease = lease;
-        _binding = binding;
-        _provider = provider;
-        _replaceDetail(null);
-        _error = null;
-        _sendError = preserveUnknown ? _unknownOutcomeMessage : null;
-        _interactionError = null;
-        _accessModeId = null;
-        _reasoningEffortId = null;
-        _modelSelection = null;
-        _sending = false;
-        _interactionAcquired = false;
-        _interactionRequestInFlight = false;
-        _selectionInitializedFromInteraction = false;
-        _outcomeUnknown = preserveUnknown;
-        if (!preserveUnknown) {
-          _pendingSend = null;
-        }
-        _staleCapabilities = false;
-        _refreshingTerminal = false;
+      if (detail == null) {
         _showScrollToBottom = false;
         _scrollRequest++;
-      });
-    }
-    if (previousWindow != null) unawaited(previousWindow.close());
-    if (lease == null || provider == null || binding == null) return;
-    if (!provider.methods.contains('conversation.get')) {
-      if (mounted && epoch == _runtimeEpoch) {
-        setState(() {
-          _error = '当前 Provider 不支持加载会话详情。';
-        });
-      }
-      return;
-    }
-    if (provider.methods.contains('turn.send')) {
-      _startInteractionLoop(
-        lease: lease,
-        binding: binding,
-        conversation: conversation,
-        epoch: epoch,
-      );
-    }
-    await _loadSnapshot(
-      lease: lease,
-      binding: binding,
-      conversation: conversation,
-      epoch: epoch,
-      initializeSelection: true,
-    );
-  }
-
-  void _startInteractionLoop({
-    required DeviceSessionRuntimeLease lease,
-    required _CapabilityBinding binding,
-    required ConversationSummary conversation,
-    required int epoch,
-  }) {
-    unawaited(_acquireInteraction(
-      lease: lease,
-      binding: binding,
-      conversation: conversation,
-      epoch: epoch,
-    ));
-    _interactionTimer = Timer.periodic(_interactionAcquireInterval, (_) {
-      unawaited(_acquireInteraction(
-        lease: lease,
-        binding: binding,
-        conversation: conversation,
-        epoch: epoch,
-      ));
-    });
-  }
-
-  Future<void> _acquireInteraction({
-    required DeviceSessionRuntimeLease lease,
-    required _CapabilityBinding binding,
-    required ConversationSummary conversation,
-    required int epoch,
-  }) async {
-    if (_interactionRequestInFlight ||
-        !_acceptsRuntime(epoch, lease, binding)) {
-      return;
-    }
-    _interactionRequestInFlight = true;
-    try {
-      final interaction = await lease.client.acquireInteraction(conversation);
-      if (!_acceptsRuntime(epoch, lease, binding)) return;
-      setState(() {
-        _interactionAcquired = true;
-        _interactionError = null;
-        if (!_selectionInitializedFromInteraction &&
-            _hasSelection(interaction.selection)) {
-          _initializeSelectionFrom(interaction.selection);
-          _selectionInitializedFromInteraction = true;
-        }
-      });
-    } catch (error) {
-      if (!_acceptsRuntime(epoch, lease, binding)) return;
-      setState(() {
-        _interactionAcquired = false;
-        _interactionError = _interactionFailureMessage(error);
-      });
-    } finally {
-      if (epoch == _runtimeEpoch) _interactionRequestInFlight = false;
-    }
-  }
-
-  bool _hasSelection(TurnSendSelection selection) =>
-      selection.accessModeId != null ||
-      selection.reasoningEffortId != null ||
-      selection.model != null;
-
-  String _interactionFailureMessage(Object error) {
-    if (error is GatewayProtocolException &&
-        error.code == 'conversation_write_conflict') {
-      return '该会话正在被另一个客户端写入，暂时无法继续对话。';
-    }
-    return '无法获取会话交互权：$error';
-  }
-
-  Future<void> _loadSnapshot({
-    required DeviceSessionRuntimeLease lease,
-    required _CapabilityBinding binding,
-    required ConversationSummary conversation,
-    required int epoch,
-    bool initializeSelection = false,
-    String? completedTurnId,
-    bool? followBottom,
-  }) async {
-    final shouldFollowBottom = followBottom ?? _detail == null;
-    if (mounted) setState(() => _error = null);
-    final window = lease.client.openEventWindow();
-    try {
-      final snapshot = await lease.client.getConversation(conversation);
-      if (!_acceptsRuntime(epoch, lease, binding)) {
-        await window.close();
-        return;
-      }
-      var detail = snapshot.detail;
-      final previous = _detail;
-      if (completedTurnId != null && previous != null) {
-        detail = previous.installCommittedSnapshot(
-          detail,
-          completedTurnId: completedTurnId,
-        );
-      }
-      final baseline = window.startCursor;
-      if (baseline == null) {
-        throw const GatewayCursorGapException(
-          'Detail event window has no subscribed baseline cursor',
-        );
-      }
-      final previousWindow = _eventWindow;
-      _eventWindow = null;
-      if (previousWindow != null) unawaited(previousWindow.close());
-      if (!_acceptsRuntime(epoch, lease, binding)) {
-        await window.close();
-        return;
-      }
-      _eventWindow = window;
-      setState(() {
-        _replaceDetail(detail);
-        _provider = widget.session.providerForConversation(conversation);
-        if (initializeSelection && !_selectionInitializedFromInteraction) {
-          _initializeSelection(detail.summary);
-        }
-        final timelineLength = _timeline.length;
-        if (previous == null) {
-          _hiddenMessageCount = timelineLength > _messagePageSize
-              ? timelineLength - _messagePageSize
-              : 0;
-        } else {
-          _convergeHiddenMessageCount(timelineLength);
-        }
-      });
-      window.install(
-        baselineCursor: baseline,
-        snapshotCursor: snapshot.snapshotCursor,
-        onEvent: (event) => _applyEvent(event, epoch, lease, binding),
-        onError: (Object error, StackTrace _) {
-          if (_acceptsRuntime(epoch, lease, binding)) {
-            setState(() {
-              _replaceDetail(null);
-              _error = '事件流异常：$error';
-              _showScrollToBottom = false;
-              _scrollRequest++;
-            });
-          }
-          _eventWindow = null;
-          unawaited(window.close());
-        },
-      );
-      if (shouldFollowBottom && _messagesExpanded) {
-        _scrollToBottom();
-      } else {
-        _scheduleScrollStateUpdate();
-      }
-    } catch (error) {
-      await window.close();
-      if (_acceptsRuntime(epoch, lease, binding)) {
-        await _eventWindow?.close();
-        _eventWindow = null;
-        setState(() {
-          _replaceDetail(null);
-          _error = error.toString();
-          _showScrollToBottom = false;
-          _scrollRequest++;
-        });
-      }
-    }
-  }
-
-  bool _acceptsRuntime(
-    int epoch,
-    DeviceSessionRuntimeLease lease,
-    _CapabilityBinding binding,
-  ) =>
-      mounted &&
-      epoch == _runtimeEpoch &&
-      _binding == binding &&
-      widget.session.ownsRuntimeLease(lease);
-
-  void _replaceDetail(ConversationDetail? detail) {
-    _detail = detail;
-    _timeline = detail == null
-        ? const []
-        : _timelineProjector.project(detail);
-  }
-
-  void _scheduleDetailFrame({required bool followBottom}) {
-    _followPendingDetailFrame |= followBottom;
-    if (_detailFrameCallbackId != null) return;
-    final epoch = _runtimeEpoch;
-    _detailFrameCallbackId =
-        SchedulerBinding.instance.scheduleFrameCallback((_) {
-      _detailFrameCallbackId = null;
-      final shouldFollowBottom = _followPendingDetailFrame;
-      _followPendingDetailFrame = false;
-      if (!mounted || epoch != _runtimeEpoch) return;
-      final detail = _detail;
-      setState(() {
-        _timeline = detail == null
-            ? const []
-            : _timelineProjector.project(detail);
-        _convergeHiddenMessageCount(_timeline.length);
-      });
-      if (shouldFollowBottom && _messagesExpanded) {
-        _followStreamingOutput();
-      } else {
-        _scheduleScrollStateUpdate();
       }
     });
-  }
-
-  void _cancelPendingDetailFrame() {
-    final callbackId = _detailFrameCallbackId;
-    if (callbackId != null) {
-      SchedulerBinding.instance.cancelFrameCallbackWithId(callbackId);
-      _detailFrameCallbackId = null;
-    }
-    _followPendingDetailFrame = false;
-  }
-
-  void _initializeSelection(ConversationSummary summary) {
-    _initializeSelectionFrom(summary.turnSendSelection);
-  }
-
-  void _initializeSelectionFrom(TurnSendSelection? current) {
-    final capabilities = _provider?.capabilities.turnSend;
-    _accessModeId = _initialChoice(
-      capabilities?.accessMode,
-      current?.accessModeId,
-    );
-    _reasoningEffortId = _initialChoice(
-      capabilities?.reasoningEffort,
-      current?.reasoningEffortId,
-    );
-    final catalog = capabilities?.modelCatalog;
-    final currentModel = current?.model;
-    if (catalog == null) {
-      _modelSelection = null;
-    } else if (catalog.accepts(currentModel)) {
-      _modelSelection = currentModel;
+    if (firstDetail) {
+      _scrollToBottom();
+    } else if (followOutput && wasNearBottom) {
+      _followStreamingOutput();
     } else {
-      final available = catalog.availableSelections.toList(growable: false);
-      final defaultSelection = catalog.defaultSelection;
-      _modelSelection = catalog.accepts(defaultSelection)
-          ? defaultSelection
-          : available.length == 1
-              ? available.single
-              : null;
+      _scheduleScrollStateUpdate();
     }
   }
 
-  String? _initialChoice(ProviderChoiceSet? choices, String? current) {
-    if (choices == null) return null;
-    if (choices.accepts(current)) return current;
-    if (choices.accepts(choices.defaultId)) return choices.defaultId;
-    final available = choices.availableOptions;
-    return available.length == 1 ? available.single.id : null;
-  }
+  Future<void> _bindRuntime() => _controller.reload();
 
-  void _applyEvent(
-    GatewayEvent event,
-    int epoch,
-    DeviceSessionRuntimeLease lease,
-    _CapabilityBinding binding,
-  ) {
-    if (!_acceptsRuntime(epoch, lease, binding) ||
-        !_appliedCursors.add(event.eventCursor)) {
-      return;
-    }
-    final detail = _detail;
-    if (detail == null) return;
-    final wasNearBottom = _messagesExpanded && _isNearBottom();
-    final next = detail.apply(event);
-    if (identical(next, detail)) {
-      return;
-    }
-    _detail = next;
-    _scheduleDetailFrame(
-      followBottom: event is TurnOutputDeltaEvent && wasNearBottom,
-    );
-    if (event is TurnUpsertedEvent &&
-        event.turn.conversationId == detail.summary.id &&
-        event.turn.status.isTerminal &&
-        _refreshingTurns.add(event.turn.id)) {
-      unawaited(_reloadCompletedTurn(
-        event.turn.id,
-        followBottom: wasNearBottom,
-        epoch: epoch,
-        lease: lease,
-        binding: binding,
-      ));
-    }
-  }
+  bool get _canSend => _controller.canSend(_draftController.text);
 
-  Future<void> _reloadCompletedTurn(
-    String turnId, {
-    required bool followBottom,
-    required int epoch,
-    required DeviceSessionRuntimeLease lease,
-    required _CapabilityBinding binding,
-  }) async {
-    if (_acceptsRuntime(epoch, lease, binding)) {
-      setState(() => _refreshingTerminal = true);
-    }
-    try {
-      await _loadSnapshot(
-        lease: lease,
-        binding: binding,
-        conversation: _currentConversation,
-        epoch: epoch,
-        completedTurnId: turnId,
-        followBottom: followBottom,
-      );
-      final detail = _detail;
-      if (mounted && detail != null) {
-        setState(() {
-          _replaceDetail(
-            detail.installCommittedSnapshot(
-              detail,
-              completedTurnId: turnId,
-            ),
-          );
-          _convergeHiddenMessageCount(_timeline.length);
-        });
-      }
-    } finally {
-      _refreshingTurns.remove(turnId);
-      if (_acceptsRuntime(epoch, lease, binding)) {
-        setState(() => _refreshingTerminal = false);
-      }
-    }
-  }
-
-  TurnSendSelection get _selection => TurnSendSelection(
-        accessModeId: _accessModeId,
-        reasoningEffortId: _reasoningEffortId,
-        model: _modelSelection,
-      );
-
-  bool get _selectionValid {
-    final capabilities = _provider?.capabilities.turnSend;
-    return capabilities != null && capabilities.accepts(_selection);
-  }
-
-  bool get _conversationBlocksSend {
-    final detail = _detail;
-    if (detail == null) return true;
-    if (detail.activeTurn != null) return true;
-    return switch (detail.summary.status) {
-      ConversationStatus.running ||
-      ConversationStatus.waitingApproval ||
-      ConversationStatus.waitingUserInput ||
-      ConversationStatus.archived => true,
-      ConversationStatus.idle || ConversationStatus.error => false,
-    };
-  }
-
-  bool get _canSend {
-    final lease = widget.session.runtimeLease;
-    final provider = _provider;
-    return lease != null &&
-        widget.session.ownsRuntimeLease(lease) &&
-        provider != null &&
-        provider.status == ProviderStatus.ready &&
-        provider.methods.contains('turn.send') &&
-        provider.capabilities.turnSend != null &&
-        _interactionAcquired &&
-        !_staleCapabilities &&
-        !_sending &&
-        !_outcomeUnknown &&
-        !_refreshingTerminal &&
-        !_conversationBlocksSend &&
-        _selectionValid &&
-        _draftController.text.trim().isNotEmpty;
-  }
-
-  bool get _composerEnabled =>
-      _detail != null &&
-      _provider?.status == ProviderStatus.ready &&
-      _provider?.methods.contains('turn.send') == true &&
-      _interactionAcquired &&
-      !_staleCapabilities &&
-      !_sending &&
-      !_refreshingTerminal &&
-      !_conversationBlocksSend &&
-      !_outcomeUnknown;
+  bool get _composerEnabled => _controller.composerEnabled;
 
   Future<void> _send() async {
-    if (!_canSend) return;
-    final lease = widget.session.runtimeLease;
-    final provider = _provider;
-    final binding = _binding;
-    if (lease == null || provider == null || binding == null) return;
-    final epoch = _runtimeEpoch;
-    final currentConversation = _currentConversation;
-    final attempt = _PendingTurnSend(
-      clientRequestId: _newClientRequestId(),
-      text: _draftController.text,
-      selection: _selection,
-      capabilityRevision: provider.capabilities.revision,
-      route: provider.route,
-      conversation: currentConversation,
-    );
-    setState(() {
-      _sending = true;
-      _sendError = null;
-      _pendingSend = attempt;
-    });
-    try {
-      final receipt = await lease.client.sendTurn(
-        route: attempt.route,
-        conversation: attempt.conversation,
-        clientRequestId: attempt.clientRequestId,
-        capabilityRevision: attempt.capabilityRevision,
-        text: attempt.text,
-        selection: attempt.selection,
-      );
-      if (!_acceptsRuntime(epoch, lease, binding)) return;
-      setState(() {
-        _replaceDetail(_detail?.accept(receipt));
-        _accessModeId = receipt.effectiveSelection.accessModeId;
-        _reasoningEffortId = receipt.effectiveSelection.reasoningEffortId;
-        _modelSelection = receipt.effectiveSelection.model;
-        _pendingSend = null;
-        _outcomeUnknown = false;
-        _sendError = null;
-      });
-      _draftController.clear();
-      _scrollToBottom();
-    } catch (error) {
-      if (!_acceptsRuntime(epoch, lease, binding)) return;
-      if (error is GatewayProtocolException &&
-          error.code == 'stale_capability_revision') {
-        setState(() {
-          _staleCapabilities = true;
-          _accessModeId = null;
-          _reasoningEffortId = null;
-          _modelSelection = null;
-          _pendingSend = null;
-          _outcomeUnknown = false;
-          _sendError = 'Provider 能力已更新，正在重新连接并刷新选项。';
-        });
-        unawaited(widget.session.connect());
-      } else if (isGatewayOutcomeUnknown(error)) {
-        setState(() {
-          _outcomeUnknown = true;
-          _sendError = _unknownOutcomeMessage;
-        });
-        unawaited(_bindRuntime());
-      } else {
-        setState(() {
-          _pendingSend = null;
-          _outcomeUnknown = false;
-          _sendError = error.toString();
-        });
-      }
-    } finally {
-      if (_acceptsRuntime(epoch, lease, binding)) {
-        setState(() => _sending = false);
-      }
-    }
+    final sent = await _controller.send(_draftController.text);
+    if (!mounted || !sent) return;
+    _draftController.clear();
+    _scrollToBottom();
   }
 
-  void _clearUnknownOutcome() {
-    if (!_outcomeUnknown) return;
-    setState(() {
-      _pendingSend = null;
-      _outcomeUnknown = false;
-      _sendError = null;
-    });
-  }
-
-  String _newClientRequestId() {
-    final random = Random.secure();
-    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    final hex = bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
-    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
-        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
-        '${hex.substring(20)}';
-  }
-
+  void _clearUnknownOutcome() => _controller.clearUnknownOutcome();
   void _convergeHiddenMessageCount(int messageCount) {
     if (_hiddenMessageCount <= messageCount) return;
     _hiddenMessageCount = messageCount > _messagePageSize
@@ -713,8 +158,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
 
   void _handleScroll() {
     if (!mounted) return;
-    final shouldShow = _messagesExpanded &&
-        _scrollController.hasClients &&
+    final shouldShow = _scrollController.hasClients &&
         !_isNearBottom();
     if (shouldShow == _showScrollToBottom) return;
     setState(() {
@@ -774,26 +218,6 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     });
   }
 
-  void _toggleMessages() {
-    final willExpand = !_messagesExpanded;
-    final shouldFollowBottom = willExpand
-        ? _followOnExpand
-        : _isNearBottom();
-    setState(() {
-      _messagesExpanded = willExpand;
-      if (!willExpand) {
-        _followOnExpand = shouldFollowBottom;
-        _showScrollToBottom = false;
-        _scrollRequest++;
-      }
-    });
-    if (willExpand && shouldFollowBottom) {
-      _scrollToBottom();
-    } else {
-      _scheduleScrollStateUpdate();
-    }
-  }
-
   void _showEarlierMessages() {
     if (_hiddenMessageCount == 0) return;
     _scrollRequest++;
@@ -813,32 +237,73 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         );
     final providerIdentity = provider?.providerType ??
         widget.conversation.providerId;
+    final summary = _detail?.summary ?? widget.conversation;
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
     return Scaffold(
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
-        title: Row(
-          children: [
-            ProviderIcon(
-              key: const Key('conversation-provider-icon'),
-              icon: provider?.icon,
-              providerIdentity: providerIdentity,
-              size: 22,
-              color: Theme.of(context).colorScheme.primary,
-              semanticLabel: provider?.displayName ?? 'Provider',
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                _detail?.summary.title ?? widget.conversation.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
+        leadingWidth: 48,
+        titleSpacing: 0,
+        toolbarHeight: 64,
+        title: _ConversationTitle(
+          summary: summary,
+          expanded: _metadataExpanded,
+          onTap: () => setState(() {
+            _metadataExpanded = !_metadataExpanded;
+          }),
+          providerIcon: ProviderIcon(
+            key: const Key('conversation-provider-icon'),
+            icon: provider?.icon,
+            providerIdentity: providerIdentity,
+            size: 22,
+            color: Theme.of(context).colorScheme.primary,
+            semanticLabel: provider?.displayName ?? 'Provider',
+          ),
         ),
       ),
-      body: _buildBody(),
+      body: Stack(
+        children: [
+          Positioned.fill(child: _buildBody()),
+          Positioned(
+            top: 8,
+            left: 12,
+            right: 12,
+            child: IgnorePointer(
+              ignoring: !_metadataExpanded,
+              child: AnimatedSwitcher(
+                key: const Key('conversation-title-metadata-animation'),
+                duration: const Duration(milliseconds: 220),
+                reverseDuration: const Duration(milliseconds: 180),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) {
+                  final curvedAnimation = CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOutCubic,
+                    reverseCurve: Curves.easeInCubic,
+                  );
+                  return FadeTransition(
+                    opacity: curvedAnimation,
+                    child: SizeTransition(
+                      sizeFactor: curvedAnimation,
+                      alignment: Alignment.topCenter,
+                      child: child,
+                    ),
+                  );
+                },
+                child: _metadataExpanded
+                    ? _ConversationMetadataPanel(
+                        key: const Key('conversation-title-metadata'),
+                        summary: summary,
+                      )
+                    : const SizedBox.shrink(
+                        key: Key('conversation-title-metadata-collapsed'),
+                      ),
+              ),
+            ),
+          ),
+        ],
+      ),
       bottomNavigationBar: AnimatedPadding(
         key: const Key('keyboard-aware-composer'),
         duration: const Duration(milliseconds: 160),
@@ -902,8 +367,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     final centerBlockCount = timeline.length - centerBlockIndex;
     final earlierVisibleBlockCount =
         centerBlockIndex - _hiddenMessageCount;
-    final growsUpward =
-        _messagesExpanded && timeline.length > _messagePageSize;
+    final growsUpward = timeline.length > _messagePageSize;
     return NotificationListener<ScrollStartNotification>(
       onNotification: (notification) {
         if (notification.dragDetails != null) {
@@ -920,15 +384,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             sliver: SliverList(
               delegate: SliverChildListDelegate.fixed([
-                _ConversationMetadata(
-                  summary: detail.summary,
-                  expanded: _metadataExpanded,
-                  onTap: () => setState(() {
-                    _metadataExpanded = !_metadataExpanded;
-                  }),
-                ),
                 if (_error != null) ...[
-                  const SizedBox(height: 12),
                   MaterialBanner(
                     content: Text(_error!),
                     actions: [
@@ -938,15 +394,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 12),
                 ],
-                const SizedBox(height: 20),
-                _MessagesSectionHeader(
-                  expanded: _messagesExpanded,
-                  count: timeline.length,
-                  onTap: _toggleMessages,
-                ),
-                if (_messagesExpanded && _hiddenMessageCount > 0) ...[
-                  const SizedBox(height: 8),
+                if (_hiddenMessageCount > 0) ...[
                   Center(
                     child: TextButton.icon(
                       key: const Key('show-earlier-messages'),
@@ -955,12 +405,12 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                       label: const Text('显示更早消息'),
                     ),
                   ),
+                  const SizedBox(height: 12),
                 ],
-                if (_messagesExpanded) const SizedBox(height: 12),
               ]),
             ),
           ),
-          if (_messagesExpanded && earlierVisibleBlockCount > 0)
+          if (earlierVisibleBlockCount > 0)
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
               sliver: SliverList(
@@ -984,17 +434,10 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             ),
           SliverPadding(
             key: _messagesCenterKey,
-            padding: EdgeInsets.fromLTRB(
-              _messagesExpanded ? 16 : 0,
-              0,
-              _messagesExpanded ? 16 : 0,
-              28,
-            ),
-            sliver: !_messagesExpanded
-                ? const SliverToBoxAdapter(child: SizedBox.shrink())
-                : timeline.isEmpty
-                    ? const SliverToBoxAdapter(child: _NoHistoryNotice())
-                    : SliverList(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+            sliver: timeline.isEmpty
+                ? const SliverToBoxAdapter(child: _NoHistoryNotice())
+                : SliverList(
                         // The latest page is deliberately bounded and fixed so
                         // scrolling to the bottom uses an exact max extent.
                         delegate: SliverChildListDelegate.fixed([
@@ -1026,6 +469,40 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   }
 
   Widget _buildComposer() {
+    final interactionError = _interactionError;
+    if (interactionError != null) {
+      return Material(
+        key: const Key('interaction-unavailable'),
+        elevation: 8,
+        color: Theme.of(context).colorScheme.surface,
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.edit_off_outlined,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    interactionError,
+                    key: const Key('interaction-error'),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     final capabilities = _provider?.capabilities.turnSend;
     final selectorEnabled = _composerEnabled;
     return Material(
@@ -1069,7 +546,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                     children: [
                       TextButton.icon(
                         key: const Key('turn-unknown-refresh'),
-                        onPressed: _binding == null
+                        onPressed: widget.session.runtimeLease == null
                             ? null
                             : () => unawaited(_bindRuntime()),
                         icon: const Icon(Icons.refresh, size: 18),
@@ -1083,16 +560,6 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                       ),
                     ],
                   ),
-              ],
-              if (_interactionError != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  _interactionError!,
-                  key: const Key('interaction-error'),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                ),
               ],
               const SizedBox(height: 6),
               Row(
@@ -1113,7 +580,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                               selectedId: _accessModeId,
                               enabled: selectorEnabled,
                               onSelected: (value) {
-                                setState(() => _accessModeId = value);
+                                _controller.selectAccessMode(value);
                               },
                             ),
                           if (capabilities?.accessMode != null &&
@@ -1128,7 +595,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                               selectedId: _reasoningEffortId,
                               enabled: selectorEnabled,
                               onSelected: (value) {
-                                setState(() => _reasoningEffortId = value);
+                                _controller.selectReasoningEffort(value);
                               },
                             ),
                           if ((capabilities?.accessMode != null ||
@@ -1142,7 +609,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                               selected: _modelSelection,
                               enabled: selectorEnabled,
                               onSelected: (value) {
-                                setState(() => _modelSelection = value);
+                                _controller.selectModel(value);
                               },
                             ),
                         ],
@@ -1170,29 +637,185 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     );
   }
 
-  String get _composerHint {
-    if (widget.session.runtimeLease == null) return '设备离线';
-    if (_staleCapabilities) return 'Provider 能力已变化，正在刷新';
-    if (_detail == null) return '正在加载会话';
-    if (_outcomeUnknown) return '发送结果未知，请先刷新会话核对';
-    if (_refreshingTerminal) return '正在收敛本轮结果';
-    final status = _detail!.summary.status;
-    if (_detail!.activeTurn != null || status == ConversationStatus.running) {
-      return '当前任务仍在运行';
-    }
-    if (status == ConversationStatus.waitingApproval) return '当前任务正在等待审批';
-    if (status == ConversationStatus.waitingUserInput) {
-      return '结构化用户输入暂不支持';
-    }
-    if (status == ConversationStatus.archived) return '已归档会话不能继续';
-    if (_provider?.methods.contains('turn.send') != true) {
-      return '当前 Provider 不支持继续对话';
-    }
-    if (!_interactionAcquired) {
-      return _interactionError == null ? '正在获取会话交互权' : '暂时无法继续对话';
-    }
-    if (!_selectionValid) return '请先选择可用的发送选项';
-    return '继续对话';
+  String get _composerHint => _controller.composerHint;
+}
+
+class _ConversationTitle extends StatelessWidget {
+  const _ConversationTitle({
+    required this.summary,
+    required this.providerIcon,
+    required this.expanded,
+    required this.onTap,
+  });
+
+  final ConversationSummary summary;
+  final Widget providerIcon;
+  final bool expanded;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final statusColor = switch (summary.status) {
+      ConversationStatus.running => Colors.green,
+      ConversationStatus.waitingApproval => colorScheme.tertiary,
+      ConversationStatus.waitingUserInput => colorScheme.primary,
+      ConversationStatus.error => colorScheme.error,
+      ConversationStatus.idle || ConversationStatus.archived =>
+        colorScheme.outline,
+    };
+    return InkWell(
+      key: const Key('conversation-title-metadata-toggle'),
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Row(
+        children: [
+          providerIcon,
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  summary.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 1),
+                Row(
+                  key: const Key('conversation-title-status'),
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      _statusLabel(summary.status),
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          AnimatedRotation(
+            key: const Key('conversation-title-metadata-arrow'),
+            turns: expanded ? 0.5 : 0,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            child: Icon(
+              Icons.expand_more,
+              size: 20,
+              semanticLabel: expanded ? '收起会话信息' : '展开会话信息',
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConversationMetadataPanel extends StatelessWidget {
+  const _ConversationMetadataPanel({
+    super.key,
+    required this.summary,
+  });
+
+  final ConversationSummary summary;
+
+  bool get _hasPreview =>
+      summary.preview != null && summary.preview!.isNotEmpty;
+  bool get _hasModel =>
+      summary.model != null || summary.reasoningEffort != null;
+  bool get _hasWorkspace => summary.workspaceRoot != null;
+
+  double get _height =>
+        42 +
+            (_hasPreview ? 40 : 0) +
+            (_hasModel ? 24 : 0) +
+            (_hasWorkspace ? 24 : 0);
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final secondaryStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: colorScheme.onSurfaceVariant,
+        );
+    return Material(
+      elevation: 6,
+      shadowColor: colorScheme.shadow.withValues(alpha: 0.24),
+      color: colorScheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: double.infinity,
+        height: _height,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.shield_outlined, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    '权限 · ${summary.permissionLevel}',
+                    style: secondaryStyle,
+                  ),
+                ],
+              ),
+              if (_hasPreview) ...[
+                const SizedBox(height: 6),
+                Text(
+                  summary.preview!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: secondaryStyle,
+                ),
+              ],
+              if (_hasModel) ...[
+                const SizedBox(height: 6),
+                Text(
+                  [summary.model, summary.reasoningEffort]
+                      .whereType<String>()
+                      .join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: secondaryStyle,
+                ),
+              ],
+              if (_hasWorkspace) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    const Icon(Icons.folder_outlined, size: 16),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        summary.workspaceRoot!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: secondaryStyle,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -1434,215 +1057,6 @@ class _OptionLabel extends StatelessWidget {
             ),
         ],
       );
-}
-
-class _CapabilityBinding {
-  const _CapabilityBinding({
-    required this.generation,
-    required this.client,
-    required this.route,
-    required this.revision,
-  });
-
-  factory _CapabilityBinding.from(
-    DeviceSessionRuntimeLease lease,
-    GatewayProvider provider,
-  ) =>
-      _CapabilityBinding(
-        generation: lease.generation,
-        client: lease.client,
-        route: provider.route,
-        revision: provider.capabilities.revision,
-      );
-
-  final int generation;
-  final GatewayClient client;
-  final GatewayProviderRoute route;
-  final String revision;
-
-  @override
-  bool operator ==(Object other) =>
-      other is _CapabilityBinding &&
-      other.generation == generation &&
-      identical(other.client, client) &&
-      other.route == route &&
-      other.revision == revision;
-
-  @override
-  int get hashCode => Object.hash(
-        generation,
-        identityHashCode(client),
-        route,
-        revision,
-      );
-}
-
-class _PendingTurnSend {
-  const _PendingTurnSend({
-    required this.clientRequestId,
-    required this.text,
-    required this.selection,
-    required this.capabilityRevision,
-    required this.route,
-    required this.conversation,
-  });
-
-  final String clientRequestId;
-  final String text;
-  final TurnSendSelection selection;
-  final String capabilityRevision;
-  final GatewayProviderRoute route;
-  final ConversationSummary conversation;
-}
-
-class _MessagesSectionHeader extends StatelessWidget {
-  const _MessagesSectionHeader({
-    required this.expanded,
-    required this.count,
-    required this.onTap,
-  });
-
-  final bool expanded;
-  final int count;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => Material(
-        color: Colors.transparent,
-        child: InkWell(
-          key: const Key('messages-section-toggle'),
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      Text(
-                        '消息与事件',
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '$count',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  expanded ? Icons.expand_less : Icons.expand_more,
-                  semanticLabel: expanded ? '折叠消息与事件' : '展开消息与事件',
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-}
-
-class _ConversationMetadata extends StatelessWidget {
-  const _ConversationMetadata({
-    required this.summary,
-    required this.expanded,
-    required this.onTap,
-  });
-
-  final ConversationSummary summary;
-  final bool expanded;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: EdgeInsets.zero,
-      elevation: 0,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        key: const Key('conversation-metadata-toggle'),
-        onTap: onTap,
-        child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 9,
-                  height: 9,
-                  decoration: BoxDecoration(
-                    color: summary.status == ConversationStatus.running
-                        ? Colors.green
-                        : colorScheme.outline,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  _statusLabel(summary.status),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const Spacer(),
-                Text(
-                  summary.permissionLevel,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(width: 4),
-                Icon(
-                  expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 20,
-                  semanticLabel: expanded ? '折叠会话详情' : '展开会话详情',
-                ),
-              ],
-            ),
-            if (expanded &&
-                summary.preview != null &&
-                summary.preview!.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(summary.preview!),
-            ],
-            if (expanded &&
-                (summary.model != null || summary.reasoningEffort != null)) ...[
-              const SizedBox(height: 10),
-              Text(
-                [summary.model, summary.reasoningEffort]
-                    .whereType<String>()
-                    .join(' · '),
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-              ),
-            ],
-            if (expanded && summary.workspaceRoot != null) ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  const Icon(Icons.folder_outlined, size: 16),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      summary.workspaceRoot!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-      ),
-    );
-  }
 }
 
 class _NoHistoryNotice extends StatelessWidget {

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../application/conversations/conversation_search_controller.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
 import 'conversation_detail_screen.dart';
@@ -22,38 +23,26 @@ class ConversationSearchScreen extends StatefulWidget {
 }
 
 class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
-  static const int _pageSize = 20;
-
   final TextEditingController _searchController = TextEditingController();
-  final Map<GatewayProviderRoute, String?> _cursors = {};
-  List<ConversationSummary> _conversations = const [];
-  String? _query;
-  String? _error;
-  String? _validationError;
-  bool _hasSearched = false;
-  bool _isLoading = false;
-  int _visibleCount = _pageSize;
-  int _requestGeneration = 0;
-  DeviceSessionRuntimeLease? _observedLease;
-  DeviceSessionRuntimeLease? _resultsLease;
+  late ConversationSearchController _controller;
 
-  List<GatewayProvider> get _providers {
-    final provider = widget.session.selectedProvider;
-    if (provider == null ||
-        !provider.methods.contains('conversation.search')) {
-      return const [];
-    }
-    return [provider];
-  }
-
-  bool get _canLoadMore =>
-      _cursors.values.any((cursor) => cursor != null);
+  List<GatewayProvider> get _providers => _controller.providers;
+  List<ConversationSummary> get _conversations => _controller.conversations;
+  String? get _query => _controller.query;
+  String? get _error => _controller.error;
+  String? get _validationError => _controller.validationError;
+  bool get _hasSearched => _controller.hasSearched;
+  bool get _isLoading => _controller.isLoading;
+  int get _visibleCount => _controller.visibleCount;
+  bool get _canLoadMore => _controller.hasRemoteMore;
 
   @override
   void initState() {
     super.initState();
-    _observedLease = widget.session.runtimeLease;
-    widget.session.addListener(_sessionChanged);
+    _controller = ConversationSearchController(
+      session: widget.session,
+      workspaceRoot: widget.workspaceRoot,
+    )..addListener(_changed);
   }
 
   @override
@@ -63,210 +52,38 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
         oldWidget.workspaceRoot == widget.workspaceRoot) {
       return;
     }
-    if (oldWidget.session != widget.session) {
-      oldWidget.session.removeListener(_sessionChanged);
-      widget.session.addListener(_sessionChanged);
-    }
-    _observedLease = widget.session.runtimeLease;
-    _requestGeneration++;
-    _clearRuntimeState();
+    _controller
+      ..removeListener(_changed)
+      ..dispose();
+    _controller = ConversationSearchController(
+      session: widget.session,
+      workspaceRoot: widget.workspaceRoot,
+    )..addListener(_changed);
   }
 
   @override
   void dispose() {
-    widget.session.removeListener(_sessionChanged);
-    _requestGeneration++;
+    _controller
+      ..removeListener(_changed)
+      ..dispose();
     _searchController.dispose();
-    _cursors.clear();
-    _conversations = const [];
     super.dispose();
   }
 
-  void _sessionChanged() {
-    final nextLease = widget.session.runtimeLease;
-    if (_sameLease(_observedLease, nextLease)) return;
-    _observedLease = nextLease;
-    _requestGeneration++;
-    if (!mounted) return;
-    setState(_clearRuntimeState);
+  void _changed() {
+    if (mounted) setState(() {});
   }
-
-  void _clearRuntimeState() {
-    _query = null;
-    _error = null;
-    _validationError = null;
-    _hasSearched = false;
-    _isLoading = false;
-    _visibleCount = _pageSize;
-    _resultsLease = null;
-    _conversations = const [];
-    _cursors.clear();
-  }
-
-  bool _sameLease(
-    DeviceSessionRuntimeLease? left,
-    DeviceSessionRuntimeLease? right,
-  ) =>
-      left?.generation == right?.generation &&
-      identical(left?.client, right?.client);
-
-  bool _acceptsResult(
-    int requestGeneration,
-    DeviceSessionRuntimeLease lease,
-    String query,
-  ) =>
-      mounted &&
-      requestGeneration == _requestGeneration &&
-      _query == query &&
-      widget.session.ownsRuntimeLease(lease);
 
   Future<void> _search() async {
-    final query = _searchController.text.trim();
-    if (query.isEmpty) {
-      setState(() {
-        _validationError = '请输入搜索关键词';
-      });
-      return;
-    }
-    final lease = widget.session.runtimeLease;
-    if (lease == null ||
-        _providers.isEmpty ||
-        _isLoading) {
-      return;
-    }
-
-    final providers = _providers;
-    final requestGeneration = ++_requestGeneration;
-    setState(() {
-      _query = query;
-      _validationError = null;
-      _error = null;
-      _hasSearched = true;
-      _isLoading = true;
-      _visibleCount = _pageSize;
-      _resultsLease = null;
-      _conversations = const [];
-      _cursors.clear();
-    });
-    try {
-      final pages = await Future.wait([
-        for (final provider in providers)
-          lease.client.searchConversations(
-            route: provider.route,
-            searchTerm: query,
-            limit: _pageSize,
-          ),
-      ]);
-      if (!_acceptsResult(requestGeneration, lease, query)) return;
-      var conversations = const <ConversationSummary>[];
-      final cursors = <GatewayProviderRoute, String?>{};
-      for (var index = 0; index < pages.length; index++) {
-        conversations = mergeRoutedConversations(
-          conversations,
-          _inScope(pages[index].conversations),
-        );
-        cursors[providers[index].route] = pages[index].nextCursor;
-      }
-      setState(() {
-        _resultsLease = lease;
-        _conversations = conversations;
-        _cursors
-          ..clear()
-          ..addAll(cursors);
-      });
-    } catch (value) {
-      if (_acceptsResult(requestGeneration, lease, query)) {
-        setState(() {
-          _error = value.toString();
-        });
-      }
-    } finally {
-      if (_acceptsResult(requestGeneration, lease, query)) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
+    await _controller.search(_searchController.text);
   }
 
   Future<void> _loadMore() async {
-    if (_isLoading) return;
-    final lease = widget.session.runtimeLease;
-    if (lease == null ||
-        _resultsLease == null ||
-        !_sameLease(lease, _resultsLease) ||
-        !widget.session.ownsRuntimeLease(lease)) {
-      setState(_clearRuntimeState);
-      return;
-    }
-    final pendingRoutes = _cursors.entries
-        .where((entry) => entry.value != null)
-        .toList(growable: false);
-    if (pendingRoutes.isEmpty) {
-      if (_visibleCount < _conversations.length) {
-        setState(() {
-          _visibleCount += _pageSize;
-        });
-      }
-      return;
-    }
-    final query = _query;
-    if (query == null) return;
-
-    final requestGeneration = ++_requestGeneration;
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-    try {
-      final pages = await Future.wait([
-        for (final entry in pendingRoutes)
-          lease.client.searchConversations(
-            route: entry.key,
-            searchTerm: query,
-            cursor: entry.value,
-            limit: _pageSize,
-          ),
-      ]);
-      if (!_acceptsResult(requestGeneration, lease, query)) return;
-      var conversations = _conversations;
-      final cursors = Map<GatewayProviderRoute, String?>.from(_cursors);
-      for (var index = 0; index < pages.length; index++) {
-        conversations = mergeRoutedConversations(
-          conversations,
-          _inScope(pages[index].conversations),
-        );
-        cursors[pendingRoutes[index].key] = pages[index].nextCursor;
-      }
-      setState(() {
-        _resultsLease = lease;
-        _conversations = conversations;
-        _cursors
-          ..clear()
-          ..addAll(cursors);
-        _visibleCount += _pageSize;
-      });
-    } catch (value) {
-      if (_acceptsResult(requestGeneration, lease, query)) {
-        setState(() {
-          _error = value.toString();
-        });
-      }
-    } finally {
-      if (_acceptsResult(requestGeneration, lease, query)) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
+    await _controller.loadMore();
   }
 
   void _openConversation(ConversationSummary conversation) {
-    final lease = widget.session.runtimeLease;
-    if (lease == null ||
-        _resultsLease == null ||
-        !_sameLease(lease, _resultsLease) ||
-        !widget.session.ownsRuntimeLease(lease)) {
+    if (!_controller.resultsAreCurrent) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('搜索结果已失效，请重新搜索')),
       );
@@ -279,16 +96,6 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
           conversation: conversation,
         ),
       ),
-    );
-  }
-
-  Iterable<ConversationSummary> _inScope(
-    Iterable<ConversationSummary> conversations,
-  ) {
-    final workspaceRoot = widget.workspaceRoot;
-    if (workspaceRoot == null) return conversations;
-    return conversations.where(
-      (conversation) => conversation.workspaceRoot == workspaceRoot,
     );
   }
 

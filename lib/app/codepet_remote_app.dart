@@ -3,13 +3,16 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../devices/device_models.dart';
+import '../core/domain/paired_device.dart';
 import '../devices/device_registry.dart';
+import '../application/ports/device_repository.dart';
+import '../application/ports/device_identity.dart';
+import '../application/pairing/pair_device.dart';
 import '../application/sessions/device_session.dart';
 import '../admission/lan_admission.dart';
 import '../channel/channel.dart';
 import '../core/domain/models.dart';
-import '../core/ports/gateway_client.dart';
+import '../application/ports/gateway_client.dart';
 import '../devices/local_device_descriptor.dart';
 import '../features/connection/pair_device_screen.dart';
 import '../features/home/remote_home_screen.dart';
@@ -33,7 +36,7 @@ class CodePetRemoteApp extends StatefulWidget {
   });
 
   final bool includeDemoDevices;
-  final DeviceRegistry? registry;
+  final DeviceRepository? registry;
   final DeviceDescriptorProvider? descriptorProvider;
   final RestoredGatewayClientBuilder? gatewayClientBuilder;
 
@@ -42,7 +45,7 @@ class CodePetRemoteApp extends StatefulWidget {
 
 class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
-  late final DeviceRegistry _registry;
+  late final DeviceRepository _registry;
   late final DeviceDescriptorProvider _descriptorProvider;
   final List<DeviceSession> _sessions = [];
   int _selectedIndex = 0;
@@ -71,7 +74,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         if (await payloadFile.exists()) {
           final payload = await payloadFile.readAsString();
           await payloadFile.delete();
-          final device = await LanAdmissionService(registry: _registry, descriptorProvider: _descriptorProvider).pair(payload);
+          final device = await _pairer().pair(payload);
           final session = await _sessionFor(device);
           _sessions.add(session);
         }
@@ -101,7 +104,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     var credentialReadFailed = false;
     if (key != null) {
       try {
-        credential = await _registry.credentials.read(key);
+        credential = await _registry.readCredential(device);
       } catch (_) {
         credentialReadFailed = true;
       }
@@ -182,7 +185,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
 
   void _openAddDevice() {
     _navigatorKey.currentState!.push<void>(MaterialPageRoute(builder: (_) => PairDeviceScreen(
-      pairingService: LanAdmissionService(registry: _registry, descriptorProvider: _descriptorProvider),
+      pairingService: _pairer(),
       onPaired: (device) async {
         final session = await _sessionFor(device);
         final index = await replaceDeviceSession(_sessions, session);
@@ -194,6 +197,12 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
       onAddDemo: widget.includeDemoDevices ? () async {} : null,
     )));
   }
+
+  DevicePairer _pairer() => PairDeviceUseCase(
+        repository: _registry,
+        descriptorProvider: _descriptorProvider,
+        gateway: const LanPairingGateway(),
+      );
 
   void _openSettings() {
     _navigatorKey.currentState!.push<void>(MaterialPageRoute(builder: (_) => Scaffold(

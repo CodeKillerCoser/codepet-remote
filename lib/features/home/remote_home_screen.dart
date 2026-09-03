@@ -852,40 +852,17 @@ class _ConversationRow extends StatelessWidget {
   Widget build(BuildContext context) => Card(
         margin: EdgeInsets.zero,
         elevation: 0,
-        child: _LiveConversationTile(
+        child: _ConversationTile(
           key: Key('conversation-${conversation.id}'),
-          session: session,
           conversation: conversation,
-          onTap: onTap,
-        ),
-      );
-}
-
-class _LiveConversationTile extends StatelessWidget {
-  const _LiveConversationTile({
-    super.key,
-    required this.session,
-    required this.conversation,
-    required this.onTap,
-  });
-
-  final DeviceSession session;
-  final ConversationSummary conversation;
-  final ValueChanged<ConversationSummary> onTap;
-
-  @override
-  Widget build(BuildContext context) =>
-      ValueListenableBuilder<ConversationSummary>(
-        valueListenable: session.conversationListenable(conversation),
-        builder: (context, current, _) => _ConversationTile(
-          conversation: current,
-          onTap: () => onTap(current),
+          onTap: () => onTap(conversation),
         ),
       );
 }
 
 class _ConversationTile extends StatelessWidget {
   const _ConversationTile({
+    super.key,
     required this.conversation,
     required this.onTap,
   });

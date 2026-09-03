@@ -231,6 +231,47 @@ void main() {
       expect(detail.liveOutputMessages, isEmpty);
     });
 
+    test('upserts approval lifecycle events instead of dropping them', () {
+      var detail = ConversationDetail(summary: summary).apply(
+        ApprovalChangedEvent(
+          eventCursor: 'approval-requested',
+          conversationId: 'conversation-1',
+          approval: GatewayMessage(
+            id: 'approval-1',
+            turnId: 'turn-1',
+            role: MessageRole.system,
+            kind: 'approval',
+            content: 'Allow command?',
+            createdAt:
+                DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
+            isStreaming: false,
+            approvalStatus: 'pending',
+          ),
+        ),
+      );
+      detail = detail.apply(
+        ApprovalChangedEvent(
+          eventCursor: 'approval-resolved',
+          conversationId: 'conversation-1',
+          approval: GatewayMessage(
+            id: 'approval-1',
+            turnId: 'turn-1',
+            role: MessageRole.system,
+            kind: 'approval',
+            content: 'Allow command?',
+            createdAt:
+                DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
+            isStreaming: false,
+            approvalStatus: 'approved',
+          ),
+        ),
+      );
+
+      expect(detail.committedMessages, hasLength(1));
+      expect(detail.committedMessages.single.approvalStatus, 'approved');
+      expect(detail.lastEventCursor, 'approval-resolved');
+    });
+
     test('does not merge equal content ids from different routed turns', () {
       var detail = ConversationDetail(summary: summary);
       for (final turnId in ['turn-a', 'turn-b']) {
@@ -321,6 +362,39 @@ void main() {
       expect(detail.committedMessages, isEmpty);
       expect(detail.turns, [turn]);
       expect(detail.activeTurn, turn);
+    });
+
+    test('keeps a staged user input when the accepted turn has no user item', () {
+      final createdAt =
+          DateTime.fromMillisecondsSinceEpoch(3500, isUtc: true);
+      final turn = TurnTask(
+        id: 'turn-accepted',
+        providerId: 'codex',
+        conversationId: summary.id,
+        status: TurnStatus.queued,
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(4000, isUtc: true),
+      );
+
+      final detail = ConversationDetail(summary: summary)
+          .stageUserInput(
+            clientRequestId: 'request-without-item',
+            text: 'show this immediately',
+            createdAt: createdAt,
+          )
+          .accept(
+            TurnSendReceipt(
+              clientRequestId: 'request-without-item',
+              turn: turn,
+              inputItem: null,
+              effectiveSelection: const TurnSendSelection(),
+            ),
+          );
+
+      expect(detail.committedMessages, hasLength(1));
+      expect(detail.committedMessages.single.role, MessageRole.user);
+      expect(detail.committedMessages.single.content, 'show this immediately');
+      expect(detail.committedMessages.single.turnId, turn.id);
+      expect(detail.committedMessages.single.createdAt, createdAt);
     });
   });
 
