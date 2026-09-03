@@ -84,6 +84,25 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     setState(advance);
   }
 
+  Future<void> _advanceProjectWindow({
+    required DeviceSession session,
+    required bool hasLocalMore,
+    required VoidCallback advance,
+  }) async {
+    if (session.isLoadingMoreProjects) return;
+    if (session.canLoadMoreSelectedProviderProjects) {
+      await session.loadMoreSelectedProviderProjects();
+      if (!mounted ||
+          session.connectionState != DeviceConnectionState.online ||
+          session.loadMoreProjectsError != null) {
+        return;
+      }
+    } else if (!hasLocalMore) {
+      return;
+    }
+    setState(advance);
+  }
+
   @override
   void dispose() {
     for (final session in _listenedSessions) {
@@ -105,19 +124,18 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                 : widget.selectedIndex;
     final session = sessions.isEmpty ? null : sessions[selectedIndex];
     final selectedProvider = session?.selectedProvider;
-    final selectedConversations = session == null
-        ? const <ConversationSummary>[]
-        : session.selectedProviderConversations;
     final projects = session == null
-        ? const <ConversationProject>[]
-        : _sortedProjects(session, selectedConversations);
+        ? const <GatewayProject>[]
+        : session.selectedProviderProjects;
     final recent = session == null
         ? const <ConversationSummary>[]
         : sortRecentConversations(
-            deduplicateRoutedConversations(selectedConversations),
+            deduplicateRoutedConversations(
+              session.selectedProviderRecentConversations,
+            ),
           );
     final viewState = session == null
-        ? null
+        ? _DeviceHomeViewState()
         : _deviceViewStates.putIfAbsent(
             '${session.device.deviceId}\u0000${selectedProvider?.route.key ?? 'no-provider'}',
             _DeviceHomeViewState.new,
@@ -159,20 +177,58 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     selectedProvider: selectedProvider,
                     onSelectProvider: session.selectProvider,
                   ),
-                  const SizedBox(height: 28),
-                  _SectionTitle(
-                    key: Key('projects-section-${session.device.deviceId}'),
-                    title: '项目',
-                    countLabel:
-                        '${projects.length}${session.canLoadMoreSelectedProviderConversations ? '+' : ''}',
-                    expanded: viewState!.projectsExpanded,
-                    onTap: () => setState(() {
-                      viewState.projectsExpanded = !viewState.projectsExpanded;
-                    }),
-                  ),
-                  if (viewState.projectsExpanded) ...[
-                    const SizedBox(height: 10),
-                    ..._projectWidgets(context, session, projects, viewState),
+                  if (session.connectionState == DeviceConnectionState.failed) ...[
+                    const SizedBox(height: 20),
+                    _MessageCard(
+                      icon: Icons.cloud_off_outlined,
+                      title: '设备连接失败',
+                      message: session.error ?? '无法连接此设备。',
+                      actionLabel: '重新连接',
+                      onAction: session.connect,
+                    ),
+                  ] else if (session.connectionState ==
+                      DeviceConnectionState.offline) ...[
+                    const SizedBox(height: 20),
+                    _MessageCard(
+                      icon: Icons.link_off_outlined,
+                      title: '设备已离线',
+                      message: '重新连接后，会话将从 Host 即时加载。',
+                      actionLabel: '连接',
+                      onAction: session.connect,
+                    ),
+                  ],
+                  if (session.selectedProviderSupportsProjects) ...[
+                    const SizedBox(height: 28),
+                    _SectionTitle(
+                      key: Key('projects-section-${session.device.deviceId}'),
+                      title: '项目',
+                      countLabel:
+                          '${projects.length}${session.canLoadMoreSelectedProviderProjects ? '+' : ''}',
+                      expanded: viewState.projectsExpanded,
+                      action: selectedProvider?.status == ProviderStatus.ready &&
+                              selectedProvider?.methods
+                                      .contains('project.create') ==
+                                  true
+                          ? IconButton(
+                              key: const Key('project-create'),
+                              tooltip: '新建项目',
+                              onPressed: () => _showProjectEditor(
+                                context,
+                                session: session,
+                                provider: selectedProvider!,
+                              ),
+                              icon: const Icon(Icons.create_new_folder_outlined),
+                            )
+                          : null,
+                      onTap: () => setState(() {
+                        viewState.projectsExpanded =
+                            !viewState.projectsExpanded;
+                      }),
+                    ),
+                    if (viewState.projectsExpanded) ...[
+                      const SizedBox(height: 10),
+                      ..._projectWidgets(context, session, projects, viewState),
+                    ],
                   ],
                   const SizedBox(height: 28),
                   _SectionTitle(
@@ -216,11 +272,11 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
   List<Widget> _projectWidgets(
     BuildContext context,
     DeviceSession session,
-    List<ConversationProject> projects,
+    List<GatewayProject> projects,
     _DeviceHomeViewState viewState,
   ) {
     if (session.connectionState == DeviceConnectionState.connecting &&
-        session.selectedProviderConversations.isEmpty) {
+        projects.isEmpty) {
       return const [LinearProgressIndicator()];
     }
     if (session.connectionState == DeviceConnectionState.failed) {
@@ -249,24 +305,20 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       return [
         const _MessageCard(
           icon: Icons.folder_off_outlined,
-          title: '没有可分组的项目',
-          message: '当前会话没有 workspaceRoot；它们仍会显示在“最近”中。',
+          title: '还没有项目',
+          message: '此 Provider 当前没有可展示的项目。',
         ),
-        if (session.canLoadMoreSelectedProviderConversations ||
-            session.isLoadingMoreConversations)
+        if (session.canLoadMoreSelectedProviderProjects ||
+            session.isLoadingMoreProjects)
           _PaginationControl(
             buttonKey: Key(
               'show-more-projects-${session.device.deviceId}',
             ),
             label: '显示更多项目',
-            loading: session.isLoadingMoreConversations,
-            error: session.loadMoreError,
+            loading: session.isLoadingMoreProjects,
+            error: session.loadMoreProjectsError,
             onPressed: () {
-              unawaited(_advanceWindow(
-                session: session,
-                hasLocalMore: false,
-                advance: () => viewState.projectPages++,
-              ));
+              unawaited(session.loadMoreSelectedProviderProjects());
             },
           ),
       ];
@@ -277,23 +329,17 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
         : projects.length;
     final widgets = <Widget>[];
     widgets.addAll(projects.take(visibleCount).map((project) {
-      final pathParts = project.workspaceRoot
-          .split(RegExp(r'[/\\]'))
-          .where((part) => part.isNotEmpty)
-          .toList(growable: false);
-      final name = pathParts.isEmpty ? project.workspaceRoot : pathParts.last;
       return Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: _ProjectCard(
             key: Key('project-card-${project.key}'),
             project: project,
-            projectName: name,
-            canLoadMore: session.canLoadMoreSelectedProviderConversations,
+            session: session,
+            provider: session.selectedProvider!,
             onOpenProject: () => Navigator.of(context).push<void>(
               MaterialPageRoute(
                 builder: (_) => _ProjectConversationsScreen(
-                  projectName: name,
-                  workspaceRoot: project.workspaceRoot,
+                  project: project,
                   session: session,
                 ),
               ),
@@ -302,16 +348,17 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       );
     }));
     if (visibleCount < projects.length ||
-        session.canLoadMoreSelectedProviderConversations ||
-        session.isLoadingMoreConversations) {
+        session.canLoadMoreSelectedProviderProjects ||
+        session.isLoadingMoreProjects) {
       widgets.add(
         _PaginationControl(
           buttonKey: Key('show-more-projects-${session.device.deviceId}'),
           label: '显示更多项目',
-          loading: session.isLoadingMoreConversations,
-          error: visibleCount < projects.length ? null : session.loadMoreError,
+          loading: session.isLoadingMoreProjects,
+          error:
+              visibleCount < projects.length ? null : session.loadMoreProjectsError,
           onPressed: () {
-            unawaited(_advanceWindow(
+            unawaited(_advanceProjectWindow(
               session: session,
               hasLocalMore: visibleCount < projects.length,
               advance: () => viewState.projectPages++,
@@ -399,24 +446,6 @@ class _DeviceHomeViewState {
   bool recentExpanded = true;
   int projectPages = 1;
   int recentPages = 1;
-}
-
-List<ConversationProject> _sortedProjects(
-  DeviceSession session,
-  Iterable<ConversationSummary> conversations,
-) {
-  final projects = groupConversationsByProject(
-    hostDeviceId: session.device.deviceId,
-    values: conversations,
-  );
-  return projects
-    ..sort((left, right) {
-      final updated = right.conversations.first.updatedAt
-          .compareTo(left.conversations.first.updatedAt);
-      return updated != 0
-          ? updated
-          : left.workspaceRoot.compareTo(right.workspaceRoot);
-    });
 }
 
 class _DeviceSelector extends StatelessWidget {
@@ -687,12 +716,14 @@ class _SectionTitle extends StatelessWidget {
     required this.countLabel,
     required this.expanded,
     required this.onTap,
+    this.action,
   });
 
   final String title;
   final String countLabel;
   final bool expanded;
   final VoidCallback onTap;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) => Material(
@@ -715,6 +746,7 @@ class _SectionTitle extends StatelessWidget {
               Text(countLabel, style: Theme.of(context).textTheme.bodySmall),
             ]),
           ),
+          ?action,
           Icon(
             expanded ? Icons.expand_less : Icons.expand_more,
             semanticLabel: expanded ? '折叠$title' : '展开$title',
@@ -729,19 +761,23 @@ class _ProjectCard extends StatelessWidget {
   const _ProjectCard({
     super.key,
     required this.project,
-    required this.projectName,
-    required this.canLoadMore,
+    required this.session,
+    required this.provider,
     required this.onOpenProject,
   });
 
-  final ConversationProject project;
-  final String projectName;
-  final bool canLoadMore;
+  final GatewayProject project;
+  final DeviceSession session;
+  final GatewayProvider provider;
   final VoidCallback onOpenProject;
 
   @override
   Widget build(BuildContext context) {
-    final conversations = sortRecentConversations(project.conversations);
+    final roots = project.roots.map((root) => root.path).join(' · ');
+    final canUpdate = provider.status == ProviderStatus.ready &&
+        provider.methods.contains('project.update');
+    final canDelete = provider.status == ProviderStatus.ready &&
+        provider.methods.contains('project.delete');
     return Card(
       margin: EdgeInsets.zero,
       elevation: 0,
@@ -750,16 +786,44 @@ class _ProjectCard extends StatelessWidget {
         key: Key('project-${project.key}'),
         leading: const Icon(Icons.folder_outlined),
         title: Text(
-          projectName,
+          project.name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
-          '${conversations.length}${canLoadMore ? '+' : ''} 个会话 · ${project.workspaceRoot}',
+          roots.isEmpty ? '未关联目录' : roots,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        trailing: const Icon(Icons.chevron_right),
+        trailing: canUpdate || canDelete
+            ? PopupMenuButton<String>(
+                key: Key('project-menu-${project.key}'),
+                onSelected: (value) {
+                  if (value == 'edit') {
+                    unawaited(_showProjectEditor(
+                      context,
+                      session: session,
+                      provider: provider,
+                      project: project,
+                    ));
+                  }
+                  if (value == 'delete') {
+                    unawaited(_confirmDeleteProject(
+                      context,
+                      session: session,
+                      provider: provider,
+                      project: project,
+                    ));
+                  }
+                },
+                itemBuilder: (_) => [
+                  if (canUpdate)
+                    const PopupMenuItem(value: 'edit', child: Text('编辑项目')),
+                  if (canDelete)
+                    const PopupMenuItem(value: 'delete', child: Text('删除项目')),
+                ],
+              )
+            : const Icon(Icons.chevron_right),
         onTap: onOpenProject,
       ),
     );
@@ -934,13 +998,11 @@ class _EmptyDevices extends StatelessWidget {
 
 class _ProjectConversationsScreen extends StatefulWidget {
   const _ProjectConversationsScreen({
-    required this.projectName,
-    required this.workspaceRoot,
+    required this.project,
     required this.session,
   });
 
-  final String projectName;
-  final String workspaceRoot;
+  final GatewayProject project;
   final DeviceSession session;
 
   @override
@@ -952,10 +1014,22 @@ class _ProjectConversationsScreenState
     extends State<_ProjectConversationsScreen> {
   int _pages = 1;
 
+  GatewayProject get _project {
+    for (final project in widget.session.selectedProviderProjects) {
+      if (project.resource == widget.project.resource) return project;
+    }
+    return widget.project;
+  }
+
   @override
   void initState() {
     super.initState();
     widget.session.addListener(_changed);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(widget.session.ensureProjectConversations(widget.project));
+      }
+    });
   }
 
   @override
@@ -978,8 +1052,8 @@ class _ProjectConversationsScreenState
 
   Future<void> _showMore({required bool hasLocalMore}) async {
     if (widget.session.isLoadingMoreConversations) return;
-    if (widget.session.canLoadMoreSelectedProviderConversations) {
-      await widget.session.loadMoreSelectedProviderConversations();
+    if (widget.session.canLoadMoreProjectConversations(widget.project)) {
+      await widget.session.loadMoreProjectConversations(widget.project);
       if (!mounted ||
           widget.session.connectionState != DeviceConnectionState.online ||
           widget.session.loadMoreError != null) {
@@ -994,14 +1068,7 @@ class _ProjectConversationsScreenState
   }
 
   List<ConversationSummary> _projectConversations() =>
-      sortRecentConversations(
-        deduplicateRoutedConversations(
-          widget.session.selectedProviderConversations.where(
-            (conversation) =>
-                conversation.workspaceRoot == widget.workspaceRoot,
-          ),
-        ),
-      );
+      widget.session.conversationsForProject(_project);
 
   @override
   Widget build(BuildContext context) {
@@ -1012,11 +1079,11 @@ class _ProjectConversationsScreenState
         : conversations.length;
     final hasLocalMore = visibleCount < conversations.length;
     final hasMore = hasLocalMore ||
-        widget.session.canLoadMoreSelectedProviderConversations ||
+        widget.session.canLoadMoreProjectConversations(_project) ||
         widget.session.isLoadingMoreConversations;
     final selectedProvider = widget.session.selectedProvider;
     return Scaffold(
-      appBar: AppBar(title: Text(widget.projectName)),
+      appBar: AppBar(title: Text(_project.name)),
       body: ListView.separated(
         key: const Key('project-conversation-list'),
         padding: const EdgeInsets.all(16),
@@ -1062,7 +1129,7 @@ class _ProjectConversationsScreenState
         onSearch: () => _openSearch(
           context,
           widget.session,
-          workspaceRoot: widget.workspaceRoot,
+          project: _project.resource,
         ),
         onCreate: selectedProvider == null
             ? null
@@ -1070,7 +1137,10 @@ class _ProjectConversationsScreenState
                   context,
                   session: widget.session,
                   provider: selectedProvider,
-                  workspaceRoot: widget.workspaceRoot,
+                  project: _project,
+                  workspaceRoot: _project.roots.isEmpty
+                      ? null
+                      : _project.roots.first.path,
                 ),
       ),
     );
@@ -1124,16 +1194,148 @@ class _ConversationActionsBar extends StatelessWidget {
       );
 }
 
+class _ProjectEditorDialog extends StatefulWidget {
+  const _ProjectEditorDialog({
+    required this.session,
+    required this.provider,
+    this.project,
+  });
+
+  final DeviceSession session;
+  final GatewayProvider provider;
+  final GatewayProject? project;
+
+  @override
+  State<_ProjectEditorDialog> createState() => _ProjectEditorDialogState();
+}
+
+class _ProjectEditorDialogState extends State<_ProjectEditorDialog> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _rootsController;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.project?.name);
+    _rootsController = TextEditingController(
+      text: widget.project?.roots.map((root) => root.path).join('\n'),
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _rootsController.dispose();
+    super.dispose();
+  }
+
+  List<ProjectRoot> get _roots => _rootsController.text
+      .split('\n')
+      .map((path) => path.trim())
+      .where((path) => path.isNotEmpty)
+      .map((path) => ProjectRoot(path: path))
+      .toList(growable: false);
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final current = widget.project;
+      final result = current == null
+          ? await widget.session.createProject(
+              provider: widget.provider,
+              name: _nameController.text,
+              roots: _roots,
+            )
+          : await widget.session.updateProject(
+              provider: widget.provider,
+              project: current,
+              name: _nameController.text,
+              roots: _roots,
+            );
+      if (mounted) Navigator.of(context).pop(result);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = error.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.project == null ? '新建项目' : '编辑项目'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                key: const Key('project-name'),
+                controller: _nameController,
+                enabled: !_saving,
+                decoration: const InputDecoration(labelText: '项目名称'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('project-roots'),
+                controller: _rootsController,
+                enabled: !_saving,
+                minLines: 2,
+                maxLines: 5,
+                decoration: const InputDecoration(
+                  labelText: '目录（每行一个，可留空）',
+                  prefixIcon: Icon(Icons.folder_outlined),
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('confirm-project-save'),
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('保存'),
+          ),
+        ],
+      );
+}
+
 class _NewConversationDialog extends StatefulWidget {
   const _NewConversationDialog({
     required this.session,
     required this.provider,
     this.workspaceRoot,
+    this.project,
   });
 
   final DeviceSession session;
   final GatewayProvider provider;
   final String? workspaceRoot;
+  final GatewayProject? project;
 
   @override
   State<_NewConversationDialog> createState() =>
@@ -1202,6 +1404,7 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
         reasoningEffort: _reasoningEffort,
         model: _model,
         workspaceMode: _workspaceMode,
+        project: widget.project,
       );
       if (mounted) Navigator.of(context).pop(conversation);
     } catch (error) {
@@ -1236,7 +1439,7 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
               TextField(
                 key: const Key('new-conversation-workspace'),
                 controller: _workspaceController,
-                enabled: !_creating && widget.workspaceRoot == null,
+                enabled: !_creating,
                 decoration: const InputDecoration(
                   labelText: '工作区路径（可选）',
                   prefixIcon: Icon(Icons.folder_outlined),
@@ -1363,16 +1566,58 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
   }
 }
 
+Future<void> _showProjectEditor(
+  BuildContext context, {
+  required DeviceSession session,
+  required GatewayProvider provider,
+  GatewayProject? project,
+}) => showDialog<GatewayProject>(
+  context: context,
+  builder: (_) => _ProjectEditorDialog(
+    session: session,
+    provider: provider,
+    project: project,
+  ),
+);
+
+Future<void> _confirmDeleteProject(
+  BuildContext context, {
+  required DeviceSession session,
+  required GatewayProvider provider,
+  required GatewayProject project,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('删除项目？'),
+      content: Text('将删除“${project.name}”的项目记录，不会删除目录中的文件。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const Key('confirm-project-delete'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('删除'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  await session.deleteProject(provider: provider, project: project);
+}
+
 void _openSearch(
   BuildContext context,
   DeviceSession session, {
-  String? workspaceRoot,
+  RoutedResourceId? project,
 }) {
   Navigator.of(context).push<void>(
     MaterialPageRoute(
       builder: (_) => ConversationSearchScreen(
         session: session,
-        workspaceRoot: workspaceRoot,
+        project: project,
       ),
     ),
   );
@@ -1383,6 +1628,7 @@ Future<void> _startConversation(
   required DeviceSession session,
   required GatewayProvider provider,
   String? workspaceRoot,
+  GatewayProject? project,
 }) async {
   final conversation = await showDialog<ConversationSummary>(
     context: context,
@@ -1390,6 +1636,7 @@ Future<void> _startConversation(
       session: session,
       provider: provider,
       workspaceRoot: workspaceRoot,
+      project: project,
     ),
   );
   if (conversation != null && context.mounted) {

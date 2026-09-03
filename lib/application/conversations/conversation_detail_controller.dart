@@ -249,10 +249,14 @@ class ConversationDetailController extends ApplicationNotifier {
         5000,
         max(500, remaining.inMilliseconds ~/ 5),
       );
-      delay = remaining - Duration(milliseconds: safetyMilliseconds);
-      if (delay < const Duration(milliseconds: 250)) {
-        delay = const Duration(milliseconds: 250);
+      final expiryDelay =
+          remaining - Duration(milliseconds: safetyMilliseconds);
+      if (expiryDelay < delay) {
+        delay = expiryDelay;
       }
+    }
+    if (delay < const Duration(milliseconds: 250)) {
+      delay = const Duration(milliseconds: 250);
     }
     _interactionTimer = Timer(delay, () {
       unawaited(_acquireInteraction(

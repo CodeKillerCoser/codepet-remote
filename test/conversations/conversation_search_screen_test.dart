@@ -11,6 +11,48 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('project search filters by project identity instead of cwd',
+      (tester) async {
+    _useTallSurface(tester);
+    const project = RoutedResourceId(
+      route: _primaryRoute,
+      nativeResourceId: 'project-1',
+    );
+    final client = _SearchClient(
+      providers: const [_primaryProvider],
+      onSearch: ({required route, required searchTerm, required cursor, required limit}) async =>
+          ConversationPage(
+        conversations: [
+          _conversation(
+            route,
+            'project-result',
+            '项目结果',
+            2000,
+            project: project,
+          ),
+          _conversation(route, 'standalone-result', '独立结果', 1000),
+        ],
+        snapshotCursor: 'handshake',
+      ),
+    );
+    final session = _session(client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationSearchScreen(session: session, project: project),
+      ),
+    );
+
+    await tester.enterText(find.byKey(const Key('search-input')), 'result');
+    await tester.tap(find.byKey(const Key('search-submit')));
+    await _pumpAsync(tester);
+
+    expect(find.text('项目结果'), findsOneWidget);
+    expect(find.text('独立结果'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
   testWidgets('Provider selection scopes home content and search requests', (tester) async {
     _useTallSurface(tester);
     final client = _SearchClient(
@@ -351,6 +393,7 @@ ConversationSummary _conversation(
   String nativeId,
   String title,
   int updatedAt,
+  {RoutedResourceId? project}
 ) {
   final resource = RoutedResourceId(
     route: route,
@@ -364,6 +407,7 @@ ConversationSummary _conversation(
     status: ConversationStatus.idle,
     permissionLevel: PermissionLevel.readOnly,
     workspaceRoot: '/repo',
+    project: project,
     createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
     updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt, isUtc: true),
     resource: resource,
@@ -435,6 +479,7 @@ class _SearchClient implements GatewayClient {
   @override
   Future<ConversationPage> listConversations({
     required GatewayProviderRoute route,
+    required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) async => ConversationPage(
@@ -478,7 +523,7 @@ class _SearchClient implements GatewayClient {
       const ConversationInteraction(selection: TurnSendSelection());
 
   @override
-  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
+  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
 
   @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();

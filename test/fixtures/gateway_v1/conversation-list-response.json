@@ -13,6 +13,7 @@
             "providerInstanceId": "codex-work",
             "nativeResourceId": "thread-01"
           },
+          "project": null,
           "title": "Gateway protocol foundation",
           "status": "running"
         }

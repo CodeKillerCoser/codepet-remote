@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:codepet_remote/application/conversations/conversation_detail_controller.dart';
 import 'package:codepet_remote/core/domain/paired_device.dart';
 import 'package:codepet_remote/application/sessions/device_session.dart';
 import 'package:codepet_remote/features/conversations/conversation_detail_screen.dart';
@@ -353,6 +354,53 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
+
+  for (final terminalStatus in [TurnStatus.interrupted, TurnStatus.failed]) {
+    testWidgets(
+        '$terminalStatus clears a stale running turn and re-enables the composer',
+        (tester) async {
+      final client = _DetailClient();
+      final running = TurnTask(
+        id: 'terminal-turn',
+        providerId: 'provider',
+        conversationId: 'conversation',
+        status: TurnStatus.running,
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(1, isUtc: true),
+      );
+      await _pumpDetail(
+        tester,
+        client,
+        conversation: _idleConversation(activeTurn: running),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
+        isFalse,
+      );
+
+      client.emit(TurnUpsertedEvent(
+        eventCursor: 'terminal-$terminalStatus',
+        turn: TurnTask(
+          id: running.id,
+          providerId: running.providerId,
+          conversationId: running.conversationId,
+          status: terminalStatus,
+          updatedAt: running.updatedAt,
+          completedAt: running.updatedAt,
+        ),
+      ));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(client.getCalls, 2);
+      expect(
+        tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
+        isTrue,
+      );
+      await tester.pumpWidget(const SizedBox());
+      await client.close();
+    });
+  }
 
   testWidgets('event stream failure discards stale detail and live output', (tester) async {
     final client = _DetailClient();
@@ -1300,6 +1348,88 @@ void main() {
     await client.close();
   });
 
+  testWidgets(
+      'renews interaction every ten seconds until the detail screen leaves',
+      (tester) async {
+    final client = _DetailClient(
+      onAcquire: (conversation) async => ConversationInteraction(
+        selection:
+            conversation.turnSendSelection ?? const TurnSendSelection(),
+        leaseExpiresAt:
+            DateTime.now().toUtc().add(const Duration(seconds: 30)),
+      ),
+    );
+    await _pumpDetail(tester, client);
+    await tester.pump();
+    expect(client.acquireCalls, 1);
+
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pump();
+    expect(client.acquireCalls, 2);
+
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pump();
+    expect(client.acquireCalls, 3);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 20));
+    expect(client.acquireCalls, 3);
+    await client.close();
+  });
+
+  test('runtime reconnect clears interaction and reacquires immediately',
+      () async {
+    final reacquired = Completer<ConversationInteraction>();
+    final conversation = _idleConversation();
+    final initialClient = _DetailClient(
+      onAcquire: (conversation) async => ConversationInteraction(
+        selection:
+            conversation.turnSendSelection ?? const TurnSendSelection(),
+        leaseExpiresAt:
+            DateTime.now().toUtc().add(const Duration(seconds: 30)),
+      ),
+    );
+    final reconnectedClient = _DetailClient(
+      onAcquire: (_) => reacquired.future,
+    );
+    final clients = [initialClient, reconnectedClient];
+    var nextClient = 0;
+    final session = DeviceSession(
+      device: const PairedDevice(
+        deviceId: 'host',
+        displayName: 'Host',
+        connectionKind: DeviceConnectionKind.demo,
+      ),
+      clientFactory: () => clients[nextClient++],
+      autoReconnect: false,
+    );
+    await session.connect();
+    final controller = ConversationDetailController(
+      session: session,
+      conversation: conversation,
+    );
+    addTearDown(controller.dispose);
+    addTearDown(session.dispose);
+    await controller.reload();
+    await Future<void>.delayed(Duration.zero);
+    expect(initialClient.acquireCalls, 1);
+    expect(controller.interactionAcquired, isTrue);
+
+    final reconnecting = session.connect();
+    await reconnecting;
+    await Future<void>.delayed(Duration.zero);
+    expect(reconnectedClient.acquireCalls, 1);
+    expect(controller.interactionAcquired, isFalse);
+
+    reacquired.complete(ConversationInteraction(
+      selection: conversation.turnSendSelection ?? const TurnSendSelection(),
+      leaseExpiresAt:
+          DateTime.now().toUtc().add(const Duration(seconds: 30)),
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.interactionAcquired, isTrue);
+  });
+
   testWidgets('acknowledges the visible activity version as read',
       (tester) async {
     final client = _DetailClient();
@@ -1504,7 +1634,7 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
     return ConversationSnapshot(detail: ConversationDetail(summary: conversation, committedMessages: committedMessages), snapshotCursor: snapshotCursor);
   }
   @override Future<GatewayHandshake> connect() async => GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: [provider], eventCursor: _cursor);
-  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) => throw UnimplementedError();
+  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override
   Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) {
@@ -1516,7 +1646,7 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
           ))
         : handler(conversation);
   }
-  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
+  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
   @override
   Future<ConversationReadState> markConversationRead(
     ConversationSummary conversation,

@@ -6,32 +6,153 @@ import 'package:codepet_remote/features/home/remote_home_screen.dart';
 import 'package:codepet_remote/application/ports/gateway_client.dart';
 import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/core/domain/models.dart';
+import 'package:codepet_remote/gateway/demo_gateway_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('shows bottom search and new actions outside and inside projects',
+  testWidgets('hides projects when project.list is absent even with cwd values',
       (tester) async {
     _useTallSurface(tester);
-    final session = _loadedSession(
-      'actions',
-      [_conversation('action-conversation', '入口会话')],
+    final client = _PagedClient(
+      ({required cursor, required limit}) async => ConversationPage(
+        conversations: [
+          _conversation(
+            'cwd-only',
+            '只有 cwd 的会话',
+            workspaceRoot: '/looks/like/a/project',
+          ),
+        ],
+        snapshotCursor: 'handshake',
+      ),
     );
+    final session = _sessionForClient('no-project-capability', client);
+    final connect = session.connect();
+    await tester.pump(const Duration(milliseconds: 500));
+    await connect;
     await tester.pumpWidget(
       MaterialApp(home: _HomeHarness(sessions: [session])),
     );
 
-    expect(find.byKey(const Key('home-search')), findsOneWidget);
-    expect(find.byKey(const Key('home-new')), findsOneWidget);
-    expect(find.byIcon(Icons.search), findsOneWidget);
-
-    await tester.tap(
-      find.byKey(const Key('project-actions\u0000/dynamic')),
+    expect(
+      find.byKey(const Key('projects-section-no-project-capability')),
+      findsNothing,
     );
+    expect(find.text('只有 cwd 的会话'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('shows project.list results and loads project conversations by id',
+      (tester) async {
+    _useTallSurface(tester);
+    final session = DeviceSession(
+      device: const PairedDevice(
+        deviceId: 'demo-studio',
+        displayName: 'Demo',
+        connectionKind: DeviceConnectionKind.demo,
+      ),
+      clientFactory: DemoGatewayClient.new,
+    );
+    final connect = session.connect();
+    await tester.pump(const Duration(milliseconds: 500));
+    await connect;
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    final project = session.selectedProviderProjects.single;
+    expect(find.byKey(const Key('projects-section-demo-studio')), findsOneWidget);
+    expect(find.byKey(Key('project-card-${project.key}')), findsOneWidget);
+    expect(find.text('Gateway 协议契约核对'), findsOneWidget);
+    expect(find.text('实现 Remote 会话流'), findsNothing);
+
+    await tester.tap(find.byKey(Key('project-${project.key}')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump();
+
+    expect(find.text('实现 Remote 会话流'), findsOneWidget);
+    expect(
+      session.conversationsForProject(project).single.workspaceRoot,
+      '/projects/codepet-remote',
+    );
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('exposes project create edit and delete controls independently',
+      (tester) async {
+    _useTallSurface(tester);
+    final session = DeviceSession(
+      device: const PairedDevice(
+        deviceId: 'demo-studio',
+        displayName: 'Demo',
+        connectionKind: DeviceConnectionKind.demo,
+      ),
+      clientFactory: DemoGatewayClient.new,
+    );
+    final connect = session.connect();
+    await tester.pump(const Duration(milliseconds: 500));
+    await connect;
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    expect(find.byKey(const Key('project-create')), findsOneWidget);
+    final project = session.selectedProviderProjects.single;
+    await tester.tap(find.byKey(Key('project-menu-${project.key}')));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑项目'), findsOneWidget);
+    expect(find.text('删除项目'), findsOneWidget);
+
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('project-create')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('project-name')), '新项目');
+    await tester.enterText(find.byKey(const Key('project-roots')), '/tmp/new');
+    await tester.tap(find.byKey(const Key('confirm-project-save')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('project-search')), findsOneWidget);
-    expect(find.byKey(const Key('project-new')), findsOneWidget);
+    expect(session.selectedProviderProjects.map((item) => item.name),
+        contains('新项目'));
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('does not infer one project CRUD capability from another',
+      (tester) async {
+    _useTallSurface(tester);
+    final session = DeviceSession(
+      device: const PairedDevice(
+        deviceId: 'partial-projects',
+        displayName: 'Partial',
+        connectionKind: DeviceConnectionKind.demo,
+      ),
+      clientFactory: _EventClient.new,
+    );
+    session.connectionState = DeviceConnectionState.online;
+    session.handshake = const GatewayHandshake(
+      protocolVersion: 1,
+      serverName: 'Test',
+      serverVersion: '1',
+      providers: [_updateOnlyProjectProvider],
+      eventCursor: 'handshake',
+    );
+    session.projects = [_homeProject()];
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    expect(find.byKey(const Key('project-create')), findsNothing);
+    final project = session.projects.single;
+    await tester.tap(find.byKey(Key('project-menu-${project.key}')));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑项目'), findsOneWidget);
+    expect(find.text('删除项目'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
   });
 
   testWidgets('new conversation exposes provider-declared create options',
@@ -67,6 +188,30 @@ void main() {
     );
     expect(find.byKey(const Key('new-conversation-model')), findsOneWidget);
 
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('project screen creates a conversation with its routed project',
+      (tester) async {
+    _useTallSurface(tester);
+    final project = _homeProject();
+    final client = _ProjectConversationCreateClient(project);
+    final session = _sessionForClient('project-create-conversation', client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    await tester.tap(find.byKey(Key('project-${project.key}')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('project-new')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-new-conversation')));
+    await tester.pumpAndSettle();
+
+    expect(client.createdProject, project.resource);
+    expect(client.createdWorkspaceRoot, project.roots.single.path);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
@@ -146,186 +291,6 @@ void main() {
     session.dispose();
   });
 
-  testWidgets('collapses and expands project and recent sections', (tester) async {
-    _useTallSurface(tester);
-    final session = _loadedSession(
-      'sections',
-      [_conversation('section-conversation', '分区会话')],
-    );
-    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: [session])));
-
-    final projectKey = 'sections\u0000/dynamic';
-    expect(find.byKey(Key('project-card-$projectKey')), findsOneWidget);
-    expect(
-      find.byKey(const Key(
-        'recent-conversation-sections-test\u0000section-conversation',
-      )),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byKey(const Key('projects-section-sections')));
-    await tester.pump();
-    expect(find.byKey(Key('project-card-$projectKey')), findsNothing);
-
-    await tester.tap(find.byKey(const Key('projects-section-sections')));
-    await tester.pump();
-    expect(find.byKey(Key('project-card-$projectKey')), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('recent-section-sections')));
-    await tester.pump();
-    expect(
-      find.byKey(const Key(
-        'recent-conversation-sections-test\u0000section-conversation',
-      )),
-      findsNothing,
-    );
-
-    await tester.pumpWidget(const SizedBox());
-    session.dispose();
-  });
-
-  testWidgets('pages projects, project conversations and recent conversations', (tester) async {
-    _useTallSurface(tester);
-    final conversations = <ConversationSummary>[
-      for (var project = 0; project < 7; project++)
-        for (var conversation = 0;
-            conversation < (project == 0 ? 21 : 1);
-            conversation++)
-          _conversation(
-            'p$project-$conversation',
-            '项目 $project 会话 $conversation',
-            workspaceRoot: '/project-$project',
-            updatedMilliseconds: project == 0
-                ? 100000 - conversation
-                : 50000 - project,
-          ),
-    ];
-    final session = _loadedSession('pages', conversations);
-    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: [session])));
-
-    expect(
-      find.byKey(const Key('project-card-pages\u0000/project-6')),
-      findsNothing,
-    );
-    await tester.tap(find.byKey(const Key('show-more-projects-pages')));
-    await tester.pump();
-    expect(
-      find.byKey(const Key('project-card-pages\u0000/project-6')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('show-more-projects-pages')), findsNothing);
-
-    const firstProjectKey = 'pages\u0000/project-0';
-    await tester.tap(find.byKey(const Key('project-$firstProjectKey')));
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const Key('project-screen-conversation-test\u0000p0-8')),
-      findsNothing,
-    );
-    await tester.tap(
-      find.byKey(const Key('show-more-project-screen-conversations')),
-    );
-    await tester.pump();
-    expect(
-      find.byKey(const Key('project-screen-conversation-test\u0000p0-8')),
-      findsOneWidget,
-    );
-    Navigator.of(
-      tester.element(find.byKey(const Key('project-conversation-list'))),
-    ).pop();
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(const Key('recent-conversation-pages-test\u0000p0-20')),
-      findsNothing,
-    );
-    await tester.tap(find.byKey(const Key('show-more-recent-pages')));
-    await tester.pump();
-    expect(
-      find.byKey(const Key('recent-conversation-pages-test\u0000p0-20')),
-      findsOneWidget,
-    );
-
-    await tester.pumpWidget(const SizedBox());
-    session.dispose();
-  });
-
-  testWidgets('project pagination loads a Host page and refreshes recent data', (tester) async {
-    _useTallSurface(tester);
-    final client = _PagedClient(
-      ({required String? cursor, required int limit}) async {
-        if (cursor == null) {
-          return ConversationPage(
-            conversations: [
-              for (var index = 0; index < 6; index++)
-                _conversation(
-                  'project-$index',
-                  '项目 $index',
-                  workspaceRoot: '/project-$index',
-                  updatedMilliseconds: 1000 - index,
-                ),
-            ],
-            nextCursor: 'projects-2',
-            snapshotCursor: 'handshake',
-          );
-        }
-        expect(cursor, 'projects-2');
-        return ConversationPage(
-          conversations: [
-            _conversation(
-              'project-6',
-              '项目 6',
-              workspaceRoot: '/project-6',
-              updatedMilliseconds: 900,
-            ),
-          ],
-          snapshotCursor: 'handshake',
-        );
-      },
-    );
-    final session = _sessionForClient('network-projects', client);
-    await session.connect();
-    await tester.pumpWidget(
-      MaterialApp(home: _HomeHarness(sessions: [session])),
-    );
-
-    expect(client.cursors, [null]);
-    expect(
-      find.byKey(const Key(
-        'project-card-network-projects\u0000/project-6',
-      )),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const Key(
-        'recent-conversation-network-projects-test\u0000project-6',
-      )),
-      findsNothing,
-    );
-
-    await tester.tap(
-      find.byKey(const Key('show-more-projects-network-projects')),
-    );
-    await tester.pumpAndSettle();
-
-    expect(client.cursors, [null, 'projects-2']);
-    expect(
-      find.byKey(const Key(
-        'project-card-network-projects\u0000/project-6',
-      )),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key(
-        'recent-conversation-network-projects-test\u0000project-6',
-      )),
-      findsOneWidget,
-    );
-
-    await tester.pumpWidget(const SizedBox());
-    session.dispose();
-  });
-
   testWidgets('recent pagination loads and deduplicates the shared projection', (tester) async {
     _useTallSurface(tester);
     final initial = [
@@ -389,155 +354,6 @@ void main() {
       )),
       findsOneWidget,
     );
-    expect(find.text('9 个会话 · /shared'), findsOneWidget);
-
-    await tester.pumpWidget(const SizedBox());
-    session.dispose();
-  });
-
-  testWidgets('project conversation pagination crosses empty Host pages', (tester) async {
-    _useTallSurface(tester);
-    final client = _PagedClient(
-      ({required String? cursor, required int limit}) async {
-        if (cursor == null) {
-          return ConversationPage(
-            conversations: [
-              for (var index = 0; index < 8; index++)
-                _conversation(
-                  'target-$index',
-                  '目标会话 $index',
-                  workspaceRoot: '/target',
-                  updatedMilliseconds: 3000 - index,
-                ),
-            ],
-            nextCursor: 'target-2',
-            snapshotCursor: 'handshake',
-          );
-        }
-        if (cursor == 'target-2') {
-          return ConversationPage(
-            conversations: [
-              _conversation(
-                'other-only',
-                '其他项目会话',
-                workspaceRoot: '/other',
-                updatedMilliseconds: 2000,
-              ),
-            ],
-            nextCursor: 'target-3',
-            snapshotCursor: 'handshake',
-          );
-        }
-        expect(cursor, 'target-3');
-        return ConversationPage(
-          conversations: [
-            _conversation(
-              'target-8',
-              '目标会话 8',
-              workspaceRoot: '/target',
-              updatedMilliseconds: 1900,
-            ),
-          ],
-          snapshotCursor: 'handshake',
-        );
-      },
-    );
-    final session = _sessionForClient('empty-project-page', client);
-    await session.connect();
-    await tester.pumpWidget(
-      MaterialApp(home: _HomeHarness(sessions: [session])),
-    );
-    const projectKey = 'empty-project-page\u0000/target';
-    await tester.tap(find.byKey(const Key('project-$projectKey')));
-    await tester.pumpAndSettle();
-    final showMore = find.byKey(
-      const Key('show-more-project-screen-conversations'),
-    );
-    await tester.tap(showMore);
-    await tester.pumpAndSettle();
-
-    expect(client.cursors, [null, 'target-2']);
-    expect(showMore, findsOneWidget);
-    expect(
-      find.byKey(const Key(
-        'project-screen-conversation-test\u0000target-8',
-      )),
-      findsNothing,
-    );
-
-    await tester.tap(showMore);
-    await tester.pumpAndSettle();
-
-    expect(client.cursors, [null, 'target-2', 'target-3']);
-    expect(
-      find.byKey(const Key(
-        'project-screen-conversation-test\u0000target-8',
-      )),
-      findsOneWidget,
-    );
-    expect(showMore, findsNothing);
-
-    await tester.pumpWidget(const SizedBox());
-    session.dispose();
-  });
-
-  testWidgets('project screen pagination uses the shared Host cursor', (tester) async {
-    _useTallSurface(tester);
-    final client = _PagedClient(
-      ({required String? cursor, required int limit}) async {
-        if (cursor == null) {
-          return ConversationPage(
-            conversations: [
-              for (var index = 0; index < 8; index++)
-                _conversation(
-                  'screen-$index',
-                  '项目页会话 $index',
-                  workspaceRoot: '/screen',
-                  updatedMilliseconds: 3000 - index,
-                ),
-            ],
-            nextCursor: 'screen-2',
-            snapshotCursor: 'handshake',
-          );
-        }
-        return ConversationPage(
-          conversations: [
-            _conversation(
-              'screen-8',
-              '项目页会话 8',
-              workspaceRoot: '/screen',
-              updatedMilliseconds: 1900,
-            ),
-          ],
-          snapshotCursor: 'handshake',
-        );
-      },
-    );
-    final session = _sessionForClient('project-screen-network', client);
-    await session.connect();
-    await tester.pumpWidget(
-      MaterialApp(home: _HomeHarness(sessions: [session])),
-    );
-    const projectKey = 'project-screen-network\u0000/screen';
-
-    await tester.tap(find.byKey(const Key('project-$projectKey')));
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const Key('project-screen-conversation-test\u0000screen-8')),
-      findsNothing,
-    );
-
-    await tester.tap(
-      find.byKey(const Key('show-more-project-screen-conversations')),
-    );
-    await tester.pumpAndSettle();
-
-    expect(client.cursors, [null, 'screen-2']);
-    expect(
-      find.byKey(const Key('project-screen-conversation-test\u0000screen-8')),
-      findsOneWidget,
-    );
-
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
@@ -618,100 +434,6 @@ void main() {
     session.dispose();
   });
 
-  testWidgets('keeps collapse and pagination state isolated by device id', (tester) async {
-    _useTallSurface(tester);
-    final first = _loadedSession('first', _projectConversations('first'));
-    final second = _loadedSession('second', _projectConversations('second'));
-    await tester.pumpWidget(MaterialApp(
-      home: _HomeHarness(sessions: [first, second]),
-    ));
-
-    await tester.tap(find.byKey(const Key('show-more-projects-first')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('recent-section-first')));
-    await tester.pump();
-    expect(
-      find.byKey(const Key('project-card-first\u0000/first-project-6')),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byKey(const Key('device-second')));
-    await tester.pump();
-    expect(
-      find.byKey(const Key('project-card-second\u0000/second-project-6')),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const Key('recent-conversation-second-test\u0000second-0')),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byKey(const Key('device-first')));
-    await tester.pump();
-    expect(
-      find.byKey(const Key('project-card-first\u0000/first-project-6')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key('recent-conversation-first-test\u0000first-0')),
-      findsNothing,
-    );
-
-    await tester.pumpWidget(const SizedBox());
-    first.dispose();
-    second.dispose();
-  });
-
-  testWidgets('sorts projects and conversations by updated time', (tester) async {
-    _useTallSurface(tester);
-    final session = _loadedSession('sorting', [
-      _conversation(
-        'old-project',
-        '旧项目会话',
-        workspaceRoot: '/old',
-        updatedMilliseconds: 10,
-      ),
-      _conversation(
-        'older-in-new',
-        '新项目较早会话',
-        workspaceRoot: '/new',
-        updatedMilliseconds: 20,
-      ),
-      _conversation(
-        'newest-in-new',
-        '新项目最新会话',
-        workspaceRoot: '/new',
-        updatedMilliseconds: 30,
-      ),
-    ]);
-    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: [session])));
-
-    expect(
-      tester.getTopLeft(
-        find.byKey(const Key('project-card-sorting\u0000/new')),
-      ).dy,
-      lessThan(tester.getTopLeft(
-        find.byKey(const Key('project-card-sorting\u0000/old')),
-      ).dy),
-    );
-
-    await tester.tap(
-      find.byKey(const Key('project-sorting\u0000/new')),
-    );
-    await tester.pumpAndSettle();
-    expect(
-      tester.getTopLeft(find.byKey(const Key(
-        'project-screen-conversation-test\u0000newest-in-new',
-      ))).dy,
-      lessThan(tester.getTopLeft(find.byKey(const Key(
-        'project-screen-conversation-test\u0000older-in-new',
-      ))).dy),
-    );
-
-    await tester.pumpWidget(const SizedBox());
-    session.dispose();
-  });
-
   testWidgets('listens to events from a device added to the same list instance', (tester) async {
     final client = _EventClient();
     await tester.pumpWidget(MaterialApp(home: _MutableSessionsHarness(client: client)));
@@ -756,23 +478,6 @@ void _useTallSurface(WidgetTester tester) {
   addTearDown(tester.view.resetPhysicalSize);
 }
 
-DeviceSession _loadedSession(
-  String deviceId,
-  List<ConversationSummary> conversations,
-) {
-  final session = DeviceSession(
-    device: PairedDevice(
-      deviceId: deviceId,
-      displayName: deviceId,
-      connectionKind: DeviceConnectionKind.demo,
-    ),
-    clientFactory: _EventClient.new,
-  );
-  session.connectionState = DeviceConnectionState.online;
-  session.conversations = conversations;
-  return session;
-}
-
 DeviceSession _sessionForClient(String deviceId, GatewayClient client) =>
     DeviceSession(
       device: PairedDevice(
@@ -782,16 +487,6 @@ DeviceSession _sessionForClient(String deviceId, GatewayClient client) =>
       ),
       clientFactory: () => client,
     );
-
-List<ConversationSummary> _projectConversations(String prefix) => [
-  for (var index = 0; index < 7; index++)
-    _conversation(
-      '$prefix-$index',
-      '$prefix 会话 $index',
-      workspaceRoot: '/$prefix-project-$index',
-      updatedMilliseconds: 100 - index,
-    ),
-];
 
 class _HomeHarness extends StatefulWidget {
   const _HomeHarness({required this.sessions});
@@ -890,11 +585,11 @@ class _EventClient implements GatewayClient {
   @override String? get latestEventCursor => 'handshake';
   @override GatewayEventWindow openEventWindow() => GatewayEventWindow.forStream('handshake', events);
   @override Future<GatewayHandshake> connect() async => const GatewayHandshake(protocolVersion: 1, serverName: 'Test', serverVersion: '1', providers: [], eventCursor: 'handshake', deviceDescriptor: DeviceDescriptor(deviceName: 'Host Metadata', operatingSystem: 'TestOS', systemVersion: '9'));
-  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
+  @override Future<ConversationPage> listConversations({required GatewayProviderRoute route, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
   @override Future<ConversationPage> searchConversations({required GatewayProviderRoute route, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
   @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: 'handshake');
   @override Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async => const ConversationInteraction(selection: TurnSendSelection());
-  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
+  @override Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
   @override Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
   @override Future<void> close() => controller.close();
 }
@@ -934,6 +629,7 @@ class _PagedClient implements GatewayClient {
   @override
   Future<ConversationPage> listConversations({
     required GatewayProviderRoute route,
+    required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   }) {
@@ -957,13 +653,103 @@ class _PagedClient implements GatewayClient {
       const ConversationInteraction(selection: TurnSendSelection());
 
   @override
-  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode}) => throw UnimplementedError();
+  Future<ConversationSummary> createConversation({required GatewayProviderRoute route, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
 
   @override
   Future<TurnSendReceipt> sendTurn({required GatewayProviderRoute route, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
 
   @override
   Future<void> close() => controller.close();
+}
+
+class _ProjectConversationCreateClient extends _PagedClient
+    implements ProjectGatewayClient {
+  _ProjectConversationCreateClient(this.project)
+      : super(
+          ({required cursor, required limit}) async =>
+              const ConversationPage(
+            conversations: [],
+            snapshotCursor: 'handshake',
+          ),
+        );
+
+  final GatewayProject project;
+  RoutedResourceId? createdProject;
+  String? createdWorkspaceRoot;
+
+  @override
+  Future<GatewayHandshake> connect() async => const GatewayHandshake(
+        protocolVersion: 1,
+        serverName: 'Test',
+        serverVersion: '1',
+        providers: [_homeProjectProvider],
+        eventCursor: 'handshake',
+      );
+
+  @override
+  Future<ProjectPage> listProjects({
+    required GatewayProviderRoute route,
+    String? cursor,
+    int limit = 50,
+  }) async => ProjectPage(
+        projects: [project],
+        snapshotCursor: 'handshake',
+      );
+
+  @override
+  Future<ConversationSummary> createConversation({
+    required GatewayProviderRoute route,
+    String? title,
+    required String permissionLevel,
+    String? model,
+    String? reasoningEffort,
+    String? workspaceRoot,
+    String? workspaceMode,
+    RoutedResourceId? project,
+  }) async {
+    createdProject = project;
+    createdWorkspaceRoot = workspaceRoot;
+    return ConversationSummary(
+      id: 'created-conversation',
+      providerId: route.providerInstanceId,
+      title: 'Created conversation',
+      status: ConversationStatus.idle,
+      permissionLevel: permissionLevel,
+      workspaceRoot: workspaceRoot,
+      project: project,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
+      resource: RoutedResourceId(
+        route: route,
+        nativeResourceId: 'created-conversation',
+      ),
+    );
+  }
+
+  @override
+  Future<GatewayProject> getProject(RoutedResourceId project) async =>
+      this.project;
+
+  @override
+  Future<GatewayProject> createProject({
+    required GatewayProviderRoute route,
+    required String idempotencyKey,
+    required String name,
+    required List<ProjectRoot> roots,
+    Map<String, String> metadata = const {},
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<GatewayProject> updateProject({
+    required RoutedResourceId project,
+    String? name,
+    List<ProjectRoot>? roots,
+    Map<String, String>? metadata,
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<void> deleteProject(RoutedResourceId project) async =>
+      throw UnimplementedError();
 }
 
 const _homeRoute = GatewayProviderRoute(
@@ -1014,3 +800,60 @@ const _homeListProvider = GatewayProvider(
     ),
   ),
 );
+
+const _homeProjectProvider = GatewayProvider(
+  route: _homeRoute,
+  providerType: 'dev.codepet.codex',
+  displayName: 'Codex Work',
+  icon: 'codex',
+  status: ProviderStatus.ready,
+  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
+  capabilities: GatewayCapabilities(
+    revision: 'test-project-create-1',
+    methods: [
+      'project.list',
+      'conversation.list',
+      'conversation.get',
+      'conversation.create',
+    ],
+    conversationCreate: ConversationCreateCapabilities(
+      supportsTitle: false,
+      selection: TurnSendCapabilities(
+        accessMode: ProviderChoiceSet(
+          options: [
+            ProviderChoice(
+              id: 'workspace-write',
+              displayName: 'Workspace write',
+            ),
+          ],
+          defaultId: 'workspace-write',
+        ),
+      ),
+    ),
+  ),
+);
+
+const _updateOnlyProjectProvider = GatewayProvider(
+  route: _homeRoute,
+  providerType: 'dev.codepet.codex',
+  displayName: 'Codex Projects',
+  status: ProviderStatus.ready,
+  harness: HarnessDescriptor(id: 'codex', displayName: 'Codex'),
+  capabilities: GatewayCapabilities(
+    revision: 'partial-projects-1',
+    methods: ['project.list', 'project.update', 'conversation.list'],
+  ),
+);
+
+GatewayProject _homeProject() => GatewayProject(
+      resource: const RoutedResourceId(
+        route: _homeRoute,
+        nativeResourceId: 'project-1',
+      ),
+      name: 'Partial project',
+      roots: const [ProjectRoot(path: '/partial')],
+      metadata: const {},
+      position: 0,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(2000, isUtc: true),
+    );

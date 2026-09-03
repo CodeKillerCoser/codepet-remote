@@ -11,6 +11,7 @@ abstract interface class GatewayClient {
   Future<GatewayHandshake> connect();
   Future<ConversationPage> listConversations({
     required GatewayProviderRoute route,
+    required ConversationProjectFilter projectFilter,
     String? cursor,
     int limit = 50,
   });
@@ -34,6 +35,7 @@ abstract interface class GatewayClient {
     String? reasoningEffort,
     String? workspaceRoot,
     String? workspaceMode,
+    RoutedResourceId? project,
   });
   Future<TurnSendReceipt> sendTurn({
     required GatewayProviderRoute route,
@@ -44,6 +46,35 @@ abstract interface class GatewayClient {
     required TurnSendSelection selection,
   });
   Future<void> close();
+}
+
+/// Optional project surface implemented only by Providers backed by a Gateway
+/// SDK that exposes project methods.
+abstract interface class ProjectGatewayClient {
+  Future<ProjectPage> listProjects({
+    required GatewayProviderRoute route,
+    String? cursor,
+    int limit = 50,
+  });
+
+  Future<GatewayProject> getProject(RoutedResourceId project);
+
+  Future<GatewayProject> createProject({
+    required GatewayProviderRoute route,
+    required String idempotencyKey,
+    required String name,
+    required List<ProjectRoot> roots,
+    Map<String, String> metadata = const {},
+  });
+
+  Future<GatewayProject> updateProject({
+    required RoutedResourceId project,
+    String? name,
+    List<ProjectRoot>? roots,
+    Map<String, String>? metadata,
+  });
+
+  Future<void> deleteProject(RoutedResourceId project);
 }
 
 abstract interface class ConversationReadGatewayClient {

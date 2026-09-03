@@ -396,8 +396,12 @@ void main() {
       );
 
       expect(detail.committedMessages, isEmpty);
-      expect(detail.turns, [turn]);
-      expect(detail.activeTurn, turn);
+      expect(detail.turns.single.id, turn.id);
+      expect(
+        detail.turns.single.clientRequestId,
+        'request-without-item',
+      );
+      expect(detail.activeTurn?.id, turn.id);
     });
 
     test('keeps a staged user input when the accepted turn has no user item', () {
@@ -432,6 +436,233 @@ void main() {
       expect(detail.committedMessages.single.turnId, turn.id);
       expect(detail.committedMessages.single.createdAt, createdAt);
     });
+
+    test('replaces a staged input when its canonical item arrives after ack', () {
+      final turn = TurnTask(
+        id: 'turn-after-ack',
+        providerId: 'codex',
+        conversationId: summary.id,
+        status: TurnStatus.running,
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(4000, isUtc: true),
+      );
+      final canonical = GatewayMessage(
+        id: 'routed-item-after-ack',
+        itemId: 'item-after-ack',
+        turnId: turn.id,
+        role: MessageRole.user,
+        kind: 'message',
+        content: 'same text',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(4100, isUtc: true),
+        isStreaming: false,
+      );
+
+      var detail = ConversationDetail(summary: summary)
+          .stageUserInput(
+            clientRequestId: 'request-after-ack',
+            text: 'same text',
+            createdAt:
+                DateTime.fromMillisecondsSinceEpoch(3900, isUtc: true),
+          )
+          .accept(TurnSendReceipt(
+            clientRequestId: 'request-after-ack',
+            turn: turn,
+            inputItem: null,
+            effectiveSelection: const TurnSendSelection(),
+          ));
+
+      detail = detail.apply(ConversationItemUpsertedEvent(
+        eventCursor: 'canonical-after-ack',
+        conversationId: summary.id,
+        item: canonical,
+      ));
+      detail = detail.apply(ConversationItemUpsertedEvent(
+        eventCursor: 'canonical-after-ack-replayed',
+        conversationId: summary.id,
+        item: canonical,
+      ));
+
+      expect(detail.committedMessages, hasLength(1));
+      expect(detail.committedMessages.single.id, canonical.id);
+      expect(detail.committedMessages.single.itemId, canonical.itemId);
+    });
+
+    test('removes a staged input when its canonical item arrives before ack', () {
+      final turn = TurnTask(
+        id: 'turn-before-ack',
+        providerId: 'codex',
+        conversationId: summary.id,
+        status: TurnStatus.running,
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(5000, isUtc: true),
+      );
+      final canonical = GatewayMessage(
+        id: 'routed-item-before-ack',
+        itemId: 'item-before-ack',
+        turnId: turn.id,
+        role: MessageRole.user,
+        kind: 'message',
+        content: 'arrived early',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(5100, isUtc: true),
+        isStreaming: false,
+      );
+
+      var detail = ConversationDetail(summary: summary).stageUserInput(
+        clientRequestId: 'request-before-ack',
+        text: 'arrived early',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(4900, isUtc: true),
+      );
+      detail = detail.apply(ConversationItemUpsertedEvent(
+        eventCursor: 'canonical-before-ack',
+        conversationId: summary.id,
+        item: canonical,
+      ));
+      detail = detail.accept(TurnSendReceipt(
+        clientRequestId: 'request-before-ack',
+        turn: turn,
+        inputItem: null,
+        effectiveSelection: const TurnSendSelection(),
+      ));
+
+      expect(detail.committedMessages, [canonical]);
+    });
+
+    test('canonical ack remains idempotent with an item event', () {
+      final turn = TurnTask(
+        id: 'turn-canonical-ack',
+        providerId: 'codex',
+        conversationId: summary.id,
+        status: TurnStatus.running,
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(6000, isUtc: true),
+      );
+      final canonical = GatewayMessage(
+        id: 'routed-item-canonical-ack',
+        itemId: 'item-canonical-ack',
+        turnId: turn.id,
+        role: MessageRole.user,
+        kind: 'message',
+        content: 'canonical in ack',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(6100, isUtc: true),
+        isStreaming: false,
+      );
+
+      var detail = ConversationDetail(summary: summary)
+          .stageUserInput(
+            clientRequestId: 'request-canonical-ack',
+            text: 'canonical in ack',
+            createdAt:
+                DateTime.fromMillisecondsSinceEpoch(5900, isUtc: true),
+          )
+          .accept(TurnSendReceipt(
+            clientRequestId: 'request-canonical-ack',
+            turn: turn,
+            inputItem: canonical,
+            effectiveSelection: const TurnSendSelection(),
+          ));
+      detail = detail.apply(ConversationItemUpsertedEvent(
+        eventCursor: 'canonical-ack-replayed',
+        conversationId: summary.id,
+        item: canonical,
+      ));
+
+      expect(detail.committedMessages, [canonical]);
+    });
+
+    test('keeps identical user text from different turns distinct', () {
+      var detail = ConversationDetail(summary: summary);
+      for (final suffix in ['one', 'two']) {
+        final turn = TurnTask(
+          id: 'turn-$suffix',
+          providerId: 'codex',
+          conversationId: summary.id,
+          status: TurnStatus.running,
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(
+            suffix == 'one' ? 7000 : 8000,
+            isUtc: true,
+          ),
+        );
+        detail = detail
+            .stageUserInput(
+              clientRequestId: 'request-$suffix',
+              text: 'identical',
+              createdAt: turn.updatedAt,
+            )
+            .accept(TurnSendReceipt(
+              clientRequestId: 'request-$suffix',
+              turn: turn,
+              inputItem: null,
+              effectiveSelection: const TurnSendSelection(),
+            ))
+            .apply(ConversationItemUpsertedEvent(
+              eventCursor: 'canonical-$suffix',
+              conversationId: summary.id,
+              item: GatewayMessage(
+                id: 'routed-item-$suffix',
+                itemId: 'item-$suffix',
+                turnId: turn.id,
+                role: MessageRole.user,
+                kind: 'message',
+                content: 'identical',
+                createdAt: turn.updatedAt,
+                isStreaming: false,
+              ),
+            ));
+      }
+
+      expect(detail.committedMessages, hasLength(2));
+      expect(
+        detail.committedMessages.map((message) => message.turnId),
+        ['turn-one', 'turn-two'],
+      );
+    });
+
+    for (final terminalStatus in [TurnStatus.interrupted, TurnStatus.failed]) {
+      test('terminal $terminalStatus survives a stale running snapshot', () {
+        final running = TurnTask(
+          id: 'turn-terminal',
+          providerId: 'codex',
+          conversationId: summary.id,
+          status: TurnStatus.running,
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(9000, isUtc: true),
+        );
+        final staleSummary = ConversationSummary(
+          id: summary.id,
+          providerId: summary.providerId,
+          title: summary.title,
+          status: ConversationStatus.running,
+          permissionLevel: summary.permissionLevel,
+          createdAt: summary.createdAt,
+          updatedAt: running.updatedAt,
+          activeTurn: running,
+        );
+        var detail = ConversationDetail(
+          summary: staleSummary,
+          turns: [running],
+        ).apply(TurnUpsertedEvent(
+          eventCursor: 'terminal-$terminalStatus',
+          turn: TurnTask(
+            id: running.id,
+            providerId: running.providerId,
+            conversationId: running.conversationId,
+            status: terminalStatus,
+            updatedAt: running.updatedAt,
+            completedAt: running.updatedAt,
+          ),
+        ));
+
+        detail = detail.installCommittedSnapshot(
+          ConversationDetail(summary: staleSummary, turns: [running]),
+          completedTurnId: running.id,
+        );
+
+        expect(detail.activeTurn, isNull);
+        expect(detail.turns.single.status, terminalStatus);
+        expect(
+          detail.effectiveStatus,
+          terminalStatus == TurnStatus.failed
+              ? ConversationStatus.error
+              : ConversationStatus.idle,
+        );
+      });
+    }
   });
 
 }

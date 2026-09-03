@@ -97,13 +97,20 @@ class DeviceSession extends ApplicationNotifier {
   GatewayEventWindow? _eventWindow;
   Timer? _reconnectTimer;
   StreamSubscription<void>? _reconnectSignalSubscription;
-  final Map<GatewayProviderRoute, String?> _conversationCursors = {};
+  final Map<_ConversationListScope, String?> _conversationCursors = {};
+  final Set<_ConversationListScope> _loadedConversationScopes = {};
+  final Map<GatewayProviderRoute, String?> _projectCursors = {};
+  final Set<GatewayProviderRoute> _projectRefreshes = {};
+  final Set<GatewayProviderRoute> _pendingProjectRefreshes = {};
   final Set<GatewayProviderRoute> _conversationRefreshes = {};
   final Map<GatewayProviderRoute, Map<String, TurnTask>>
       _pendingConversationRefreshTurns = {};
   final Map<String, String> _livePreviewByContent = {};
   bool _isLoadingMoreConversations = false;
   String? _loadMoreError;
+  bool _isLoadingMoreProjects = false;
+  String? _loadMoreProjectsError;
+  int _projectRequestSequence = 0;
   int _runtimeGeneration = 0;
   int _reconnectAttempt = 0;
   bool _reconnectEnabled = false;
@@ -115,6 +122,7 @@ class DeviceSession extends ApplicationNotifier {
   GatewayHandshake? handshake;
   String? error;
   List<ConversationSummary> conversations = const [];
+  List<GatewayProject> projects = const [];
 
   DeviceSessionRuntimeLease? get runtimeLease {
     final currentClient = _client;
@@ -155,6 +163,10 @@ class DeviceSession extends ApplicationNotifier {
           .where((provider) => provider.methods.contains('conversation.search'))
           .toList(growable: false) ??
       const [];
+  List<GatewayProvider> get projectListProviders => handshake?.providers
+          .where((provider) => provider.methods.contains('project.list'))
+          .toList(growable: false) ??
+      const [];
   GatewayProvider? get selectedProvider {
     final providers = handshake?.providers ?? const <GatewayProvider>[];
     if (providers.isEmpty) return null;
@@ -176,16 +188,50 @@ class DeviceSession extends ApplicationNotifier {
             ))
         .toList(growable: false);
   }
+  bool get selectedProviderSupportsProjects =>
+      selectedProvider?.methods.contains('project.list') == true;
+  List<GatewayProject> get selectedProviderProjects {
+    final route = selectedProvider?.route;
+    if (route == null) return const [];
+    return projects
+        .where((project) => project.resource.route == route)
+        .toList(growable: false);
+  }
+  List<ConversationSummary> get selectedProviderRecentConversations {
+    final provider = selectedProvider;
+    if (provider == null) return conversations;
+    final values = selectedProviderConversations;
+    return provider.methods.contains('project.list')
+        ? values
+            .where((conversation) => conversation.project == null)
+            .toList(growable: false)
+        : values;
+  }
+  List<ConversationSummary> conversationsForProject(GatewayProject project) =>
+      sortRecentConversations(
+        selectedProviderConversations.where(
+          (conversation) => conversation.project == project.resource,
+        ),
+      );
   bool get canLoadMoreSelectedProviderConversations {
     final provider = selectedProvider;
-    return provider == null
-        ? canLoadMoreConversations
-        : connectionState == DeviceConnectionState.online &&
-            _conversationCursors[provider.route] != null;
+    if (provider == null) return false;
+    final scope = _recentScope(provider);
+    return connectionState == DeviceConnectionState.online &&
+        _conversationCursors[scope] != null;
   }
   String get selectedProviderConversationCountLabel =>
-      '${selectedProviderConversations.length}'
+      '${selectedProviderRecentConversations.length}'
       '${canLoadMoreSelectedProviderConversations ? '+' : ''}';
+
+  bool get canLoadMoreSelectedProviderProjects {
+    final provider = selectedProvider;
+    return provider != null &&
+        connectionState == DeviceConnectionState.online &&
+        _projectCursors[provider.route] != null;
+  }
+  bool get isLoadingMoreProjects => _isLoadingMoreProjects;
+  String? get loadMoreProjectsError => _loadMoreProjectsError;
 
   void selectProvider(GatewayProvider provider) {
     final providers = handshake?.providers ?? const <GatewayProvider>[];
@@ -205,6 +251,22 @@ class DeviceSession extends ApplicationNotifier {
       }
     }
     return null;
+  }
+  GatewayProvider? _providerForRoute(GatewayProviderRoute route) {
+    for (final provider in handshake?.providers ?? const <GatewayProvider>[]) {
+      if (provider.route == route) return provider;
+    }
+    return null;
+  }
+  _ConversationListScope _recentScope(GatewayProvider provider) =>
+      provider.methods.contains('project.list')
+          ? _ConversationListScope.standalone(provider.route)
+          : _ConversationListScope.all(provider.route);
+  _ConversationListScope _recentScopeForRoute(GatewayProviderRoute route) {
+    final provider = _providerForRoute(route);
+    return provider == null
+        ? _ConversationListScope.all(route)
+        : _recentScope(provider);
   }
   bool conversationBelongsToProvider(
     ConversationSummary conversation,
@@ -265,22 +327,45 @@ class DeviceSession extends ApplicationNotifier {
         device = device.withDescriptor(hostDescriptor);
       }
       var snapshotCursor = connectedHandshake.eventCursor;
-      var isFirstPage = true;
-      for (final provider in conversationListProviders) {
-        final page = await client.listConversations(
+      var hasSnapshot = false;
+      void acceptSnapshot(String cursor) {
+        if (hasSnapshot) return;
+        snapshotCursor = cursor;
+        hasSnapshot = true;
+      }
+      final projectClient = client is ProjectGatewayClient
+          ? client as ProjectGatewayClient
+          : null;
+      for (final provider in projectListProviders) {
+        if (projectClient == null) {
+          throw UnsupportedError(
+            'Gateway SDK adapter does not implement advertised project methods',
+          );
+        }
+        final page = await projectClient.listProjects(
           route: provider.route,
           limit: conversationPageSize,
         );
         if (!_ownsRuntime(generation, client)) return;
-        if (isFirstPage) {
-          snapshotCursor = page.snapshotCursor;
-          isFirstPage = false;
-        }
+        acceptSnapshot(page.snapshotCursor);
+        projects = mergeRoutedProjects(projects, page.projects);
+        _projectCursors[provider.route] = page.nextCursor;
+      }
+      for (final provider in conversationListProviders) {
+        final scope = _recentScope(provider);
+        final page = await client.listConversations(
+          route: provider.route,
+          projectFilter: scope.filter,
+          limit: conversationPageSize,
+        );
+        if (!_ownsRuntime(generation, client)) return;
+        acceptSnapshot(page.snapshotCursor);
         conversations = mergeRoutedConversations(
           conversations,
           page.conversations,
         );
-        _conversationCursors[provider.route] = page.nextCursor;
+        _conversationCursors[scope] = page.nextCursor;
+        _loadedConversationScopes.add(scope);
       }
       window.install(
         baselineCursor: connectedHandshake.eventCursor,
@@ -370,7 +455,9 @@ class DeviceSession extends ApplicationNotifier {
     final client = _client;
     final pendingRoutes = _conversationCursors.entries
         .where((entry) =>
-            entry.value != null && (route == null || entry.key == route))
+            entry.value != null &&
+            (route == null || entry.key.route == route) &&
+            entry.key == _recentScopeForRoute(entry.key.route))
         .toList(growable: false);
     if (connectionState != DeviceConnectionState.online ||
         client == null ||
@@ -387,7 +474,8 @@ class DeviceSession extends ApplicationNotifier {
       final pages = await Future.wait([
         for (final entry in pendingRoutes)
           client.listConversations(
-            route: entry.key,
+            route: entry.key.route,
+            projectFilter: entry.key.filter,
             cursor: entry.value,
             limit: conversationPageSize,
           ),
@@ -416,6 +504,100 @@ class DeviceSession extends ApplicationNotifier {
   Future<void> loadMoreSelectedProviderConversations() =>
       loadMoreConversations(route: selectedProvider?.route);
 
+  Future<void> ensureProjectConversations(GatewayProject project) async {
+    final scope = _ConversationListScope.project(project.resource);
+    if (_loadedConversationScopes.contains(scope)) return;
+    await _loadProjectConversationPage(scope, cursor: null);
+  }
+
+  bool canLoadMoreProjectConversations(GatewayProject project) =>
+      connectionState == DeviceConnectionState.online &&
+      _conversationCursors[_ConversationListScope.project(project.resource)] !=
+          null;
+
+  Future<void> loadMoreProjectConversations(GatewayProject project) async {
+    final scope = _ConversationListScope.project(project.resource);
+    final cursor = _conversationCursors[scope];
+    if (cursor == null) return;
+    await _loadProjectConversationPage(scope, cursor: cursor);
+  }
+
+  Future<void> _loadProjectConversationPage(
+    _ConversationListScope scope, {
+    required String? cursor,
+  }) async {
+    final client = _client;
+    if (connectionState != DeviceConnectionState.online ||
+        client == null ||
+        _isLoadingMoreConversations) {
+      return;
+    }
+    final generation = _runtimeGeneration;
+    _isLoadingMoreConversations = true;
+    _loadMoreError = null;
+    _notifyListenersImmediately();
+    try {
+      final page = await client.listConversations(
+        route: scope.route,
+        projectFilter: scope.filter,
+        cursor: cursor,
+        limit: conversationPageSize,
+      );
+      if (!_ownsRuntime(generation, client)) return;
+      conversations = mergeRoutedConversations(
+        conversations,
+        page.conversations,
+      );
+      _conversationCursors[scope] = page.nextCursor;
+      _loadedConversationScopes.add(scope);
+    } catch (value) {
+      if (_ownsRuntime(generation, client)) _loadMoreError = value.toString();
+    } finally {
+      if (_ownsRuntime(generation, client)) {
+        _isLoadingMoreConversations = false;
+        _notifyListenersImmediately();
+      }
+    }
+  }
+
+  Future<void> loadMoreSelectedProviderProjects() async {
+    final provider = selectedProvider;
+    final gatewayClient = _client;
+    final cursor = provider == null ? null : _projectCursors[provider.route];
+    if (connectionState != DeviceConnectionState.online ||
+        provider == null ||
+        cursor == null ||
+        gatewayClient == null ||
+        gatewayClient is! ProjectGatewayClient ||
+        _isLoadingMoreProjects) {
+      return;
+    }
+    final projectClient = gatewayClient as ProjectGatewayClient;
+    final generation = _runtimeGeneration;
+    _isLoadingMoreProjects = true;
+    _loadMoreProjectsError = null;
+    _notifyListenersImmediately();
+    try {
+      final page = await projectClient.listProjects(
+        route: provider.route,
+        cursor: cursor,
+        limit: conversationPageSize,
+      );
+      if (!_ownsRuntime(generation, gatewayClient)) return;
+      projects = mergeRoutedProjects(projects, page.projects);
+      _projectCursors[provider.route] = page.nextCursor;
+    } catch (value) {
+      if (_ownsRuntime(generation, gatewayClient)) {
+        _loadMoreProjectsError = value.toString();
+      }
+    } finally {
+      if (_ownsRuntime(generation, gatewayClient)) {
+        _isLoadingMoreProjects = false;
+        _notifyListenersImmediately();
+      }
+    }
+  }
+
   Future<ConversationSummary> createConversation({
     required GatewayProvider provider,
     String? title,
@@ -424,6 +606,7 @@ class DeviceSession extends ApplicationNotifier {
     String? model,
     String? reasoningEffort,
     String? workspaceMode,
+    GatewayProject? project,
   }) async {
     final lease = runtimeLease;
     if (lease == null ||
@@ -468,6 +651,7 @@ class DeviceSession extends ApplicationNotifier {
           ? null
           : workspaceRoot?.trim(),
       workspaceMode: effectiveWorkspaceMode,
+      project: project?.resource,
     );
     if (!ownsRuntimeLease(lease)) {
       throw StateError('连接已变化，请重新新建会话');
@@ -477,17 +661,144 @@ class DeviceSession extends ApplicationNotifier {
     return conversation;
   }
 
+  Future<GatewayProject> createProject({
+    required GatewayProvider provider,
+    required String name,
+    required List<ProjectRoot> roots,
+    Map<String, String> metadata = const {},
+  }) async {
+    final gatewayClient = _client;
+    final trimmedName = name.trim();
+    if (connectionState != DeviceConnectionState.online ||
+        gatewayClient == null ||
+        gatewayClient is! ProjectGatewayClient ||
+        provider.status != ProviderStatus.ready ||
+        !provider.methods.contains('project.create')) {
+      throw StateError('当前 Provider 不支持新建项目');
+    }
+    if (trimmedName.isEmpty) throw ArgumentError.value(name, 'name', '不能为空');
+    final projectClient = gatewayClient as ProjectGatewayClient;
+    final generation = _runtimeGeneration;
+    final project = await projectClient.createProject(
+      route: provider.route,
+      idempotencyKey:
+          'remote-project-${DateTime.now().microsecondsSinceEpoch}-${++_projectRequestSequence}',
+      name: trimmedName,
+      roots: _trimProjectRoots(roots),
+      metadata: Map.unmodifiable(metadata),
+    );
+    if (!_ownsRuntime(generation, gatewayClient)) {
+      throw StateError('连接已变化，请重新新建项目');
+    }
+    _upsertProject(project);
+    _notifyListenersImmediately();
+    return project;
+  }
+
+  Future<GatewayProject> updateProject({
+    required GatewayProvider provider,
+    required GatewayProject project,
+    String? name,
+    List<ProjectRoot>? roots,
+    Map<String, String>? metadata,
+  }) async {
+    final gatewayClient = _client;
+    if (connectionState != DeviceConnectionState.online ||
+        gatewayClient == null ||
+        gatewayClient is! ProjectGatewayClient ||
+        provider.status != ProviderStatus.ready ||
+        !provider.methods.contains('project.update')) {
+      throw StateError('当前 Provider 不支持编辑项目');
+    }
+    if (project.resource.route != provider.route) {
+      throw ArgumentError('项目不属于当前 Provider');
+    }
+    if (name == null && roots == null && metadata == null) {
+      throw ArgumentError('至少需要更新一个项目字段');
+    }
+    final trimmedName = name?.trim();
+    if (trimmedName != null && trimmedName.isEmpty) {
+      throw ArgumentError.value(name, 'name', '不能为空');
+    }
+    final projectClient = gatewayClient as ProjectGatewayClient;
+    final generation = _runtimeGeneration;
+    final updated = await projectClient.updateProject(
+      project: project.resource,
+      name: trimmedName,
+      roots: roots == null ? null : _trimProjectRoots(roots),
+      metadata: metadata == null ? null : Map.unmodifiable(metadata),
+    );
+    if (!_ownsRuntime(generation, gatewayClient)) {
+      throw StateError('连接已变化，请重新编辑项目');
+    }
+    _upsertProject(updated);
+    _notifyListenersImmediately();
+    return updated;
+  }
+
+  Future<void> deleteProject({
+    required GatewayProvider provider,
+    required GatewayProject project,
+  }) async {
+    final gatewayClient = _client;
+    if (connectionState != DeviceConnectionState.online ||
+        gatewayClient == null ||
+        gatewayClient is! ProjectGatewayClient ||
+        provider.status != ProviderStatus.ready ||
+        !provider.methods.contains('project.delete')) {
+      throw StateError('当前 Provider 不支持删除项目');
+    }
+    if (project.resource.route != provider.route) {
+      throw ArgumentError('项目不属于当前 Provider');
+    }
+    final projectClient = gatewayClient as ProjectGatewayClient;
+    final generation = _runtimeGeneration;
+    await projectClient.deleteProject(project.resource);
+    if (!_ownsRuntime(generation, gatewayClient)) {
+      throw StateError('连接已变化，请重新删除项目');
+    }
+    _removeProject(project.resource);
+    _notifyListenersImmediately();
+  }
+
+  List<ProjectRoot> _trimProjectRoots(List<ProjectRoot> roots) => roots
+      .map((root) => ProjectRoot(path: root.path.trim()))
+      .where((root) => root.path.isNotEmpty)
+      .toList(growable: false);
+
+  void _upsertProject(GatewayProject incoming) {
+    projects = mergeRoutedProjects(projects, [incoming]);
+  }
+
+  void _removeProject(RoutedResourceId resource) {
+    projects = [
+      for (final project in projects)
+        if (project.resource != resource) project,
+    ];
+    _loadedConversationScopes.remove(
+      _ConversationListScope.project(resource),
+    );
+    _conversationCursors.remove(_ConversationListScope.project(resource));
+  }
+
   bool _ownsRuntime(int generation, GatewayClient client) =>
       generation == _runtimeGeneration && identical(_client, client);
 
   void _resetConversationPagination() {
     conversations = const [];
+    projects = const [];
     _conversationCursors.clear();
+    _loadedConversationScopes.clear();
+    _projectCursors.clear();
+    _projectRefreshes.clear();
+    _pendingProjectRefreshes.clear();
     _conversationRefreshes.clear();
     _pendingConversationRefreshTurns.clear();
     _livePreviewByContent.clear();
     _isLoadingMoreConversations = false;
     _loadMoreError = null;
+    _isLoadingMoreProjects = false;
+    _loadMoreProjectsError = null;
   }
 
   Future<void> _failRuntime(
@@ -530,6 +841,14 @@ class DeviceSession extends ApplicationNotifier {
       providers[index] = event.provider;
       handshake = currentHandshake.withProviders(providers);
       _notifyListenersImmediately();
+      return;
+    }
+    if (event is ProjectChangedEvent) {
+      if (event.changeType == ProjectChangeType.deleted) {
+        _removeProject(event.project);
+        _notifyListenersImmediately();
+      }
+      _queueProjectRefresh(event.project.route);
       return;
     }
     if (event is ConversationUpsertedEvent) {
@@ -602,6 +921,7 @@ class DeviceSession extends ApplicationNotifier {
             model: eventConversation.model,
             reasoningEffort: eventConversation.reasoningEffort,
             workspaceRoot: eventConversation.workspaceRoot,
+            project: eventConversation.project,
             createdAt: eventConversation.createdAt,
             updatedAt: current.updatedAt,
             activeTurn: eventConversation.activeTurn,
@@ -644,6 +964,7 @@ class DeviceSession extends ApplicationNotifier {
       model: current.model,
       reasoningEffort: current.reasoningEffort,
       workspaceRoot: current.workspaceRoot,
+      project: current.project,
       createdAt: current.createdAt,
       updatedAt: turn.updatedAt,
       activeTurn: turn.status.isTerminal ? null : turn,
@@ -681,6 +1002,7 @@ class DeviceSession extends ApplicationNotifier {
       model: current.model,
       reasoningEffort: current.reasoningEffort,
       workspaceRoot: current.workspaceRoot,
+      project: current.project,
       createdAt: current.createdAt,
       updatedAt: current.updatedAt,
       activeTurn: current.activeTurn,
@@ -735,15 +1057,26 @@ class DeviceSession extends ApplicationNotifier {
         final batch = _pendingConversationRefreshTurns.remove(route);
         if (batch == null || batch.isEmpty) return;
         try {
-          final page = await client.listConversations(
-            route: route,
-            limit: conversationPageSize,
-          );
-          if (!_ownsRuntime(generation, client)) return;
-          conversations = mergeRoutedConversations(
-            conversations,
-            page.conversations,
-          );
+          final loadedScopes = _loadedConversationScopes
+              .where((scope) => scope.route == route)
+              .toList(growable: false);
+          final scopes = loadedScopes.isEmpty
+              ? [_recentScopeForRoute(route)]
+              : loadedScopes;
+          for (final scope in scopes) {
+            final page = await client.listConversations(
+              route: route,
+              projectFilter: scope.filter,
+              limit: conversationPageSize,
+            );
+            if (!_ownsRuntime(generation, client)) return;
+            conversations = mergeRoutedConversations(
+              conversations,
+              page.conversations,
+            );
+            _conversationCursors[scope] = page.nextCursor;
+            _loadedConversationScopes.add(scope);
+          }
           for (final pendingTurn in batch.values) {
             _applyTurnToConversation(pendingTurn);
           }
@@ -768,6 +1101,49 @@ class DeviceSession extends ApplicationNotifier {
           _pendingConversationRefreshTurns[route]?.isNotEmpty == true) {
         final next = _pendingConversationRefreshTurns[route]!.values.first;
         unawaited(_refreshConversationsForEvent(route, next));
+      }
+    }
+  }
+
+  void _queueProjectRefresh(GatewayProviderRoute route) {
+    _pendingProjectRefreshes.add(route);
+    unawaited(_refreshProjectsForEvent(route));
+  }
+
+  Future<void> _refreshProjectsForEvent(GatewayProviderRoute route) async {
+    if (!_projectRefreshes.add(route)) return;
+    var continuePending = true;
+    try {
+      while (_pendingProjectRefreshes.remove(route)) {
+        final gatewayClient = _client;
+        final generation = _runtimeGeneration;
+        if (gatewayClient == null ||
+            gatewayClient is! ProjectGatewayClient ||
+            connectionState != DeviceConnectionState.online) {
+          return;
+        }
+        final projectClient = gatewayClient as ProjectGatewayClient;
+        final provider = _providerForRoute(route);
+        if (provider?.methods.contains('project.list') != true) return;
+        try {
+          final page = await projectClient.listProjects(
+            route: route,
+            limit: conversationPageSize,
+          );
+          if (!_ownsRuntime(generation, gatewayClient)) return;
+          projects = replaceProviderProjects(projects, route, page.projects);
+          _projectCursors[route] = page.nextCursor;
+          _notifyListenersImmediately();
+        } catch (_) {
+          continuePending = false;
+          _pendingProjectRefreshes.add(route);
+          return;
+        }
+      }
+    } finally {
+      _projectRefreshes.remove(route);
+      if (continuePending && _pendingProjectRefreshes.contains(route)) {
+        unawaited(_refreshProjectsForEvent(route));
       }
     }
   }
@@ -856,56 +1232,39 @@ List<ConversationSummary> mergeRoutedConversations(
   deduplicateRoutedConversations([...existing, ...incoming]),
 );
 
-Map<String, List<ConversationSummary>> groupConversationsByWorkspace(
-  Iterable<ConversationSummary> values,
+List<GatewayProject> sortProjects(Iterable<GatewayProject> values) {
+  return values.toList(growable: false)
+    ..sort((left, right) {
+      final position = left.position.compareTo(right.position);
+      return position != 0 ? position : left.key.compareTo(right.key);
+    });
+}
+
+List<GatewayProject> mergeRoutedProjects(
+  Iterable<GatewayProject> existing,
+  Iterable<GatewayProject> incoming,
 ) {
-  final groups = <String, List<ConversationSummary>>{};
-  for (final conversation in values) {
-    final root = conversation.workspaceRoot;
-    if (root == null || root.trim().isEmpty) continue;
-    groups.putIfAbsent(root, () => []).add(conversation);
+  final projects = <String, GatewayProject>{
+    for (final project in existing) project.key: project,
+  };
+  for (final project in incoming) {
+    final current = projects[project.key];
+    if (current == null || !project.updatedAt.isBefore(current.updatedAt)) {
+      projects[project.key] = project;
+    }
   }
-  for (final conversations in groups.values) {
-    conversations.sort(_compareRecentConversations);
-  }
-  return Map.fromEntries(
-    groups.entries.toList()
-      ..sort((left, right) {
-        final updated = right.value.first.updatedAt.compareTo(left.value.first.updatedAt);
-        return updated != 0 ? updated : left.key.compareTo(right.key);
-      }),
-  );
+  return sortProjects(projects.values);
 }
 
-class ConversationProject {
-  const ConversationProject({
-    required this.hostDeviceId,
-    required this.workspaceRoot,
-    required this.conversations,
-  });
-
-  final String hostDeviceId;
-  final String workspaceRoot;
-  final List<ConversationSummary> conversations;
-
-  String get key => '$hostDeviceId\u0000$workspaceRoot';
-}
-
-List<ConversationProject> groupConversationsByProject({
-  required String hostDeviceId,
-  required Iterable<ConversationSummary> values,
-}) {
-  final groups = groupConversationsByWorkspace(
-    deduplicateRoutedConversations(values),
-  );
-  return groups.entries
-      .map((entry) => ConversationProject(
-            hostDeviceId: hostDeviceId,
-            workspaceRoot: entry.key,
-            conversations: entry.value,
-          ))
-      .toList(growable: false);
-}
+List<GatewayProject> replaceProviderProjects(
+  Iterable<GatewayProject> existing,
+  GatewayProviderRoute route,
+  Iterable<GatewayProject> replacement,
+) => sortProjects([
+      for (final project in existing)
+        if (project.resource.route != route) project,
+      ...replacement,
+    ]);
 
 Iterable<ConversationSummary> deduplicateRoutedConversations(
   Iterable<ConversationSummary> values,
@@ -934,6 +1293,50 @@ String _tailRunes(String value, int limit) {
   final runes = value.runes.toList(growable: false);
   if (runes.length <= limit) return value;
   return String.fromCharCodes(runes.skip(runes.length - limit));
+}
+
+enum _ConversationListScopeKind { all, standalone, project }
+
+class _ConversationListScope {
+  const _ConversationListScope._({
+    required this.route,
+    required this.kind,
+    this.project,
+  });
+
+  const _ConversationListScope.all(GatewayProviderRoute route)
+      : this._(route: route, kind: _ConversationListScopeKind.all);
+
+  const _ConversationListScope.standalone(GatewayProviderRoute route)
+      : this._(route: route, kind: _ConversationListScopeKind.standalone);
+
+  _ConversationListScope.project(RoutedResourceId project)
+      : this._(
+          route: project.route,
+          kind: _ConversationListScopeKind.project,
+          project: project,
+        );
+
+  final GatewayProviderRoute route;
+  final _ConversationListScopeKind kind;
+  final RoutedResourceId? project;
+
+  ConversationProjectFilter get filter => switch (kind) {
+        _ConversationListScopeKind.all => const AllConversationFilter(),
+        _ConversationListScopeKind.standalone =>
+          const StandaloneConversationFilter(),
+        _ConversationListScopeKind.project => ProjectConversationFilter(project!),
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      other is _ConversationListScope &&
+      other.route == route &&
+      other.kind == kind &&
+      other.project == project;
+
+  @override
+  int get hashCode => Object.hash(route, kind, project);
 }
 
 Future<int> replaceDeviceSession(

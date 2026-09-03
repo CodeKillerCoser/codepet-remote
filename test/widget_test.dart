@@ -9,12 +9,9 @@ void main() {
     expect(find.text('CodePet Remote'), findsOneWidget);
     expect(find.byKey(const Key('device-demo-studio')), findsOneWidget);
     expect(find.byKey(const Key('device-demo-laptop')), findsOneWidget);
-    expect(find.text('实现 Remote 会话流'), findsOneWidget);
-    expect(find.text('检查 Android 构建'), findsNothing);
     await tester.tap(find.byKey(const Key('device-demo-laptop')));
     await tester.pumpAndSettle();
-    expect(find.text('实现 Remote 会话流'), findsNothing);
-    expect(find.text('检查 Android 构建'), findsOneWidget);
+    expect(find.text('Gateway 协议契约核对'), findsNothing);
     await tester.scrollUntilVisible(
       find.text('无项目临时会话'),
       240,
@@ -24,6 +21,24 @@ void main() {
       ).first,
     );
     expect(find.text('无项目临时会话'), findsOneWidget);
+    final homeScroll = find.descendant(
+      of: find.byKey(const Key('remote-home')),
+      matching: find.byType(Scrollable),
+    ).first;
+    await tester.drag(homeScroll, const Offset(0, 1000));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('device-demo-studio')));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Gateway 协议契约核对'),
+      240,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('remote-home')),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
+    expect(find.text('Gateway 协议契约核对'), findsOneWidget);
+    expect(find.text('无项目临时会话'), findsNothing);
   });
 
   testWidgets('overflow exposes connection and settings entries', (tester) async {

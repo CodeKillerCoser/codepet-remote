@@ -39,6 +39,8 @@ final class GeneratedGatewayMapper {
 
   ConversationSummary conversation(sdk.Conversation value) {
     final resource = value.resource;
+    final project = value.project;
+    if (project != null) _requireSameRoute(resource, project);
     final createdAt = _time(value.createdAt) ?? _epoch;
     return ConversationSummary(
       id: resourceKey(resource),
@@ -50,6 +52,7 @@ final class GeneratedGatewayMapper {
       model: value.model,
       reasoningEffort: value.reasoningEffort,
       workspaceRoot: value.workspaceRoot,
+      project: project == null ? null : resourceId(project),
       createdAt: createdAt,
       updatedAt: _time(value.updatedAt) ?? createdAt,
       activeTurn: value.activeTurn == null ? null : turn(value.activeTurn!),
@@ -70,6 +73,45 @@ final class GeneratedGatewayMapper {
             ),
     );
   }
+
+  GatewayProject project(sdk.Project value) => GatewayProject(
+        resource: resourceId(value.resource),
+        name: value.name,
+        roots: value.roots
+            .map((root) => ProjectRoot(path: root.path))
+            .toList(growable: false),
+        metadata: Map.unmodifiable(value.metadata),
+        position: value.position,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(
+          value.createdAt,
+          isUtc: true,
+        ),
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(
+          value.updatedAt,
+          isUtc: true,
+        ),
+      );
+
+  sdk.ConversationProjectFilter conversationProjectFilter(
+    ConversationProjectFilter value,
+  ) => switch (value) {
+        AllConversationFilter() => sdk.ConversationProjectFilterAll(
+            kind: sdk.ConversationProjectFilterAllKind.all,
+          ),
+        StandaloneConversationFilter() =>
+          sdk.ConversationProjectFilterStandalone(
+            kind: sdk.ConversationProjectFilterStandaloneKind.standalone,
+          ),
+        ProjectConversationFilter(:final project) =>
+          sdk.ConversationProjectFilterProject(
+            kind: sdk.ConversationProjectFilterProjectKind.project,
+            project: sdkResourceId(project),
+          ),
+      };
+
+  List<sdk.ProjectRoot> projectRoots(Iterable<ProjectRoot> roots) => roots
+      .map((root) => sdk.ProjectRoot(path: root.path))
+      .toList(growable: false);
 
   TurnTask turn(sdk.TurnTask value) {
     final startedAt = _time(value.startedAt);
@@ -200,6 +242,22 @@ final class GeneratedGatewayMapper {
   }) {
     final cursor = envelope.eventCursor;
     switch (envelope.event) {
+      case sdk.ProtocolEventName.projectChanged:
+        final payload = envelope.payload as sdk.ProjectChangedEvent;
+        _requireResourceRoute(
+          payload.project,
+          expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: expectedProviderRouteKeys,
+        );
+        return ProjectChangedEvent(
+          eventCursor: cursor,
+          project: resourceId(payload.project),
+          changeType: switch (payload.changeType) {
+            sdk.ProjectChangeType.created => ProjectChangeType.created,
+            sdk.ProjectChangeType.updated => ProjectChangeType.updated,
+            sdk.ProjectChangeType.deleted => ProjectChangeType.deleted,
+          },
+        );
       case sdk.ProtocolEventName.providerStatusChanged:
         final payload = envelope.payload as sdk.ProviderStatusChangedEvent;
         final mapped = provider(payload.provider);

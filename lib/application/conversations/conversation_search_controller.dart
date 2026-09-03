@@ -5,14 +5,14 @@ import '../support/application_notifier.dart';
 class ConversationSearchController extends ApplicationNotifier {
   ConversationSearchController({
     required DeviceSession session,
-    this.workspaceRoot,
+    this.project,
     this.pageSize = 20,
   }) : _session = session {
     _observedLease = session.runtimeLease;
     session.addListener(_sessionChanged);
   }
 
-  final String? workspaceRoot;
+  final RoutedResourceId? project;
   final int pageSize;
   DeviceSession _session;
   final Map<GatewayProviderRoute, String?> _cursors = {};
@@ -269,11 +269,11 @@ class ConversationSearchController extends ApplicationNotifier {
   Iterable<ConversationSummary> _inScope(
     Iterable<ConversationSummary> conversations,
   ) {
-    final root = workspaceRoot;
-    return root == null
+    final project = this.project;
+    return project == null
         ? conversations
         : conversations.where(
-            (conversation) => conversation.workspaceRoot == root,
+            (conversation) => conversation.project == project,
           );
   }
 
