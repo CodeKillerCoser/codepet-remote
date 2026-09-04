@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../../core/domain/models.dart';
 import '../errors/application_failures.dart';
+import '../ports/application_log.dart';
 import '../ports/gateway_client.dart';
 import '../support/application_notifier.dart';
 import '../sync/gateway_event_window.dart';
@@ -96,6 +97,7 @@ class DeviceSession extends ApplicationNotifier {
       Duration(seconds: 30),
     ],
     Stream<void>? reconnectSignals,
+    this.logger = const NoopApplicationLog(),
   }) : assert(reconnectDelays.isNotEmpty) {
     _reconnectSignalSubscription = reconnectSignals?.listen(
       (_) => _handleReconnectSignal(),
@@ -108,6 +110,7 @@ class DeviceSession extends ApplicationNotifier {
   final GatewayClient Function() clientFactory;
   final bool autoReconnect;
   final List<Duration> reconnectDelays;
+  final ApplicationLog logger;
   GatewayClient? _client;
   GatewayEventWindow? _eventWindow;
   Timer? _reconnectTimer;
@@ -121,6 +124,8 @@ class DeviceSession extends ApplicationNotifier {
   final Map<String, Map<String, TurnTask>>
       _pendingConversationRefreshTurns = {};
   final Map<String, String> _livePreviewByContent = {};
+  final Map<String, DateTime> _backgroundWarningTimes = {};
+  final Map<String, int> _suppressedBackgroundWarnings = {};
   bool _isLoadingMoreConversations = false;
   String? _loadMoreError;
   bool _isLoadingMoreProjects = false;
@@ -300,6 +305,7 @@ class DeviceSession extends ApplicationNotifier {
   String? get loadMoreError => _loadMoreError;
 
   Future<void> connect() {
+    logger.info('Connection requested for device ${device.deviceId}');
     _reconnectEnabled = autoReconnect;
     _retryableFailure = false;
     _cancelReconnect(resetAttempt: true);
@@ -308,6 +314,11 @@ class DeviceSession extends ApplicationNotifier {
 
   Future<void> _connect() async {
     if (connectionState == DeviceConnectionState.connecting) return;
+    logger.info(
+      'Starting connection attempt for device ${device.deviceId} '
+      '(attempt ${_reconnectAttempt + 1})',
+    );
+    final stopwatch = Stopwatch()..start();
     final oldWindow = _eventWindow;
     final oldClient = _client;
     final generation = ++_runtimeGeneration;
@@ -407,8 +418,14 @@ class DeviceSession extends ApplicationNotifier {
       connectionState = DeviceConnectionState.online;
       _retryableFailure = false;
       _reconnectAttempt = 0;
+      logger.info(
+        'Device ${device.deviceId} is online with ${providers.length} '
+        'provider(s), ${projects.length} project(s), and '
+        '${conversations.length} conversation(s); '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       _notifyListenersImmediately();
-    } catch (value) {
+    } catch (value, stackTrace) {
       if (generation != _runtimeGeneration) return;
       final connectionError = value.toString();
       final window = _eventWindow;
@@ -421,6 +438,13 @@ class DeviceSession extends ApplicationNotifier {
       error = connectionError;
       _retryableFailure = isRetryableGatewayFailure(value);
       connectionState = DeviceConnectionState.failed;
+      logger.warning(
+        'Connection failed for device ${device.deviceId}; '
+        'retryable=$_retryableFailure '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+        error: value,
+        stackTrace: stackTrace,
+      );
       _notifyListenersImmediately();
       try {
         await window?.close();
@@ -439,6 +463,10 @@ class DeviceSession extends ApplicationNotifier {
     final delayIndex = _reconnectAttempt.clamp(0, reconnectDelays.length - 1);
     final delay = reconnectDelays[delayIndex];
     _reconnectAttempt++;
+    logger.info(
+      'Reconnect scheduled for device ${device.deviceId} in '
+      '${delay.inMilliseconds}ms (attempt $_reconnectAttempt)',
+    );
     _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;
       if (_canReconnect(generation)) unawaited(_connect());
@@ -459,6 +487,9 @@ class DeviceSession extends ApplicationNotifier {
         _disposed) {
       return;
     }
+    logger.info(
+      'Discovery signal triggered immediate reconnect for device ${device.deviceId}',
+    );
     _cancelReconnect();
     unawaited(_connect());
   }
@@ -508,9 +539,19 @@ class DeviceSession extends ApplicationNotifier {
         _conversationCursors[pendingRoutes[index].key] = page.nextCursor;
       }
       _loadMoreError = null;
-    } catch (value) {
+      logger.fine(
+        'Conversation page loaded for device ${device.deviceId} '
+        'routes=${pendingRoutes.length} total=${conversations.length}',
+      );
+    } catch (value, stackTrace) {
       if (!_ownsRuntime(generation, client)) return;
       _loadMoreError = value.toString();
+      logger.warning(
+        'Conversation pagination failed for device ${device.deviceId} '
+        'routes=${pendingRoutes.length}',
+        error: value,
+        stackTrace: stackTrace,
+      );
     } finally {
       if (_ownsRuntime(generation, client)) {
         _isLoadingMoreConversations = false;
@@ -568,8 +609,20 @@ class DeviceSession extends ApplicationNotifier {
       );
       _conversationCursors[scope] = page.nextCursor;
       _loadedConversationScopes.add(scope);
-    } catch (value) {
-      if (_ownsRuntime(generation, client)) _loadMoreError = value.toString();
+      logger.fine(
+        'Project conversation page loaded for device ${device.deviceId} '
+        'provider=${scope.providerId} count=${page.conversations.length}',
+      );
+    } catch (value, stackTrace) {
+      if (_ownsRuntime(generation, client)) {
+        _loadMoreError = value.toString();
+        logger.warning(
+          'Project conversation pagination failed for device '
+          '${device.deviceId} provider=${scope.providerId}',
+          error: value,
+          stackTrace: stackTrace,
+        );
+      }
     } finally {
       if (_ownsRuntime(generation, client)) {
         _isLoadingMoreConversations = false;
@@ -604,9 +657,19 @@ class DeviceSession extends ApplicationNotifier {
       if (!_ownsRuntime(generation, gatewayClient)) return;
       projects = mergeRoutedProjects(projects, page.projects);
       _projectCursors[provider.id] = page.nextCursor;
-    } catch (value) {
+      logger.fine(
+        'Project page loaded for device ${device.deviceId} '
+        'provider=${provider.id} total=${projects.length}',
+      );
+    } catch (value, stackTrace) {
       if (_ownsRuntime(generation, gatewayClient)) {
         _loadMoreProjectsError = value.toString();
+        logger.warning(
+          'Project pagination failed for device ${device.deviceId} '
+          'provider=${provider.id}',
+          error: value,
+          stackTrace: stackTrace,
+        );
       }
     } finally {
       if (_ownsRuntime(generation, gatewayClient)) {
@@ -659,24 +722,44 @@ class DeviceSession extends ApplicationNotifier {
         (workspaceModes?.availableOptions.isNotEmpty == true
             ? workspaceModes!.availableOptions.first.id
             : null);
-    final conversation = await lease._client.createConversation(
-      providerId: provider.id,
-      title: title?.trim().isEmpty == true ? null : title?.trim(),
-      permissionLevel: effectivePermissionLevel,
-      model: effectiveModel,
-      reasoningEffort: effectiveReasoningEffort,
-      workspaceRoot: workspaceRoot?.trim().isEmpty == true
-          ? null
-          : workspaceRoot?.trim(),
-      workspaceMode: effectiveWorkspaceMode,
-      project: project?.resource,
+    logger.info(
+      'Conversation create started for device ${device.deviceId} '
+      'provider=${provider.id} projectAttached=${project != null}',
     );
-    if (!ownsRuntimeLease(lease)) {
-      throw StateError('连接已变化，请重新新建会话');
+    final stopwatch = Stopwatch()..start();
+    try {
+      final conversation = await lease._client.createConversation(
+        providerId: provider.id,
+        title: title?.trim().isEmpty == true ? null : title?.trim(),
+        permissionLevel: effectivePermissionLevel,
+        model: effectiveModel,
+        reasoningEffort: effectiveReasoningEffort,
+        workspaceRoot: workspaceRoot?.trim().isEmpty == true
+            ? null
+            : workspaceRoot?.trim(),
+        workspaceMode: effectiveWorkspaceMode,
+        project: project?.resource,
+      );
+      if (!ownsRuntimeLease(lease)) {
+        throw StateError('连接已变化，请重新新建会话');
+      }
+      _upsertEventConversation(conversation);
+      _notifyListenersImmediately();
+      logger.info(
+        'Conversation create succeeded for device ${device.deviceId} '
+        'provider=${provider.id} conversation=${conversation.id} '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
+      return conversation;
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Conversation create failed for device ${device.deviceId} '
+        'provider=${provider.id} elapsedMs=${stopwatch.elapsedMilliseconds}',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
-    _upsertEventConversation(conversation);
-    _notifyListenersImmediately();
-    return conversation;
   }
 
   Future<GatewayProject> createProject({
@@ -697,20 +780,38 @@ class DeviceSession extends ApplicationNotifier {
     if (trimmedName.isEmpty) throw ArgumentError.value(name, 'name', '不能为空');
     final projectClient = gatewayClient as ProjectGatewayClient;
     final generation = _runtimeGeneration;
-    final project = await projectClient.createProject(
-      providerId: provider.id,
-      idempotencyKey:
-          'remote-project-${DateTime.now().microsecondsSinceEpoch}-${++_projectRequestSequence}',
-      name: trimmedName,
-      roots: _trimProjectRoots(roots),
-      metadata: Map.unmodifiable(metadata),
+    logger.info(
+      'Project create started for device ${device.deviceId} '
+      'provider=${provider.id} rootCount=${roots.length}',
     );
-    if (!_ownsRuntime(generation, gatewayClient)) {
-      throw StateError('连接已变化，请重新新建项目');
+    try {
+      final project = await projectClient.createProject(
+        providerId: provider.id,
+        idempotencyKey:
+            'remote-project-${DateTime.now().microsecondsSinceEpoch}-${++_projectRequestSequence}',
+        name: trimmedName,
+        roots: _trimProjectRoots(roots),
+        metadata: Map.unmodifiable(metadata),
+      );
+      if (!_ownsRuntime(generation, gatewayClient)) {
+        throw StateError('连接已变化，请重新新建项目');
+      }
+      _upsertProject(project);
+      _notifyListenersImmediately();
+      logger.info(
+        'Project create succeeded for device ${device.deviceId} '
+        'provider=${provider.id} project=${project.resource.key}',
+      );
+      return project;
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Project create failed for device ${device.deviceId} '
+        'provider=${provider.id}',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
-    _upsertProject(project);
-    _notifyListenersImmediately();
-    return project;
   }
 
   Future<GatewayProject> updateProject({
@@ -740,18 +841,36 @@ class DeviceSession extends ApplicationNotifier {
     }
     final projectClient = gatewayClient as ProjectGatewayClient;
     final generation = _runtimeGeneration;
-    final updated = await projectClient.updateProject(
-      project: project.resource,
-      name: trimmedName,
-      roots: roots == null ? null : _trimProjectRoots(roots),
-      metadata: metadata == null ? null : Map.unmodifiable(metadata),
+    logger.info(
+      'Project update started for device ${device.deviceId} '
+      'provider=${provider.id} project=${project.resource.key}',
     );
-    if (!_ownsRuntime(generation, gatewayClient)) {
-      throw StateError('连接已变化，请重新编辑项目');
+    try {
+      final updated = await projectClient.updateProject(
+        project: project.resource,
+        name: trimmedName,
+        roots: roots == null ? null : _trimProjectRoots(roots),
+        metadata: metadata == null ? null : Map.unmodifiable(metadata),
+      );
+      if (!_ownsRuntime(generation, gatewayClient)) {
+        throw StateError('连接已变化，请重新编辑项目');
+      }
+      _upsertProject(updated);
+      _notifyListenersImmediately();
+      logger.info(
+        'Project update succeeded for device ${device.deviceId} '
+        'provider=${provider.id} project=${project.resource.key}',
+      );
+      return updated;
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Project update failed for device ${device.deviceId} '
+        'provider=${provider.id} project=${project.resource.key}',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
-    _upsertProject(updated);
-    _notifyListenersImmediately();
-    return updated;
   }
 
   Future<void> deleteProject({
@@ -771,12 +890,30 @@ class DeviceSession extends ApplicationNotifier {
     }
     final projectClient = gatewayClient as ProjectGatewayClient;
     final generation = _runtimeGeneration;
-    await projectClient.deleteProject(project.resource);
-    if (!_ownsRuntime(generation, gatewayClient)) {
-      throw StateError('连接已变化，请重新删除项目');
+    logger.info(
+      'Project delete started for device ${device.deviceId} '
+      'provider=${provider.id} project=${project.resource.key}',
+    );
+    try {
+      await projectClient.deleteProject(project.resource);
+      if (!_ownsRuntime(generation, gatewayClient)) {
+        throw StateError('连接已变化，请重新删除项目');
+      }
+      _removeProject(project.resource);
+      _notifyListenersImmediately();
+      logger.info(
+        'Project delete succeeded for device ${device.deviceId} '
+        'provider=${provider.id} project=${project.resource.key}',
+      );
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Project delete failed for device ${device.deviceId} '
+        'provider=${provider.id} project=${project.resource.key}',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
-    _removeProject(project.resource);
-    _notifyListenersImmediately();
   }
 
   List<ProjectRoot> _trimProjectRoots(List<ProjectRoot> roots) => roots
@@ -835,6 +972,11 @@ class DeviceSession extends ApplicationNotifier {
     error = message;
     _retryableFailure = isRetryableGatewayFailure(cause);
     connectionState = DeviceConnectionState.failed;
+    logger.warning(
+      'Runtime event stream failed for device ${device.deviceId}; '
+      'retryable=$_retryableFailure',
+      error: cause,
+    );
     _notifyListenersImmediately();
     try {
       await window?.close();
@@ -953,9 +1095,16 @@ class DeviceSession extends ApplicationNotifier {
       providers[index] = described;
       handshake = currentHandshake.withProviders(providers);
       _notifyListenersImmediately();
-    } catch (_) {
+    } catch (error, stackTrace) {
       // The summary remains usable. A later provider.changed event or reconnect
       // retries the lazy description without discarding runtime information.
+      _logBackgroundWarning(
+        'provider:$providerId',
+        'Provider capability refresh failed for device ${device.deviceId} '
+        'provider=$providerId revision=$revision',
+        error,
+        stackTrace,
+      );
     }
   }
 
@@ -1144,7 +1293,7 @@ class DeviceSession extends ApplicationNotifier {
             _applyTurnToConversation(pendingTurn);
           }
           _notifyListenersImmediately();
-        } catch (_) {
+        } catch (error, stackTrace) {
           continuePending = false;
           final retry = _pendingConversationRefreshTurns.putIfAbsent(
             providerId,
@@ -1153,6 +1302,14 @@ class DeviceSession extends ApplicationNotifier {
           for (final pendingTurn in batch.values) {
             retry.putIfAbsent(pendingTurn.id, () => pendingTurn);
           }
+          _logBackgroundWarning(
+            'conversation:$providerId',
+            'Event-driven conversation refresh failed for device '
+            '${device.deviceId} provider=$providerId '
+            'pendingTurns=${batch.length}',
+            error,
+            stackTrace,
+          );
           return;
         }
       }
@@ -1197,9 +1354,16 @@ class DeviceSession extends ApplicationNotifier {
           projects = replaceProviderProjects(projects, providerId, page.projects);
           _projectCursors[providerId] = page.nextCursor;
           _notifyListenersImmediately();
-        } catch (_) {
+        } catch (error, stackTrace) {
           continuePending = false;
           _pendingProjectRefreshes.add(providerId);
+          _logBackgroundWarning(
+            'project:$providerId',
+            'Event-driven project refresh failed for device '
+            '${device.deviceId} provider=$providerId',
+            error,
+            stackTrace,
+          );
           return;
         }
       }
@@ -1212,6 +1376,7 @@ class DeviceSession extends ApplicationNotifier {
   }
 
   Future<void> disconnect() async {
+    logger.info('Disconnect requested for device ${device.deviceId}');
     _reconnectEnabled = false;
     _retryableFailure = false;
     _cancelReconnect(resetAttempt: true);
@@ -1231,6 +1396,30 @@ class DeviceSession extends ApplicationNotifier {
     try {
       await client?.close();
     } catch (_) {}
+    logger.info('Device ${device.deviceId} is offline');
+  }
+
+  void _logBackgroundWarning(
+    String key,
+    String message,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    final now = DateTime.now();
+    final previous = _backgroundWarningTimes[key];
+    if (previous != null &&
+        now.difference(previous) < const Duration(minutes: 1)) {
+      _suppressedBackgroundWarnings[key] =
+          (_suppressedBackgroundWarnings[key] ?? 0) + 1;
+      return;
+    }
+    final suppressed = _suppressedBackgroundWarnings.remove(key) ?? 0;
+    _backgroundWarningTimes[key] = now;
+    logger.warning(
+      suppressed == 0 ? message : '$message; suppressed=$suppressed',
+      error: error,
+      stackTrace: stackTrace,
+    );
   }
 
   void _scheduleConversationNotification() {

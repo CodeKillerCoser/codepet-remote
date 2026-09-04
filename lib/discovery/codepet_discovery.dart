@@ -5,7 +5,10 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:multicast_dns/multicast_dns.dart';
 
+import '../diagnostics/app_log.dart';
 import '../security/pinned_tls.dart';
+
+final AppLog _log = AppLog.named('discovery');
 
 class DiscoveredCodePetHost {
   const DiscoveredCodePetHost({required this.instanceName, required this.host, required this.port, required this.txt});
@@ -78,6 +81,7 @@ class MdnsCodePetHostDirectory implements CodePetHostDirectory {
   @override
   void start() {
     if (_running || _updates.isClosed) return;
+    _log.info('Continuous CodePet Host discovery started');
     _running = true;
     _stopSignal = Completer<void>();
     _runner = _run(_stopSignal!.future);
@@ -112,6 +116,11 @@ class MdnsCodePetHostDirectory implements CodePetHostDirectory {
     if (deviceId == null || deviceId.isEmpty) return;
     final previous = _hosts[deviceId]?.host;
     _hosts[deviceId] = _CachedCodePetHost(host, DateTime.now());
+    if (!_sameAdvertisement(previous, host)) {
+      _log.info(
+        'Discovered CodePet Host $deviceId at ${host.host}:${host.port}',
+      );
+    }
     if (!_sameAdvertisement(previous, host) && !_advertisements.isClosed) {
       _advertisements.add(host);
     }
@@ -123,6 +132,7 @@ class MdnsCodePetHostDirectory implements CodePetHostDirectory {
   @override
   Future<void> refresh() async {
     if (_updates.isClosed) return;
+    _log.info('CodePet Host discovery refresh requested');
     _hosts.clear();
     if (!_running) {
       start();
@@ -148,6 +158,7 @@ class MdnsCodePetHostDirectory implements CodePetHostDirectory {
     _hosts.clear();
     if (!_updates.isClosed) await _updates.close();
     if (!_advertisements.isClosed) await _advertisements.close();
+    _log.info('Continuous CodePet Host discovery stopped');
   }
 }
 
@@ -273,6 +284,8 @@ class CodePetDiscovery {
   final Future<DiscoveredCodePetHost?> Function()? _fallbackProbe;
   final Future<List<DiscoveredCodePetHost>> Function(Duration)?
       _nativeDiscovery;
+  final Map<String, DateTime> _lastFailureLogs = {};
+  final Map<String, int> _suppressedFailureLogs = {};
 
   static MDnsClient _defaultClient() => MDnsClient(
     rawDatagramSocketFactory: codePetMdnsSocketFactory(
@@ -286,7 +299,14 @@ class CodePetDiscovery {
       try {
         final fallback = await fallbackProbe().timeout(timeout);
         if (fallback != null) yield fallback;
-      } catch (_) {}
+      } catch (error, stackTrace) {
+        _logFailureThrottled(
+          'fallback',
+          'Debug Host fallback probe failed',
+          error,
+          stackTrace,
+        );
+      }
     }
     final nativeDiscovery = _nativeDiscovery;
     if (nativeDiscovery != null) {
@@ -298,7 +318,14 @@ class CodePetDiscovery {
           yield* Stream<DiscoveredCodePetHost>.fromIterable(hosts);
           return;
         }
-      } catch (_) {}
+      } catch (error, stackTrace) {
+        _logFailureThrottled(
+          'native',
+          'Native Host discovery failed; falling back to mDNS',
+          error,
+          stackTrace,
+        );
+      }
     }
     final client = _clientFactory();
     var started = false;
@@ -339,10 +366,39 @@ class CodePetDiscovery {
         );
         if (host != null) yield host;
       }
+    } catch (error, stackTrace) {
+      _logFailureThrottled(
+        'mdns',
+        'mDNS Host discovery failed',
+        error,
+        stackTrace,
+      );
+      rethrow;
     } finally {
       if (started) client.stop();
       await _multicastLock.release();
     }
+  }
+
+  void _logFailureThrottled(
+    String key,
+    String message,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    final now = DateTime.now();
+    final previous = _lastFailureLogs[key];
+    if (previous != null && now.difference(previous) < const Duration(minutes: 1)) {
+      _suppressedFailureLogs[key] = (_suppressedFailureLogs[key] ?? 0) + 1;
+      return;
+    }
+    final suppressed = _suppressedFailureLogs.remove(key) ?? 0;
+    _lastFailureLogs[key] = now;
+    _log.warning(
+      suppressed == 0 ? message : '$message; suppressed=$suppressed',
+      error: error,
+      stackTrace: stackTrace,
+    );
   }
 }
 

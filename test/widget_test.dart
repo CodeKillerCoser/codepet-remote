@@ -72,4 +72,23 @@ void main() {
     expect(find.byKey(const Key('qr-json-field')), findsOneWidget);
     expect(find.byKey(const Key('pair-json-button')), findsOneWidget);
   });
+
+  testWidgets('settings exports diagnostics and shows the archive path',
+      (tester) async {
+    await tester.pumpWidget(CodePetRemoteApp(
+      includeDemoDevices: true,
+      logExporter: () async => '/local/codepet-logs.zip',
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-overflow-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('App 设置'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('export-logs')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('/local/codepet-logs.zip'), findsOneWidget);
+    expect(find.byKey(const Key('share-logs')), findsOneWidget);
+  });
 }

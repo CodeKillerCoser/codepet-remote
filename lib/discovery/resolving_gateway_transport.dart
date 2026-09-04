@@ -4,7 +4,10 @@ import '../core/domain/models.dart';
 import '../application/errors/application_failures.dart';
 import '../gateway/pinned_web_socket_transport.dart';
 import '../gateway/transport.dart';
+import '../diagnostics/app_log.dart';
 import 'codepet_discovery.dart';
+
+final AppLog _log = AppLog.named('gateway.resolver');
 
 Uri? debugAndroidEmulatorGatewayCandidate(Uri preferredGatewayUri) {
   if (!preferredGatewayUri.hasScheme || preferredGatewayUri.host.isEmpty) {
@@ -69,6 +72,7 @@ class ResolvingPinnedGatewayTransport
   @override
   Future<void> connect() async {
     _throwIfClosed();
+    _log.info('Resolving Gateway endpoint for device $deviceId');
     final attempted = <Uri>{};
     Object? discoveryError;
     Future<bool> tryDiscoveredHost(DiscoveredCodePetHost? host) async {
@@ -187,6 +191,10 @@ class ResolvingPinnedGatewayTransport
     if (gatewayUri.scheme != 'wss') {
       throw const GatewayConnectionException('Resolved Gateway URI must use wss');
     }
+    _log.info(
+      'Trying Gateway candidate ${gatewayUri.host}:${gatewayUri.port} '
+      'for device $deviceId',
+    );
     final transport = transportFactory(gatewayUri, credential, certSha256);
     _connectingCandidate = transport;
     try {
@@ -213,6 +221,10 @@ class ResolvingPinnedGatewayTransport
       _activeEvents = subscription;
       selectedGatewayUri = gatewayUri;
       shouldPersistSelectedGatewayUri = persistAfterValidation;
+      _log.info(
+        'Selected Gateway ${gatewayUri.host}:${gatewayUri.port} '
+        'for device $deviceId',
+      );
     } on TimeoutException {
       if (identical(_connectingCandidate, transport)) {
         _connectingCandidate = null;
@@ -223,11 +235,15 @@ class ResolvingPinnedGatewayTransport
         'timed out after ${connectTimeout.inMilliseconds}ms',
         retryable: true,
       );
-    } catch (_) {
+    } catch (error) {
       if (identical(_connectingCandidate, transport)) {
         _connectingCandidate = null;
         await _closeTransport(transport);
       }
+      _log.fine(
+        'Gateway candidate ${gatewayUri.host}:${gatewayUri.port} failed '
+        'for device $deviceId error=$error',
+      );
       rethrow;
     }
   }

@@ -15,9 +15,11 @@ import '../core/domain/models.dart';
 import '../application/ports/gateway_client.dart';
 import '../application/ports/pairing_gateway.dart';
 import '../devices/local_device_descriptor.dart';
+import '../diagnostics/app_log.dart';
 import '../features/connection/pair_device_screen.dart';
 import '../features/common/app_toast.dart';
 import '../features/home/remote_home_screen.dart';
+import '../features/settings/app_settings_screen.dart';
 import '../gateway/demo_gateway_client.dart';
 import '../gateway/gateway_client.dart';
 
@@ -36,6 +38,7 @@ class CodePetRemoteApp extends StatefulWidget {
     this.descriptorProvider,
     this.gatewayClientBuilder,
     this.hostDirectory,
+    this.logExporter,
   });
 
   final bool includeDemoDevices;
@@ -43,11 +46,13 @@ class CodePetRemoteApp extends StatefulWidget {
   final DeviceDescriptorProvider? descriptorProvider;
   final RestoredGatewayClientBuilder? gatewayClientBuilder;
   final CodePetHostDirectory? hostDirectory;
+  final Future<String> Function()? logExporter;
 
   @override State<CodePetRemoteApp> createState() => _CodePetRemoteAppState();
 }
 
 class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
+  final AppLog _log = AppLog.named('app');
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   late final DeviceRepository _registry;
   late final DeviceDescriptorProvider _descriptorProvider;
@@ -65,9 +70,10 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     _registry = widget.registry ?? DeviceRegistry(
       metadata: PreferencesMetadataStore(),
       credentials: const SecureCredentialStore(),
+      logger: _log,
     );
     _descriptorProvider =
-        widget.descriptorProvider ?? LocalDeviceDescriptorProvider();
+        widget.descriptorProvider ?? LocalDeviceDescriptorProvider(logger: _log);
     _hostDirectory = widget.hostDirectory ??
         MdnsCodePetHostDirectory(
           discovery: CodePetDiscovery(
@@ -80,12 +86,20 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     if (_discoveryEnabled) {
       _pairingAdvertisementSubscription = _hostDirectory.watchHosts().listen(
         _handlePairingAdvertisement,
+        onError: (Object error, StackTrace stackTrace) {
+          _log.warning(
+            'Host discovery advertisement stream failed',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        },
       );
     }
     unawaited(_loadDevices());
   }
 
   Future<void> _loadDevices() async {
+    _log.info('Loading registered devices');
     if (widget.includeDemoDevices) {
       _addDemo('demo-studio', '工作室 Mac', 'studio');
       _addDemo('demo-laptop', '随身电脑', 'laptop');
@@ -101,7 +115,9 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
           _sessions.add(session);
         }
       }
-      for (final device in await _registry.load()) {
+      final devices = await _registry.load();
+      _log.info('Loaded ${devices.length} registered device(s)');
+      for (final device in devices) {
         if (_sessions.any((session) => session.device.deviceId == device.deviceId)) continue;
         final session = await _sessionFor(device);
         _sessions.add(session);
@@ -117,6 +133,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     _sessions.add(DeviceSession(
       device: PairedDevice(deviceId: id, displayName: name, connectionKind: DeviceConnectionKind.demo, preferredEndpoint: 'demo://$profile'),
       clientFactory: () => DemoGatewayClient(profileId: profile),
+      logger: AppLog.named('session.$id'),
     ));
   }
 
@@ -127,8 +144,14 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     if (key != null) {
       try {
         credential = await _registry.readCredential(device);
-      } catch (_) {
+        _log.fine('Credential lookup completed for device ${device.deviceId}');
+      } catch (error, stackTrace) {
         credentialReadFailed = true;
+        _log.warning(
+          'Credential lookup failed for device ${device.deviceId}',
+          error: error,
+          stackTrace: stackTrace,
+        );
       }
     }
     final gateway = Uri.tryParse(device.preferredEndpoint ?? '');
@@ -142,10 +165,15 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
                 ? '设备注册信息不完整，请忘记设备后重新配对。'
                 : null;
     if (registrationError != null) {
+      _log.warning(
+        'Registered device ${device.deviceId} cannot create a session: '
+        '$registrationError',
+      );
       return DeviceSession(
         device: device,
         clientFactory: () => throw StateError(registrationError),
         autoReconnect: false,
+        logger: AppLog.named('session.${device.deviceId}'),
       );
     }
     final restoredCredential = credential!;
@@ -166,6 +194,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     var preferredGateway = restoredGateway;
     return DeviceSession(
       device: device,
+      logger: AppLog.named('session.${device.deviceId}'),
       clientFactory: () {
         final debugAndroidEmulatorGatewayUri = useDebugAndroidEmulatorAlias
             ? debugAndroidEmulatorGatewayCandidate(preferredGateway)
@@ -207,7 +236,14 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
                 tlsFingerprint: device.tlsFingerprint!,
                 endpoint: endpoint.toString(),
               );
-            } catch (_) {}
+            } catch (error, stackTrace) {
+              _log.warning(
+                'Preferred endpoint persistence failed for device '
+                '${device.deviceId}',
+                error: error,
+                stackTrace: stackTrace,
+              );
+            }
           },
         );
       },
@@ -234,6 +270,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
               .map(_pairingCandidate)
           : null,
       onRefreshDiscovery: _discoveryEnabled ? _hostDirectory.refresh : null,
+      logger: _log,
       onPaired: (device) async {
         await _activatePairedDevice(device);
         if (!mounted) return;
@@ -247,6 +284,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         repository: _registry,
         descriptorProvider: _descriptorProvider,
         gateway: const LanPairingGateway(),
+        logger: AppLog.named('pairing'),
       );
 
   DiscoveredDevicePairer _discoveredPairer() =>
@@ -254,6 +292,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         repository: _registry,
         descriptorProvider: _descriptorProvider,
         gateway: const LanPairingRequestGateway(),
+        logger: AppLog.named('pairing'),
       );
 
   Future<DiscoveredCodePetHost?> _probeDebugAndroidEmulatorHost() async {
@@ -305,6 +344,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         !_handledPairingInvitations.add(invitationKey)) {
       return;
     }
+    _log.info('Host pairing invitation received for device $deviceId');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_confirmHostInvitation(host));
     });
@@ -333,6 +373,10 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
           ),
         ) ??
         false;
+    _log.info(
+      'Host pairing invitation ${accepted ? 'accepted' : 'rejected'} '
+      'for device ${host.txt['id'] ?? 'unknown'}',
+    );
     if (!accepted || !mounted) return;
     try {
       var exchange = await _discoveredPairer().request(_pairingCandidate(host));
@@ -383,7 +427,12 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         throw StateError('Host 未接受或配对请求已过期');
       }
       await _activatePairedDevice(registration.device);
-    } catch (error) {
+    } catch (error, stackTrace) {
+      _log.warning(
+        'Host-initiated pairing failed for device ${host.txt['id'] ?? 'unknown'}',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!mounted) return;
       final errorContext = _navigatorKey.currentContext;
       if (errorContext != null && errorContext.mounted) {
@@ -405,22 +454,24 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   }
 
   void _openSettings() {
-    _navigatorKey.currentState!.push<void>(MaterialPageRoute(builder: (_) => Scaffold(
-      appBar: AppBar(title: const Text('App 设置')),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
-        const ListTile(leading: Icon(Icons.security), title: Text('Gateway v1'), subtitle: Text('设备凭据保存在 Android Keystore 支持的安全存储中；会话和事件游标不落盘。')),
-        for (final session in _sessions.where((item) => item.device.connectionKind == DeviceConnectionKind.pairedGateway))
-          ListTile(
-            title: Text(session.device.effectiveName), subtitle: Text(session.device.deviceId),
-            trailing: TextButton(child: const Text('忘记'), onPressed: () async {
-              await session.disconnect();
-              await _registry.forget(session.device);
-              if (!mounted) return;
-              setState(() { _sessions.remove(session); _selectedIndex = _sessions.isEmpty ? 0 : _selectedIndex.clamp(0, _sessions.length - 1); });
-            }),
-          ),
-      ]),
-    )));
+    _navigatorKey.currentState!.push<void>(MaterialPageRoute(
+      builder: (_) => AppSettingsScreen(
+        sessions: List.unmodifiable(_sessions),
+        exportLogs: widget.logExporter ?? AppLog.exportLogs,
+        logger: _log,
+        onForgetDevice: (session) async {
+          await session.disconnect();
+          await _registry.forget(session.device);
+          if (!mounted) return;
+          setState(() {
+            _sessions.remove(session);
+            _selectedIndex = _sessions.isEmpty
+                ? 0
+                : _selectedIndex.clamp(0, _sessions.length - 1);
+          });
+        },
+      ),
+    ));
   }
 
   @override

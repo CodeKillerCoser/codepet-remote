@@ -4,25 +4,54 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
+import '../diagnostics/app_log.dart';
+
+final AppLog _log = AppLog.named('tls');
+
 class PinnedTlsConnection {
   const PinnedTlsConnection({required this.expectedSha256});
   final String expectedSha256;
 
   Future<SecureSocket> connect(Uri uri) async {
     if (uri.scheme != 'https' && uri.scheme != 'wss') throw const FormatException('TLS endpoint required');
-    final socket = await SecureSocket.connect(
-      uri.host,
-      uri.hasPort ? uri.port : 443,
-      context: SecurityContext(withTrustedRoots: false),
-      onBadCertificate: (certificate) => constantTimeEquals(certificateSha256(certificate), expectedSha256),
-      timeout: const Duration(seconds: 10),
-    );
-    final certificate = socket.peerCertificate;
-    if (certificate == null || !constantTimeEquals(certificateSha256(certificate), expectedSha256)) {
-      await socket.close();
-      throw const HandshakeException('TLS leaf certificate fingerprint mismatch');
+    _log.fine('Opening pinned TLS connection to ${uri.host}:${uri.port}');
+    try {
+      final socket = await SecureSocket.connect(
+        uri.host,
+        uri.hasPort ? uri.port : 443,
+        context: SecurityContext(withTrustedRoots: false),
+        onBadCertificate: (certificate) {
+          final matches = constantTimeEquals(
+            certificateSha256(certificate),
+            expectedSha256,
+          );
+          if (!matches) {
+            _log.warning(
+              'TLS pin rejected certificate from ${uri.host}:${uri.port}',
+            );
+          }
+          return matches;
+        },
+        timeout: const Duration(seconds: 10),
+      );
+      final certificate = socket.peerCertificate;
+      if (certificate == null || !constantTimeEquals(certificateSha256(certificate), expectedSha256)) {
+        await socket.close();
+        _log.warning(
+          'TLS peer certificate did not match pin for ${uri.host}:${uri.port}',
+        );
+        throw const HandshakeException('TLS leaf certificate fingerprint mismatch');
+      }
+      _log.fine('Pinned TLS connection validated for ${uri.host}:${uri.port}');
+      return socket;
+    } catch (error, stackTrace) {
+      _log.warning(
+        'Pinned TLS connection failed for ${uri.host}:${uri.port}',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
-    return socket;
   }
 
   Future<Map<String, dynamic>> jsonRequest({required String method, required Uri uri, String? bearer, Object? body}) async {
@@ -31,6 +60,7 @@ class PinnedTlsConnection {
     if (uri.scheme != 'https') {
       throw const FormatException('HTTPS endpoint required');
     }
+    _log.fine('$method pinned HTTPS request to ${uri.host}:${uri.port}${uri.path}');
     var pinValidated = false;
     final client = HttpClient(
       context: SecurityContext(withTrustedRoots: false),
@@ -41,6 +71,11 @@ class PinnedTlsConnection {
         expectedSha256,
       );
       pinValidated |= matches;
+      if (!matches) {
+        _log.warning(
+          'TLS pin rejected HTTPS certificate from ${uri.host}:${uri.port}',
+        );
+      }
       return matches;
     };
     try {
@@ -74,7 +109,18 @@ class PinnedTlsConnection {
           uri: uri,
         );
       }
+      _log.fine(
+        '$method pinned HTTPS request completed with ${response.statusCode}',
+      );
       return Map<String, dynamic>.from(payload);
+    } catch (error, stackTrace) {
+      _log.warning(
+        '$method pinned HTTPS request failed for '
+        '${uri.host}:${uri.port}${uri.path}',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     } finally {
       client.close(force: true);
     }

@@ -4,6 +4,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 
 import '../application/ports/device_identity.dart';
+import '../application/ports/application_log.dart';
 import '../core/domain/models.dart';
 
 enum CodePetBuildMode { debug, profile, release }
@@ -25,10 +26,13 @@ CodePetBuildMode get currentCodePetBuildMode {
 
 class LocalDeviceDescriptorProvider
     implements DeviceDescriptorProvider, DebugAndroidEmulatorProvider {
-  LocalDeviceDescriptorProvider({DeviceInfoPlugin? deviceInfo})
-      : _deviceInfo = deviceInfo ?? DeviceInfoPlugin();
+  LocalDeviceDescriptorProvider({
+    DeviceInfoPlugin? deviceInfo,
+    this.logger = const NoopApplicationLog(),
+  }) : _deviceInfo = deviceInfo ?? DeviceInfoPlugin();
 
   final DeviceInfoPlugin _deviceInfo;
+  final ApplicationLog logger;
   Future<DeviceDescriptor>? _cached;
   Future<AndroidDeviceInfo>? _cachedAndroidInfo;
 
@@ -48,7 +52,8 @@ class LocalDeviceDescriptorProvider
         isAndroid: true,
         isPhysicalDevice: info.isPhysicalDevice,
       );
-    } catch (_) {
+    } catch (error) {
+      logger.fine('Android emulator detection failed: $error');
       return false;
     }
   }
@@ -151,7 +156,12 @@ class LocalDeviceDescriptorProvider
           ], 'unknown'),
         );
       }
-    } catch (_) {
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Device descriptor lookup failed; using platform fallback',
+        error: error,
+        stackTrace: stackTrace,
+      );
       return fallbackDeviceDescriptor();
     }
     return fallbackDeviceDescriptor();

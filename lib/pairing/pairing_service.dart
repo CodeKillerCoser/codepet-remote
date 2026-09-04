@@ -4,11 +4,13 @@ import '../core/domain/paired_device.dart';
 import '../application/ports/pairing_gateway.dart';
 import '../core/domain/models.dart';
 import '../security/pinned_tls.dart';
+import '../diagnostics/app_log.dart';
 import 'pairing_confirmation.dart';
 import 'pairing_models.dart';
 import 'package:codepet_lan_channel_sdk/codepet_lan_channel_sdk.dart' as sdk;
 
 const _pairingRequestLocalWait = Duration(minutes: 2, seconds: 5);
+final AppLog _log = AppLog.named('pairing.gateway');
 
 abstract interface class PairingExchangeClient {
   Future<JsonMap> exchange({
@@ -50,6 +52,7 @@ class LanPairingGateway implements PairingGateway {
     required DeviceDescriptor clientDevice,
   }) async {
     final qr = PairingQrPayload.parse(rawPayload);
+    _log.info('Exchanging QR pairing request for device ${qr.hostDeviceId}');
     final json = await exchangeClient.exchange(
       expectedFingerprint: qr.certSha256,
       uri: qr.exchangeUrl,
@@ -82,6 +85,7 @@ class LanPairingGateway implements PairingGateway {
       autoConnect: true,
       connectionKind: DeviceConnectionKind.pairedGateway,
     );
+    _log.info('QR pairing exchange validated for device ${qr.hostDeviceId}');
     return PairingRegistration(
       device: device,
       credential: response.credential,
@@ -108,6 +112,10 @@ class LanPairingRequestGateway implements PairingRequestGateway {
       host: candidate.host,
       port: candidate.port,
       path: '/remote/v1/pairing-requests',
+    );
+    _log.info(
+      'Creating pairing request for device ${candidate.deviceId} at '
+      '${candidate.host}:${candidate.port}',
     );
     final json = await exchangeClient.exchange(
       expectedFingerprint: candidate.tlsFingerprint,
@@ -139,6 +147,9 @@ class LanPairingRequestGateway implements PairingRequestGateway {
       port: candidate.port,
       path:
           '/remote/v1/pairing-requests/${Uri.encodeComponent(attempt.requestId)}',
+    );
+    _log.fine(
+      'Refreshing pairing request status for device ${candidate.deviceId}',
     );
     final json = await exchangeClient.exchange(
       expectedFingerprint: candidate.tlsFingerprint,
@@ -207,6 +218,9 @@ class LanPairingRequestGateway implements PairingRequestGateway {
           'Pending pairing response exposed accepted credentials',
         );
       }
+      _log.fine(
+        'Pairing request for device ${candidate.deviceId} is ${state.name}',
+      );
       return PairingRequestExchange(attempt: attempt);
     }
     final gatewayUrl = Uri.tryParse(response.gatewayUrl ?? '');
@@ -219,6 +233,7 @@ class LanPairingRequestGateway implements PairingRequestGateway {
     final descriptor = DeviceDescriptor.fromJson(
       Map<String, dynamic>.from(response.device.descriptor.toJson()),
     );
+    _log.info('Pairing request accepted for device ${candidate.deviceId}');
     return PairingRequestExchange(
       attempt: attempt,
       registration: PairingRegistration(

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/domain/models.dart';
 import '../core/domain/paired_device.dart';
 import '../application/ports/device_repository.dart';
+import '../application/ports/application_log.dart';
 import '../security/pinned_tls.dart';
 
 abstract interface class CredentialStore {
@@ -35,11 +36,16 @@ class PreferencesMetadataStore implements DeviceMetadataStore {
 }
 
 class DeviceRegistry implements DeviceRepository {
-  DeviceRegistry({required this.metadata, required this.credentials});
+  DeviceRegistry({
+    required this.metadata,
+    required this.credentials,
+    this.logger = const NoopApplicationLog(),
+  });
   static const devicesKey = 'paired_devices_v1';
   static const clientIdKey = 'remote_installation_client_id_v1';
   final DeviceMetadataStore metadata;
   final CredentialStore credentials;
+  final ApplicationLog logger;
   Future<void> _metadataMutation = Future<void>.value();
 
   Future<T> _mutate<T>(Future<T> Function() operation) {
@@ -62,16 +68,26 @@ class DeviceRegistry implements DeviceRepository {
         final bytes = List<int>.generate(24, (_) => random.nextInt(256));
         final value = 'remote-${base64Url.encode(bytes).replaceAll('=', '')}';
         await metadata.write(clientIdKey, value);
+        logger.info('Created a new local installation identity');
         return value;
       });
 
   @override
   Future<List<PairedDevice>> load() async {
-    final source = await metadata.read(devicesKey);
-    if (source == null) return [];
-    final decoded = jsonDecode(source);
-    if (decoded is! List) throw const FormatException('Invalid paired device registry');
-    return decoded.map((item) => PairedDevice.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+    try {
+      final source = await metadata.read(devicesKey);
+      if (source == null) return [];
+      final decoded = jsonDecode(source);
+      if (decoded is! List) throw const FormatException('Invalid paired device registry');
+      return decoded.map((item) => PairedDevice.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Paired device registry load failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
   }
 
   Future<void> _writeDevices(List<PairedDevice> devices) => metadata.write(
@@ -107,6 +123,7 @@ class DeviceRegistry implements DeviceRepository {
       if (devices[index].preferredEndpoint == endpoint) return;
       devices[index] = devices[index].withPreferredEndpoint(endpoint);
       await _writeDevices(devices);
+      logger.fine('Persisted preferred endpoint for device $deviceId');
     });
   }
 
@@ -134,6 +151,7 @@ class DeviceRegistry implements DeviceRepository {
       }
       devices[index] = devices[index].withDescriptor(descriptor);
       await _writeDevices(devices);
+      logger.fine('Persisted Host descriptor for device $deviceId');
     });
   }
 
@@ -149,7 +167,14 @@ class DeviceRegistry implements DeviceRepository {
       devices.removeWhere((item) => item.deviceId == device.deviceId);
       devices.add(device);
       await _writeDevices(devices);
-    } catch (_) {
+      logger.info('Persisted paired device ${device.deviceId}');
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Paired device persistence failed for device ${device.deviceId}; '
+        'restoring previous credential state',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (previousCredential == null) {
         await credentials.delete(key);
       } else {
@@ -161,21 +186,47 @@ class DeviceRegistry implements DeviceRepository {
 
   @override
   Future<void> forget(PairedDevice device) async {
+    logger.info('Device forget started for device ${device.deviceId}');
     String? credential;
     try {
       credential = await readCredential(device);
-    } catch (_) {}
-    await _mutate(() async {
-      final devices = await load();
-      devices.removeWhere((item) => item.deviceId == device.deviceId);
-      await _writeDevices(devices);
-      final key = device.credentialKeyRef;
-      if (key != null) {
-        try {
-          await credentials.delete(key);
-        } catch (_) {}
-      }
-    });
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Credential lookup during device forget failed for device '
+        '${device.deviceId}',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    try {
+      await _mutate(() async {
+        final devices = await load();
+        devices.removeWhere((item) => item.deviceId == device.deviceId);
+        await _writeDevices(devices);
+        final key = device.credentialKeyRef;
+        if (key != null) {
+          try {
+            await credentials.delete(key);
+          } catch (error, stackTrace) {
+            logger.warning(
+              'Local credential deletion failed for device '
+              '${device.deviceId}',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }
+        }
+      });
+      logger.info('Device removed from local registry ${device.deviceId}');
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Device forget failed before local registry removal for device '
+        '${device.deviceId}',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
     if (credential != null &&
         device.preferredEndpoint != null &&
         device.tlsFingerprint != null) {
@@ -189,7 +240,14 @@ class DeviceRegistry implements DeviceRepository {
         await PinnedTlsConnection(
           expectedSha256: device.tlsFingerprint!,
         ).jsonRequest(method: 'DELETE', uri: revoke, bearer: credential);
-      } catch (_) {}
+        logger.info('Remote credential revoked for device ${device.deviceId}');
+      } catch (error, stackTrace) {
+        logger.warning(
+          'Remote credential revocation failed for device ${device.deviceId}',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
     }
   }
 }

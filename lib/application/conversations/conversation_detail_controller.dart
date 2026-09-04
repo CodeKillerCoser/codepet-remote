@@ -56,6 +56,8 @@ class ConversationDetailController extends ApplicationNotifier {
   String? _resolvingApprovalId;
   bool _followOutputRequested = false;
   String? _markingReadToken;
+  String? _lastInteractionFailure;
+  DateTime? _lastMarkReadFailureLogAt;
 
   DeviceSession get session => _session;
   GatewayProvider? get provider => _provider;
@@ -105,6 +107,7 @@ class ConversationDetailController extends ApplicationNotifier {
     required DeviceSession session,
     required ConversationSummary conversation,
   }) {
+    _lastInteractionFailure = null;
     if (!identical(_session, session)) {
       _session.removeListener(_sessionChanged);
       _session = session;
@@ -226,6 +229,18 @@ class ConversationDetailController extends ApplicationNotifier {
     try {
       final interaction = await lease.acquireInteraction(conversation);
       if (!_acceptsRuntime(epoch, lease, binding)) return;
+      if (_lastInteractionFailure != null) {
+        _session.logger.info(
+          'Conversation interaction recovered for device '
+          '${_session.device.deviceId} conversation=${conversation.id}',
+        );
+      } else {
+        _session.logger.fine(
+          'Conversation interaction acquired for device '
+          '${_session.device.deviceId} conversation=${conversation.id}',
+        );
+      }
+      _lastInteractionFailure = null;
       _interactionAcquired = true;
       _interactionError = null;
       if (!_selectionInitializedFromInteraction &&
@@ -241,8 +256,21 @@ class ConversationDetailController extends ApplicationNotifier {
         epoch: epoch,
       );
       notifyApplicationListeners();
-    } catch (error) {
+    } catch (error, stackTrace) {
       if (!_acceptsRuntime(epoch, lease, binding)) return;
+      final failure = error is GatewayProtocolException
+          ? error.code
+          : error.runtimeType.toString();
+      if (_lastInteractionFailure != failure) {
+        _session.logger.warning(
+          'Conversation interaction acquisition failed for device '
+          '${_session.device.deviceId} conversation=${conversation.id} '
+          'classification=$failure',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      _lastInteractionFailure = failure;
       _interactionAcquired = false;
       _interactionError = _interactionFailureMessage(error);
       _scheduleInteractionRetry(
@@ -333,6 +361,7 @@ class ConversationDetailController extends ApplicationNotifier {
     _error = null;
     notifyApplicationListeners();
     final window = lease.openEventWindow();
+    final stopwatch = Stopwatch()..start();
     try {
       final snapshot = await lease.getConversation(conversation);
       if (!_acceptsRuntime(epoch, lease, binding)) {
@@ -367,11 +396,23 @@ class ConversationDetailController extends ApplicationNotifier {
         _initializeSelection(detail.summary);
       }
       notifyApplicationListeners();
+      _session.logger.fine(
+        'Conversation snapshot loaded for device ${_session.device.deviceId} '
+        'conversation=${conversation.id} '
+        'messages=${detail.committedMessages.length} '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       window.install(
         baselineCursor: baseline,
         snapshotCursor: snapshot.snapshotCursor,
         onEvent: (event) => _applyEvent(event, epoch, lease, binding),
-        onError: (Object error, StackTrace _) {
+        onError: (Object error, StackTrace stackTrace) {
+          _session.logger.warning(
+            'Conversation event window failed for device '
+            '${_session.device.deviceId} conversation=${conversation.id}',
+            error: error,
+            stackTrace: stackTrace,
+          );
           if (_acceptsRuntime(epoch, lease, binding)) {
             _error = '事件流异常：$error';
             notifyApplicationListeners();
@@ -381,7 +422,14 @@ class ConversationDetailController extends ApplicationNotifier {
         },
       );
       _markReadIfVisible(detail.summary, epoch, lease, binding);
-    } catch (error) {
+    } catch (error, stackTrace) {
+      _session.logger.warning(
+        'Conversation snapshot failed for device ${_session.device.deviceId} '
+        'conversation=${conversation.id} '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (_acceptsRuntime(epoch, lease, binding)) {
         final previousWindow = _eventWindow;
         _eventWindow = null;
@@ -528,9 +576,20 @@ class ConversationDetailController extends ApplicationNotifier {
         detail.summary.withReadState(detail.summary.readState.merge(state)),
       );
       notifyApplicationListeners();
-    } catch (_) {
+    } catch (error) {
       // Read acknowledgement is best-effort. Keeping the unread marker lets a
       // later snapshot or activity event safely retry it.
+      final now = _now();
+      final previous = _lastMarkReadFailureLogAt;
+      if (previous == null ||
+          now.difference(previous) >= const Duration(minutes: 1)) {
+        _lastMarkReadFailureLogAt = now;
+        _session.logger.fine(
+          'Conversation read acknowledgement failed for device '
+          '${_session.device.deviceId} conversation=${conversation.id} '
+          'error=$error',
+        );
+      }
     } finally {
       if (_markingReadToken == token) _markingReadToken = null;
     }
@@ -731,6 +790,12 @@ class ConversationDetailController extends ApplicationNotifier {
     _sending = true;
     _sendError = null;
     _pendingSend = attempt;
+    final stopwatch = Stopwatch()..start();
+    _session.logger.info(
+      'Turn send started for device ${_session.device.deviceId} '
+      'provider=${attempt.providerId} conversation=${attempt.conversation.id} '
+      'requestId=${attempt.clientRequestId}',
+    );
     notifyApplicationListeners();
     try {
       final receipt = await lease.sendTurn(
@@ -741,7 +806,15 @@ class ConversationDetailController extends ApplicationNotifier {
         text: attempt.text,
         selection: attempt.selection,
       );
-      if (!_acceptsRuntime(epoch, lease, binding)) return false;
+      if (!_acceptsRuntime(epoch, lease, binding)) {
+        _session.logger.warning(
+          'Turn send response ignored after runtime changed for device '
+          '${_session.device.deviceId} provider=${attempt.providerId} '
+          'conversation=${attempt.conversation.id} '
+          'requestId=${attempt.clientRequestId}',
+        );
+        return false;
+      }
       _detail = _detail?.accept(receipt);
       _accessModeId = receipt.effectiveSelection.accessModeId;
       _reasoningEffortId = receipt.effectiveSelection.reasoningEffortId;
@@ -749,9 +822,29 @@ class ConversationDetailController extends ApplicationNotifier {
       _pendingSend = null;
       _outcomeUnknown = false;
       _sendError = null;
+      _session.logger.info(
+        'Turn send accepted for device ${_session.device.deviceId} '
+        'provider=${attempt.providerId} conversation=${attempt.conversation.id} '
+        'requestId=${attempt.clientRequestId} '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       notifyApplicationListeners();
       return true;
-    } catch (error) {
+    } catch (error, stackTrace) {
+      final classification = error is GatewayProtocolException
+          ? error.code
+          : isGatewayOutcomeUnknown(error)
+              ? 'outcome_unknown'
+              : error.runtimeType.toString();
+      _session.logger.warning(
+        'Turn send failed for device ${_session.device.deviceId} '
+        'provider=${attempt.providerId} conversation=${attempt.conversation.id} '
+        'requestId=${attempt.clientRequestId} '
+        'classification=$classification '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!_acceptsRuntime(epoch, lease, binding)) return false;
       if (error is GatewayProtocolException &&
           error.code == 'stale_capability_revision') {
@@ -788,6 +881,10 @@ class ConversationDetailController extends ApplicationNotifier {
 
   void clearUnknownOutcome() {
     if (!_outcomeUnknown) return;
+    _session.logger.info(
+      'Unknown turn outcome acknowledged for device '
+      '${_session.device.deviceId} conversation=${currentConversation.id}',
+    );
     _pendingSend = null;
     _outcomeUnknown = false;
     _sendError = null;

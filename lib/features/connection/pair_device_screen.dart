@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../application/pairing/pair_device.dart';
+import '../../application/ports/application_log.dart';
 import '../../application/ports/pairing_gateway.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/paired_device.dart';
@@ -20,6 +21,7 @@ class PairDeviceScreen extends StatefulWidget {
     this.initialCandidates = const [],
     this.candidateUpdates,
     this.onRefreshDiscovery,
+    this.logger = const NoopApplicationLog(),
     this.onAddDemo,
   });
   final DevicePairer pairingService;
@@ -28,6 +30,7 @@ class PairDeviceScreen extends StatefulWidget {
   final List<PairingCandidate> initialCandidates;
   final Stream<PairingCandidate>? candidateUpdates;
   final Future<void> Function()? onRefreshDiscovery;
+  final ApplicationLog logger;
   final Future<void> Function(PairedDevice device) onPaired;
   final Future<void> Function()? onAddDemo;
   @override State<PairDeviceScreen> createState() => _PairDeviceScreenState();
@@ -126,6 +129,9 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
           return;
         }
         if (enteredCode != exchange.attempt.confirmationCode) {
+          widget.logger.warning(
+            'Pairing confirmation code mismatch for device ${host.deviceId}',
+          );
           setState(() {
             _busy = false;
             _error = '配对口令不匹配，请核对 Host 上显示的 6 位数字。';
@@ -219,6 +225,10 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
           exchange.attempt.localPollDeadline.isAfter(DateTime.now().toUtc())) {
         _schedulePairingPoll();
       } else {
+        widget.logger.info(
+          'Pairing request ended for device ${attempt.candidate.deviceId} '
+          'state=${exchange.attempt.state.name}',
+        );
         setState(() {
           _busy = false;
           _error = exchange.attempt.state == PairingRequestState.rejected

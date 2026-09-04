@@ -7,8 +7,11 @@ import '../core/domain/models.dart';
 import '../application/errors/application_failures.dart';
 import '../application/ports/gateway_client.dart';
 import '../application/sync/gateway_event_window.dart';
+import '../diagnostics/app_log.dart';
 import 'generated_gateway_mapper.dart';
 import 'transport.dart';
+
+final AppLog _log = AppLog.named('gateway.protocol');
 
 /// Infrastructure adapter backed exclusively by CodePet's generated SDK.
 final class ProtocolGatewayClient
@@ -51,6 +54,8 @@ final class ProtocolGatewayClient
   StreamSubscription<JsonMap>? _transportEvents;
   String? _latestEventCursor;
   final _BoundedCursorSet _seenEventCursors = _BoundedCursorSet();
+  final Map<String, int> _receivedEventCounts = {};
+  int _duplicateEventCount = 0;
   Set<String> _providerIds = const {};
   final Map<String, GatewayProvider> _providersById = {};
 
@@ -77,7 +82,17 @@ final class ProtocolGatewayClient
             expectedDeviceId: expectedDeviceId,
             expectedProviderRouteKeys: _providerIds,
           );
-          if (!_seenEventCursors.add(event.eventCursor)) return;
+          if (!_seenEventCursors.add(event.eventCursor)) {
+            _duplicateEventCount++;
+            if (_duplicateEventCount == 1 || _duplicateEventCount % 50 == 0) {
+              _log.fine(
+                'Duplicate Gateway events suppressed '
+                'count=$_duplicateEventCount',
+              );
+            }
+            return;
+          }
+          _logReceivedEvent(event);
           if (event is GatewayProviderChangedEvent) {
             _providersById[event.provider.id] = event.provider;
           }
@@ -87,6 +102,12 @@ final class ProtocolGatewayClient
           final protocolError = error is FormatException
               ? error
               : FormatException('Invalid generated Gateway event: $error');
+          _log.warning(
+            'Gateway event rejected at protocol boundary '
+            'method=${raw['method'] ?? 'unknown'}',
+            error: protocolError,
+            stackTrace: stack,
+          );
           _events.addError(protocolError, stack);
         }
       },
@@ -162,6 +183,21 @@ final class ProtocolGatewayClient
       eventCursor: generated.eventCursor,
       deviceDescriptor: descriptor,
     );
+  }
+
+  void _logReceivedEvent(GatewayEvent event) {
+    final eventType = event.runtimeType.toString();
+    final count = (_receivedEventCounts[eventType] ?? 0) + 1;
+    _receivedEventCounts[eventType] = count;
+    if (event is TurnOutputDeltaEvent) {
+      if (count == 1 || count % 100 == 0) {
+        _log.fine(
+          'Gateway output delta events received count=$count',
+        );
+      }
+      return;
+    }
+    _log.fine('Gateway event received type=$eventType count=$count');
   }
 
   @override

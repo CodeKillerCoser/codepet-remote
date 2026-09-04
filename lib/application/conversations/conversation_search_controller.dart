@@ -155,6 +155,11 @@ class ConversationSearchController extends ApplicationNotifier {
     _resultsLease = null;
     _conversations = const [];
     _cursors.clear();
+    final stopwatch = Stopwatch()..start();
+    _session.logger.fine(
+      'Conversation search started for device ${_session.device.deviceId} '
+      'providerCount=${selectedProviders.length} queryLength=${query.length}',
+    );
     notifyApplicationListeners();
     try {
       final pages = await Future.wait([
@@ -180,9 +185,22 @@ class ConversationSearchController extends ApplicationNotifier {
       _cursors
         ..clear()
         ..addAll(cursors);
-    } catch (error) {
+      _session.logger.fine(
+        'Conversation search completed for device '
+        '${_session.device.deviceId} results=${conversations.length} '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
+    } catch (error, stackTrace) {
       if (_acceptsResult(requestGeneration, lease, query)) {
         _error = error.toString();
+        _session.logger.warning(
+          'Conversation search failed for device ${_session.device.deviceId} '
+          'providerCount=${selectedProviders.length} '
+          'queryLength=${query.length} '
+          'elapsedMs=${stopwatch.elapsedMilliseconds}',
+          error: error,
+          stackTrace: stackTrace,
+        );
       }
     } finally {
       if (_acceptsResult(requestGeneration, lease, query)) {
@@ -219,6 +237,7 @@ class ConversationSearchController extends ApplicationNotifier {
     final requestGeneration = ++_requestGeneration;
     _isLoading = true;
     _error = null;
+    final stopwatch = Stopwatch()..start();
     notifyApplicationListeners();
     try {
       final pages = await Future.wait([
@@ -246,9 +265,22 @@ class ConversationSearchController extends ApplicationNotifier {
         ..clear()
         ..addAll(cursors);
       _visibleCount += pageSize;
-    } catch (error) {
+      _session.logger.fine(
+        'Conversation search page loaded for device '
+        '${_session.device.deviceId} routes=${pendingRoutes.length} '
+        'total=${conversations.length} '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
+    } catch (error, stackTrace) {
       if (_acceptsResult(requestGeneration, lease, query)) {
         _error = error.toString();
+        _session.logger.warning(
+          'Conversation search pagination failed for device '
+          '${_session.device.deviceId} routes=${pendingRoutes.length} '
+          'elapsedMs=${stopwatch.elapsedMilliseconds}',
+          error: error,
+          stackTrace: stackTrace,
+        );
       }
     } finally {
       if (_acceptsResult(requestGeneration, lease, query)) {

@@ -8,6 +8,8 @@ import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/gateway/gateway_client.dart';
 import 'package:codepet_remote/gateway/generated_gateway_mapper.dart';
 import 'package:codepet_remote/core/domain/models.dart';
+import 'package:codepet_remote/diagnostics/app_log.dart';
+import 'package:codepet_remote/diagnostics/local_log_store.dart';
 import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -1093,6 +1095,49 @@ void main() {
     expect(delta.conversationId, turn.turn.conversationId);
     expect(delta.eventCursor, 'cursor-delta');
     await subscription.cancel();
+    await client.close();
+  });
+
+  test('samples high-volume output delta logs at the protocol event gate',
+      () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'codepet-event-log-test-',
+    );
+    addTearDown(() async {
+      await AppLog.resetForTesting();
+      if (await temporaryDirectory.exists()) {
+        await temporaryDirectory.delete(recursive: true);
+      }
+    });
+    final store = await LocalLogStore.open(
+      rootDirectory: temporaryDirectory,
+    );
+    await AppLog.initialize(store: store);
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+
+    for (var index = 1; index <= 205; index++) {
+      transport.emit(_turnEvent('turn.outputDelta', 'delta-$index'));
+    }
+    await AppLog.flush();
+
+    final contents = await File(
+      '${store.logDirectory.path}/codepet.log',
+    ).readAsString();
+    expect(
+      RegExp('Gateway output delta events received').allMatches(contents),
+      hasLength(3),
+    );
     await client.close();
   });
 
