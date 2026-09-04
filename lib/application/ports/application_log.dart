@@ -3,6 +3,8 @@ abstract interface class ApplicationLog {
 
   void info(String message);
 
+  void structured(String event, Map<String, Object?> fields);
+
   void warning(
     String message, {
     Object? error,
@@ -24,6 +26,9 @@ class NoopApplicationLog implements ApplicationLog {
 
   @override
   void info(String message) {}
+
+  @override
+  void structured(String event, Map<String, Object?> fields) {}
 
   @override
   void warning(

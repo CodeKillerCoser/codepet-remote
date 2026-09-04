@@ -23,19 +23,29 @@ class AppLog implements ApplicationLog {
     _subscription = Logger.root.onRecord.listen((record) {
       final target = _store;
       if (target == null) return;
-      final line = jsonEncode({
+      final structured = record.object is _StructuredLogMessage
+          ? record.object as _StructuredLogMessage
+          : null;
+      final payload = <String, Object?>{
         'timestamp': record.time.toUtc().toIso8601String(),
         'level': record.level.name,
         'logger': record.loggerName,
-        'message': _redact(record.message),
+        if (structured == null)
+          'message': _redact(record.message.toString())
+        else ...{
+          'recordType': 'trace',
+          'event': structured.event,
+          ..._redactFields(structured.fields),
+        },
         if (record.error != null) 'error': _redact(record.error.toString()),
         if (record.stackTrace != null)
           'stackTrace': _redact(record.stackTrace.toString()),
-      });
+      };
+      final line = jsonEncode(payload);
       if (kDebugMode) {
         debugPrint(
           '${record.level.name} ${record.loggerName}: '
-          '${_redact(record.message)}',
+          '${structured?.event ?? _redact(record.message.toString())}',
         );
       }
       unawaited(target.writeLine(line).catchError((Object error) {
@@ -84,6 +94,10 @@ class AppLog implements ApplicationLog {
   void info(String message) => _logger.info(message);
 
   @override
+  void structured(String event, Map<String, Object?> fields) =>
+      _logger.fine(_StructuredLogMessage(event, fields));
+
+  @override
   void warning(
     String message, {
     Object? error,
@@ -99,6 +113,22 @@ class AppLog implements ApplicationLog {
   }) =>
       _logger.severe(message, error, stackTrace);
 }
+
+final class _StructuredLogMessage {
+  const _StructuredLogMessage(this.event, this.fields);
+
+  final String event;
+  final Map<String, Object?> fields;
+}
+
+Map<String, Object?> _redactFields(Map<String, Object?> fields) => {
+      for (final entry in fields.entries)
+        entry.key: switch (entry.value) {
+          final String value => _redact(value),
+          final Map<String, Object?> value => _redactFields(value),
+          _ => entry.value,
+        },
+    };
 
 String _redact(String value) => value
     .replaceAll(RegExp(r'Bearer\s+[^\s,}]+', caseSensitive: false), 'Bearer [REDACTED]')

@@ -1700,13 +1700,13 @@ class ProjectPage {
   final String snapshotCursor;
 }
 
-sealed class GatewayEvent {
+abstract base class GatewayEvent {
   const GatewayEvent({required this.eventCursor});
 
   final String eventCursor;
 }
 
-class GatewayProviderChangedEvent extends GatewayEvent {
+final class GatewayProviderChangedEvent extends GatewayEvent {
   const GatewayProviderChangedEvent({
     required super.eventCursor,
     required this.provider,
@@ -1717,7 +1717,7 @@ class GatewayProviderChangedEvent extends GatewayEvent {
 
 enum ProjectChangeType { created, updated, deleted }
 
-class ProjectChangedEvent extends GatewayEvent {
+final class ProjectChangedEvent extends GatewayEvent {
   const ProjectChangedEvent({
     required super.eventCursor,
     required this.project,
@@ -1728,7 +1728,7 @@ class ProjectChangedEvent extends GatewayEvent {
   final ProjectChangeType changeType;
 }
 
-class ConversationUpsertedEvent extends GatewayEvent {
+final class ConversationUpsertedEvent extends GatewayEvent {
   const ConversationUpsertedEvent({
     required super.eventCursor,
     required this.conversation,
@@ -1737,7 +1737,7 @@ class ConversationUpsertedEvent extends GatewayEvent {
   final ConversationSummary conversation;
 }
 
-class ConversationItemUpsertedEvent extends GatewayEvent {
+final class ConversationItemUpsertedEvent extends GatewayEvent {
   const ConversationItemUpsertedEvent({
     required super.eventCursor,
     required this.conversationId,
@@ -1748,7 +1748,7 @@ class ConversationItemUpsertedEvent extends GatewayEvent {
   final GatewayMessage item;
 }
 
-class ConversationActivityChangedEvent extends GatewayEvent {
+final class ConversationActivityChangedEvent extends GatewayEvent {
   const ConversationActivityChangedEvent({
     required super.eventCursor,
     required this.conversationId,
@@ -1759,7 +1759,7 @@ class ConversationActivityChangedEvent extends GatewayEvent {
   final String activityVersion;
 }
 
-class TurnUpsertedEvent extends GatewayEvent {
+final class TurnUpsertedEvent extends GatewayEvent {
   const TurnUpsertedEvent({
     required super.eventCursor,
     required this.turn,
@@ -1768,7 +1768,7 @@ class TurnUpsertedEvent extends GatewayEvent {
   final TurnTask turn;
 }
 
-class TurnOutputDeltaEvent extends GatewayEvent {
+final class TurnOutputDeltaEvent extends GatewayEvent {
   const TurnOutputDeltaEvent({
     required super.eventCursor,
     required this.providerId,
@@ -1789,7 +1789,7 @@ class TurnOutputDeltaEvent extends GatewayEvent {
   final String delta;
 }
 
-class ApprovalChangedEvent extends GatewayEvent {
+final class ApprovalChangedEvent extends GatewayEvent {
   const ApprovalChangedEvent({
     required super.eventCursor,
     required this.conversationId,
@@ -1800,7 +1800,7 @@ class ApprovalChangedEvent extends GatewayEvent {
   final GatewayMessage approval;
 }
 
-class UnknownGatewayEvent extends GatewayEvent {
+final class UnknownGatewayEvent extends GatewayEvent {
   const UnknownGatewayEvent({
     required super.eventCursor,
     required this.name,

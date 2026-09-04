@@ -6,8 +6,10 @@ import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 import '../core/domain/models.dart';
 import '../application/errors/application_failures.dart';
 import '../application/ports/gateway_client.dart';
+import '../application/ports/trace_recorder.dart';
 import '../application/sync/gateway_event_window.dart';
 import '../diagnostics/app_log.dart';
+import '../diagnostics/gateway_protocol_instrumentation.dart';
 import 'generated_gateway_mapper.dart';
 import 'transport.dart';
 
@@ -29,10 +31,13 @@ final class ProtocolGatewayClient
     this.clientVersion = '0.1.0',
     this.onValidatedEndpoint,
     this.onValidatedHostDescriptor,
+    this.traceRecorder = const NoopTraceRecorder(),
   }) {
+    _instrumentation = GatewayProtocolInstrumentation(traceRecorder);
     _protocol = sdk.ProtocolClient(
       transport,
       requestIdFactory: () => 'remote-${_nextRequestId++}',
+      instrumentation: _instrumentation,
     );
   }
 
@@ -45,8 +50,10 @@ final class ProtocolGatewayClient
   final FutureOr<void> Function(Uri endpoint)? onValidatedEndpoint;
   final FutureOr<void> Function(DeviceDescriptor descriptor)?
       onValidatedHostDescriptor;
+  final TraceRecorder traceRecorder;
 
   static const _mapper = GeneratedGatewayMapper();
+  late final GatewayProtocolInstrumentation _instrumentation;
   late final sdk.ProtocolClient _protocol;
   int _nextRequestId = 1;
   final StreamController<GatewayEvent> _events =
@@ -55,6 +62,7 @@ final class ProtocolGatewayClient
   String? _latestEventCursor;
   final _BoundedCursorSet _seenEventCursors = _BoundedCursorSet();
   final Map<String, int> _receivedEventCounts = {};
+  final Set<String> _tracedOutputTurns = {};
   int _duplicateEventCount = 0;
   Set<String> _providerIds = const {};
   final Map<String, GatewayProvider> _providersById = {};
@@ -97,7 +105,31 @@ final class ProtocolGatewayClient
             _providersById[event.provider.id] = event.provider;
           }
           _latestEventCursor = event.eventCursor;
-          _events.add(event);
+          final traceContext = _traceCorrelation(envelope.traceContext);
+          final shouldTraceEvent = event is! TurnOutputDeltaEvent ||
+              _tracedOutputTurns.add(event.turnId);
+          if (shouldTraceEvent) {
+            traceRecorder.instant(
+              'gateway.event.received',
+              context: traceContext,
+              attributes: {
+                'event.name': envelope.event.toJson(),
+                'event.cursor': event.eventCursor,
+                if (event is TurnOutputDeltaEvent) ...{
+                  'turn.id': event.turnId,
+                  'delta.bytes': event.delta.length,
+                  'sample': 'first-delta-per-turn',
+                },
+              },
+            );
+          }
+          _events.add(traceContext == null
+              ? event
+              : ObservedGatewayEvent(
+                  event: event,
+                  traceContext: traceContext,
+                  receivedAt: DateTime.now().toUtc(),
+                ));
         } catch (error, stack) {
           final protocolError = error is FormatException
               ? error
@@ -138,6 +170,18 @@ final class ProtocolGatewayClient
         'Gateway identity mismatch',
         retryable: false,
       );
+    }
+    if (traceRecorder is! NoopTraceRecorder) {
+      try {
+        final description = await _call(
+          () => _protocol.protocolDescribe(sdk.ProtocolDescribeRequest()),
+        );
+        _instrumentation.wirePropagationEnabled =
+            description.features.contains(sdk.ProtocolFeature.traceContextV1);
+      } on GatewayProtocolException catch (error) {
+        if (error.code != 'gateway_rpc_-32601') rethrow;
+        _instrumentation.wirePropagationEnabled = false;
+      }
     }
     final providers = generated.providers
         .map(_mapper.provider)
@@ -912,6 +956,13 @@ final class ProtocolGatewayClient
     }
   }
 }
+
+TraceCorrelation? _traceCorrelation(sdk.TraceContext? context) => context == null
+    ? null
+    : TraceCorrelation.tryParse(
+        context.traceparent,
+        traceState: context.tracestate,
+      );
 
 class _BoundedCursorSet {
   static const capacity = 512;

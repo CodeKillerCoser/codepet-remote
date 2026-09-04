@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 import 'package:codepet_remote/application/errors/application_failures.dart';
+import 'package:codepet_remote/application/ports/trace_recorder.dart';
 import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/gateway/gateway_client.dart';
 import 'package:codepet_remote/gateway/generated_gateway_mapper.dart';
@@ -14,6 +15,66 @@ import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('negotiates automatic trace propagation after an untraced handshake',
+      () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+      traceRecorder: const _FixedTraceRecorder(),
+    );
+
+    await client.connect();
+
+    expect(transport.requests[0].method, 'protocol.handshake');
+    expect(transport.requests[0].traceContext, isNull);
+    expect(transport.requests[1].method, 'protocol.describe');
+    expect(transport.requests[1].traceContext, isNull);
+    expect(transport.requests[2].method, 'event.subscribe');
+    expect(
+      transport.requests[2].traceContext?['traceparent'],
+      '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+    );
+    await client.close();
+  });
+
+  test('falls back without wire trace when an old Host lacks discovery',
+      () async {
+    final transport = _FakeTransport(
+      {
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      },
+      responseBuilder: (method, _, id) => method == 'protocol.describe'
+          ? {
+              'jsonrpc': '2.0',
+              'id': id,
+              'error': {'code': -32601, 'message': 'method not found'},
+            }
+          : null,
+    );
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+      traceRecorder: const _FixedTraceRecorder(),
+    );
+
+    await client.connect();
+
+    expect(transport.requests[2].method, 'event.subscribe');
+    expect(transport.requests[2].traceContext, isNull);
+    await client.close();
+  });
+
   test('performs the generated V1 handshake, subscribe, list and get sequence', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _handshakeJson(),
@@ -1458,7 +1519,13 @@ class _FakeTransport
   Future<Object?> request(Map<String, Object?> request) async {
     final method = request['method'] as String;
     final params = Map<String, dynamic>.from(request['params'] as Map);
-    requests.add(_RequestRecord(method, params));
+    requests.add(_RequestRecord(
+      method,
+      params,
+      request['meta'] == null
+          ? null
+          : Map<String, dynamic>.from(request['meta'] as Map),
+    ));
     beforeResponse?.call(method);
     final customResponse = responseBuilder?.call(
       method,
@@ -1467,6 +1534,9 @@ class _FakeTransport
     );
     if (customResponse != null) return customResponse;
     var response = responses[method];
+    if (response == null && method == 'protocol.describe') {
+      response = {'features': ['trace-context-v1']};
+    }
     if (response == null && method == 'provider.describe') {
       response = _providerDescriptionJson();
     }
@@ -1499,10 +1569,41 @@ class _FakeTransport
 }
 
 class _RequestRecord {
-  const _RequestRecord(this.method, this.params);
+  const _RequestRecord(this.method, this.params, this.traceContext);
 
   final String method;
   final JsonMap params;
+  final JsonMap? traceContext;
+}
+
+final class _FixedTraceRecorder implements TraceRecorder {
+  const _FixedTraceRecorder();
+
+  static const context = TraceCorrelation(
+    traceId: '0123456789abcdef0123456789abcdef',
+    spanId: '0123456789abcdef',
+  );
+
+  @override
+  TraceCorrelation? get currentContext => context;
+
+  @override
+  void instant(
+    String name, {
+    TraceCorrelation? context,
+    Map<String, Object?> attributes = const {},
+  }) {}
+
+  @override
+  T runWithContext<T>(TraceCorrelation? context, T Function() operation) =>
+      operation();
+
+  @override
+  Future<T> trace<T>(
+    String name,
+    Future<T> Function(TraceCorrelation? context) operation, {
+    Map<String, Object?> attributes = const {},
+  }) => operation(context);
 }
 
 JsonMap _handshakeJson() {

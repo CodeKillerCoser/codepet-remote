@@ -3,6 +3,8 @@ import 'dart:math';
 
 import '../../core/domain/models.dart';
 import '../errors/application_failures.dart';
+import '../ports/gateway_client.dart';
+import '../ports/trace_recorder.dart';
 import '../sessions/device_session.dart';
 import '../support/application_notifier.dart';
 import '../sync/gateway_event_window.dart';
@@ -31,6 +33,7 @@ class ConversationDetailController extends ApplicationNotifier {
   Timer? _interactionTimer;
   final Set<String> _appliedCursors = {};
   final Set<String> _refreshingTurns = {};
+  final Set<String> _tracedFirstOutputTurns = {};
   DeviceSessionRuntimeLease? _observedLease;
   _CapabilityBinding? _binding;
   GatewayProvider? _provider;
@@ -58,6 +61,7 @@ class ConversationDetailController extends ApplicationNotifier {
   String? _markingReadToken;
   String? _lastInteractionFailure;
   DateTime? _lastMarkReadFailureLogAt;
+  (TraceCorrelation?, String, String)? _pendingRenderTrace;
 
   DeviceSession get session => _session;
   GatewayProvider? get provider => _provider;
@@ -100,6 +104,12 @@ class ConversationDetailController extends ApplicationNotifier {
   bool consumeFollowOutputRequest() {
     final value = _followOutputRequested;
     _followOutputRequested = false;
+    return value;
+  }
+
+  (TraceCorrelation?, String, String)? consumePendingRenderTrace() {
+    final value = _pendingRenderTrace;
+    _pendingRenderTrace = null;
     return value;
   }
 
@@ -405,7 +415,18 @@ class ConversationDetailController extends ApplicationNotifier {
       window.install(
         baselineCursor: baseline,
         snapshotCursor: snapshot.snapshotCursor,
-        onEvent: (event) => _applyEvent(event, epoch, lease, binding),
+        onEvent: (incoming) {
+          final observed = incoming is ObservedGatewayEvent ? incoming : null;
+          _session.traceRecorder.runWithContext(
+            observed?.traceContext,
+            () => _applyEvent(
+              observed?.event ?? incoming,
+              epoch,
+              lease,
+              binding,
+            ),
+          );
+        },
         onError: (Object error, StackTrace stackTrace) {
           _session.logger.warning(
             'Conversation event window failed for device '
@@ -521,6 +542,14 @@ class ConversationDetailController extends ApplicationNotifier {
     if (identical(next, detail)) return;
     _detail = next;
     _followOutputRequested |= event is TurnOutputDeltaEvent;
+    if (event is TurnOutputDeltaEvent &&
+        _tracedFirstOutputTurns.add(event.turnId)) {
+      _pendingRenderTrace = (
+        _session.traceRecorder.currentContext,
+        event.eventCursor,
+        event.turnId,
+      );
+    }
     notifyApplicationListeners();
     if (event is ConversationActivityChangedEvent) {
       _markReadIfVisible(next.summary, epoch, lease, binding);
@@ -767,7 +796,16 @@ class ConversationDetailController extends ApplicationNotifier {
     }
   }
 
-  Future<bool> send(String text) async {
+  Future<bool> send(String text) => _session.traceRecorder.trace(
+        'ui.turn.send',
+        (_) => _send(text),
+        attributes: {
+          'device.id': _session.device.deviceId,
+          'conversation.id': currentConversation.id,
+        },
+      );
+
+  Future<bool> _send(String text) async {
     if (!canSend(text)) return false;
     final lease = _session.runtimeLease;
     final provider = _provider;

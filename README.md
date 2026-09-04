@@ -97,3 +97,14 @@ flutter doctor --android-licenses
 - gateway：只调用生成 `ProtocolClient`；所有 Provider 范围资源携带 `deviceId + providerPluginId + providerInstanceId`。
 
 新增 localhost 或 WebRTC 接入时，只实现 channel contract；Gateway 业务调用继续复用 `sdk/gateway`。新增 admission 机制时也不得修改 Gateway method 或把证书/secret 写进 handshake。
+
+## 离线 Trace 分析
+
+Remote 和支持 `trace-context-v1` 的 Host 会输出 `codepet.trace.v1` JSONL。Remote 的日志导出 zip 可以直接作为分析输入；Host 侧保存标准错误输出中的 JSON 行即可。工具按 `traceId` 合并多个端的时间线：
+
+```sh
+dart run tool/trace_analyzer.dart remote-logs.zip host.jsonl
+dart run tool/trace_analyzer.dart --trace <32位trace-id> remote-logs.zip host.jsonl
+```
+
+时间线覆盖用户发送、Gateway client RPC、Host 接收/完成、首个 turn output event、移动端 timeline 投影和首帧渲染。协议元数据和日志不包含 prompt、输出正文或 credential。跨设备排序依赖系统 UTC 时钟；若两个设备时钟未同步，以各端自身 `durationUs` 为准，并用同一 RPC 的收发边界辅助判断网络段，不直接把负间隔解释为性能结论。

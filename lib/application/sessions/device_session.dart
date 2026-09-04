@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../core/domain/models.dart';
 import '../errors/application_failures.dart';
 import '../ports/application_log.dart';
+import '../ports/trace_recorder.dart';
 import '../ports/gateway_client.dart';
 import '../support/application_notifier.dart';
 import '../sync/gateway_event_window.dart';
@@ -98,6 +99,7 @@ class DeviceSession extends ApplicationNotifier {
     ],
     Stream<void>? reconnectSignals,
     this.logger = const NoopApplicationLog(),
+    this.traceRecorder = const NoopTraceRecorder(),
   }) : assert(reconnectDelays.isNotEmpty) {
     _reconnectSignalSubscription = reconnectSignals?.listen(
       (_) => _handleReconnectSignal(),
@@ -111,6 +113,7 @@ class DeviceSession extends ApplicationNotifier {
   final bool autoReconnect;
   final List<Duration> reconnectDelays;
   final ApplicationLog logger;
+  final TraceRecorder traceRecorder;
   GatewayClient? _client;
   GatewayEventWindow? _eventWindow;
   Timer? _reconnectTimer;
@@ -431,9 +434,13 @@ class DeviceSession extends ApplicationNotifier {
       window.install(
         baselineCursor: connectedHandshake.eventCursor,
         snapshotCursor: snapshotCursor,
-        onEvent: (event) {
+        onEvent: (incoming) {
           if (_ownsRuntime(generation, client)) {
-            _applyEvent(event);
+            final observed = incoming is ObservedGatewayEvent ? incoming : null;
+            traceRecorder.runWithContext(
+              observed?.traceContext,
+              () => _applyEvent(observed?.event ?? incoming),
+            );
           }
         },
         onError: (Object value, StackTrace _) {

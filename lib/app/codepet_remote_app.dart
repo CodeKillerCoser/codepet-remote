@@ -16,6 +16,7 @@ import '../application/ports/gateway_client.dart';
 import '../application/ports/pairing_gateway.dart';
 import '../devices/local_device_descriptor.dart';
 import '../diagnostics/app_log.dart';
+import '../diagnostics/app_trace_recorder.dart';
 import '../features/connection/pair_device_screen.dart';
 import '../features/common/app_toast.dart';
 import '../features/home/remote_home_screen.dart';
@@ -130,10 +131,13 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   }
 
   void _addDemo(String id, String name, String profile) {
+    final sessionLog = AppLog.named('session.$id');
+    final traceRecorder = AppTraceRecorder(logger: sessionLog);
     _sessions.add(DeviceSession(
       device: PairedDevice(deviceId: id, displayName: name, connectionKind: DeviceConnectionKind.demo, preferredEndpoint: 'demo://$profile'),
       clientFactory: () => DemoGatewayClient(profileId: profile),
-      logger: AppLog.named('session.$id'),
+      logger: sessionLog,
+      traceRecorder: traceRecorder,
     ));
   }
 
@@ -192,9 +196,12 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
       } catch (_) {}
     }
     var preferredGateway = restoredGateway;
+    final sessionLog = AppLog.named('session.${device.deviceId}');
+    final traceRecorder = AppTraceRecorder(logger: sessionLog);
     return DeviceSession(
       device: device,
-      logger: AppLog.named('session.${device.deviceId}'),
+      logger: sessionLog,
+      traceRecorder: traceRecorder,
       clientFactory: () {
         final debugAndroidEmulatorGatewayUri = useDebugAndroidEmulatorAlias
             ? debugAndroidEmulatorGatewayCandidate(preferredGateway)
@@ -220,6 +227,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
             hostDirectory: _discoveryEnabled ? _hostDirectory : null,
           ),
           clientId: device.clientId!, clientDevice: clientDevice, expectedDeviceId: device.deviceId, expectedIdentityFingerprint: device.tlsFingerprint!,
+          traceRecorder: traceRecorder,
           onValidatedHostDescriptor: (descriptor) => _registry.updateHostDescriptor(
             deviceId: device.deviceId,
             clientId: device.clientId!,

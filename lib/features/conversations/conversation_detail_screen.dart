@@ -101,6 +101,8 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
 
   void _controllerChanged() {
     if (!mounted) return;
+    final renderTrace = _controller.consumePendingRenderTrace();
+    final projectionStopwatch = renderTrace == null ? null : (Stopwatch()..start());
     final wasNearBottom = _isNearBottom();
     final previousWasEmpty = _timeline.isEmpty;
     final detail = _controller.detail;
@@ -108,6 +110,18 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     final nextTimeline = detail == null
         ? const <ConversationTimelineBlock>[]
         : _timelineProjector.project(detail);
+    if (renderTrace case (final context, final eventCursor, final turnId)) {
+      widget.session.traceRecorder.instant(
+        'mobile.timeline.projected',
+        context: context,
+        attributes: {
+          'event.cursor': eventCursor,
+          'turn.id': turnId,
+          'durationUs': projectionStopwatch!.elapsedMicroseconds,
+          'timeline.blocks': nextTimeline.length,
+        },
+      );
+    }
     final followOutput = _controller.consumeFollowOutputRequest();
     setState(() {
       _timeline = nextTimeline;
@@ -123,6 +137,19 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         _scrollRequest++;
       }
     });
+    if (renderTrace case (final context, final eventCursor, final turnId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        widget.session.traceRecorder.instant(
+          'mobile.first_output.rendered',
+          context: context,
+          attributes: {
+            'event.cursor': eventCursor,
+            'turn.id': turnId,
+          },
+        );
+      });
+    }
     if (firstDetail) {
       _scrollToBottom();
     } else if (followOutput && wasNearBottom) {

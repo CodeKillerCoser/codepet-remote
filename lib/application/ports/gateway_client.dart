@@ -2,6 +2,19 @@ import 'dart:async';
 
 import '../sync/gateway_event_window.dart';
 import '../../core/domain/models.dart';
+import 'trace_recorder.dart';
+
+final class ObservedGatewayEvent extends GatewayEvent {
+  ObservedGatewayEvent({
+    required this.event,
+    this.traceContext,
+    required this.receivedAt,
+  }) : super(eventCursor: event.eventCursor);
+
+  final GatewayEvent event;
+  final TraceCorrelation? traceContext;
+  final DateTime receivedAt;
+}
 
 /// Application-facing contract implemented by Gateway infrastructure.
 abstract interface class GatewayClient {
