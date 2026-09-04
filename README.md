@@ -53,8 +53,9 @@ debug 构建。
 
 ## Android 发布签名
 
-Release 不再回退使用 debug keystore。发布前通过 Gradle property 或环境变量
-提供以下四项；缺少任一项时 release variant 保持未签名，避免误发 debug 签名包：
+当前开发阶段，Release 缺少正式签名配置时会回退使用 debug keystore，保证 APK
+可以直接安装测试。正式发布前通过 Gradle property 或环境变量提供以下四项，
+配置完整时会自动改用正式签名：
 
 ```text
 CODEPET_RELEASE_STORE_FILE
