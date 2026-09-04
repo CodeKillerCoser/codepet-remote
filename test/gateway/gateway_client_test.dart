@@ -553,7 +553,7 @@ void main() {
     expect(handshake.deviceDescriptor.operatingSystem, 'macOS');
     expect(
       handshake.providers.single.defaultWorkspaceRoot,
-      '/Users/test/.codex',
+      '/Users/test/.codex/codepet-workspaces',
     );
     expect(history, hasLength(5));
     expect(history[0].role, MessageRole.user);
@@ -1523,7 +1523,7 @@ JsonMap _providerSummaryJson() => {
       'identity': {
         'displayName': 'Codex',
         'icon': 'https://cdn.example.com/codex.png',
-        'defaultWorkspaceRoot': '/Users/test/.codex',
+        'defaultWorkspaceRoot': '/Users/test/.codex/codepet-workspaces',
       },
       'runtime': {
         'status': 'ready',

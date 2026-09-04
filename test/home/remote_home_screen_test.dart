@@ -197,7 +197,7 @@ void main() {
           )
           .controller!
           .text,
-      '/Users/test/.codex',
+      startsWith('/Users/test/.codex/codepet-workspaces/task-'),
     );
 
     await tester.pumpWidget(const SizedBox());
@@ -252,7 +252,7 @@ void main() {
           )
           .controller!
           .text,
-      '/Users/test/.codex',
+      startsWith('/Users/test/.codex/codepet-workspaces/task-'),
     );
 
     await tester.tap(find.byKey(const Key('new-conversation-project')));
@@ -266,6 +266,30 @@ void main() {
 
     expect(client.createdProject, project.resource);
     expect(client.createdWorkspaceRoot, isNull);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('standalone conversation uses its own managed task directory',
+      (tester) async {
+    _useTallSurface(tester);
+    final client = _ProjectConversationCreateClient(_homeProject());
+    final session = _sessionForClient('standalone-task-directory', client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    await tester.tap(find.byKey(const Key('home-new')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-new-conversation')));
+    await tester.pumpAndSettle();
+
+    expect(client.createdProject, isNull);
+    expect(
+      client.createdWorkspaceRoot,
+      startsWith('/Users/test/.codex/codepet-workspaces/task-'),
+    );
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
@@ -887,7 +911,7 @@ const _homeListProvider = GatewayProvider(
   id: _homeRoute,
   displayName: 'Codex Work',
   icon: 'codex',
-  defaultWorkspaceRoot: '/Users/test/.codex',
+  defaultWorkspaceRoot: '/Users/test/.codex/codepet-workspaces',
   status: ProviderStatus.ready,
   runtimeVersion: '0.151.0',
   executablePath: '/usr/local/bin/codex',
@@ -934,7 +958,7 @@ const _homeProjectProvider = GatewayProvider(
   id: _homeRoute,
   displayName: 'Codex Work',
   icon: 'codex',
-  defaultWorkspaceRoot: '/Users/test/.codex',
+  defaultWorkspaceRoot: '/Users/test/.codex/codepet-workspaces',
   status: ProviderStatus.ready,
   capabilities: GatewayCapabilities(
     revision: 'test-project-create-1',

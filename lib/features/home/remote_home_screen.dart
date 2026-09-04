@@ -12,6 +12,7 @@ import '../conversations/conversation_search_screen.dart';
 const int _projectPageSize = 6;
 const int _conversationPageSize = 8;
 const int _recentPageSize = 20;
+int _standaloneWorkspaceSequence = 0;
 
 class RemoteHomeScreen extends StatefulWidget {
   const RemoteHomeScreen({
@@ -1321,7 +1322,8 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
     super.initState();
     _titleController = TextEditingController();
     _workspaceController = TextEditingController(
-      text: widget.workspaceRoot ?? widget.provider.defaultWorkspaceRoot,
+      text: widget.workspaceRoot ??
+          _newStandaloneWorkspace(widget.provider.defaultWorkspaceRoot),
     );
     _selectedProjectKey = widget.project?.key ?? _standaloneProjectKey;
     final selection = _selectionCapabilities;
@@ -1644,6 +1646,17 @@ Future<void> _startConversation(
   if (conversation != null && context.mounted) {
     _openConversation(context, session, conversation);
   }
+}
+
+String? _newStandaloneWorkspace(String? parent) {
+  final trimmed = parent?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  final separator = trimmed.contains('\\') && !trimmed.contains('/') ? '\\' : '/';
+  final needsSeparator = !trimmed.endsWith('/') && !trimmed.endsWith('\\');
+  final sequence = _standaloneWorkspaceSequence++;
+  final taskName =
+      'task-${DateTime.now().toUtc().microsecondsSinceEpoch}-$sequence';
+  return '$trimmed${needsSeparator ? separator : ''}$taskName';
 }
 
 void _openConversation(BuildContext context, DeviceSession session, ConversationSummary conversation) {

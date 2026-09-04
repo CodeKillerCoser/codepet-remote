@@ -17,7 +17,7 @@
           "identity": {
             "displayName": "Codex Work",
             "icon": "https://cdn.example.com/codex.png",
-            "defaultWorkspaceRoot": "/Users/test/.codex"
+            "defaultWorkspaceRoot": "/Users/test/.codex/codepet-workspaces"
           },
           "runtime": {
             "status": "ready",
