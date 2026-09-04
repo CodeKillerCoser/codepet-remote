@@ -170,6 +170,14 @@ final class GeneratedGatewayMapper {
       status: value.status.wireValue,
       approvalStatus: value.approval?.status.wireValue,
       approvalDescription: value.approval?.description,
+      resource: resourceId(value.resource),
+      approvalDecisions: value.approval?.decisions
+              .map(_approvalDecision)
+              .toList(growable: false) ??
+          const [],
+      approvalDecision: value.approval?.decision == null
+          ? null
+          : _approvalDecision(value.approval!.decision!),
       relatedItemId: value.relatedItem == null
           ? null
           : resourceKey(value.relatedItem!),
@@ -231,6 +239,27 @@ final class GeneratedGatewayMapper {
         destructive: value.annotations?.destructive,
         idempotent: value.annotations?.idempotent,
         openWorld: value.annotations?.openWorld,
+      );
+
+  GatewayMessage approval(sdk.Approval value) => GatewayMessage(
+        id: resourceKey(value.resource),
+        itemId: value.resource.nativeResourceId,
+        turnId: resourceKey(value.turn),
+        role: MessageRole.system,
+        kind: 'approval',
+        content: value.description ?? value.title,
+        createdAt: _time(value.requestedAt) ?? _epoch,
+        isStreaming: false,
+        title: value.title,
+        status: value.status.wireValue,
+        approvalStatus: value.status.wireValue,
+        approvalDescription: value.description,
+        resource: resourceId(value.resource),
+        approvalDecisions:
+            value.decisions.map(_approvalDecision).toList(growable: false),
+        approvalDecision: value.decision == null
+            ? null
+            : _approvalDecision(value.decision!),
       );
 
   TurnSendSelection selection(sdk.TurnSelection value) =>
@@ -367,25 +396,10 @@ final class GeneratedGatewayMapper {
       expectedDeviceId: expectedDeviceId,
       expectedProviderRouteKeys: expectedProviderRouteKeys,
     );
-    final requestedAt = _time(approval.requestedAt) ?? _epoch;
-    final message = GatewayMessage(
-      id: resourceKey(approval.resource),
-      itemId: approval.resource.nativeResourceId,
-      turnId: resourceKey(approval.turn),
-      role: MessageRole.system,
-      kind: 'approval',
-      content: approval.description ?? approval.title,
-      createdAt: requestedAt,
-      isStreaming: false,
-      title: approval.title,
-      status: approval.status.wireValue,
-      approvalStatus: approval.status.wireValue,
-      approvalDescription: approval.description,
-    );
     return ApprovalChangedEvent(
       eventCursor: cursor,
       conversationId: resourceKey(approval.conversation),
-      approval: message,
+      approval: this.approval(approval),
     );
   }
 
@@ -400,6 +414,12 @@ final class GeneratedGatewayMapper {
         providerId: value.providerId,
         nativeResourceId: value.nativeResourceId,
       );
+
+  ApprovalDecision _approvalDecision(sdk.ApprovalDecision value) =>
+      switch (value) {
+        sdk.ApprovalDecision.approve => ApprovalDecision.approve,
+        sdk.ApprovalDecision.deny => ApprovalDecision.deny,
+      };
 
   String resourceKey(sdk.RoutedResourceId value) =>
       '${value.providerId}\u0000${value.nativeResourceId}';

@@ -277,6 +277,34 @@ void main() {
     await client.close();
   });
 
+  test('interrupts a routed active turn and resolves an advertised approval', () async {
+    final description = _providerDescriptionJson();
+    final capabilities = description['capabilities'] as Map<String, dynamic>;
+    (capabilities['methods'] as List<String>)
+        .addAll(['turn.interrupt', 'approval.resolve']);
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'provider.describe': description,
+      'turn.interrupt': {'turn': _turnJson('turn-active', status: 'interrupted')},
+      'approval.resolve': {'approval': _approvalJson(status: 'approved', decision: 'approve')},
+    });
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect();
+    final conversation = _domainConversation();
+    final turn = const GeneratedGatewayMapper().turn(sdk.TurnTask.fromJson(_turnJson('turn-active')));
+    final approval = const GeneratedGatewayMapper().approval(sdk.Approval.fromJson(_approvalJson(status: 'pending')));
+
+    final interrupted = await client.interruptTurn(conversation: conversation, turn: turn);
+    expect(transport.requests.last.method, 'turn.interrupt');
+    expect(interrupted.status, TurnStatus.interrupted);
+    final resolved = await client.resolveApproval(approval: approval, decision: ApprovalDecision.approve);
+    expect(transport.requests.last.method, 'approval.resolve');
+    expect(transport.requests.last.params['decision'], 'approve');
+    expect(resolved.approvalDecision, ApprovalDecision.approve);
+    await client.close();
+  });
+
   test('creates a routed conversation through the generated SDK', () async {
     final handshake = _handshakeJson();
     final providerDescription = _providerDescriptionJson();
@@ -1317,11 +1345,15 @@ JsonMap _approvalEvent(
   required String status,
   String? decision,
 }) {
-  const providerId = _providerResourceFields;
+  final approval = _approvalJson(status: status, decision: decision);
+  return {'protocolVersion': 1, 'eventCursor': cursor, 'event': name, 'payload': {'approval': approval}};
+}
+
+JsonMap _approvalJson({required String status, String? decision}) {
   final approval = <String, Object?>{
-    'resource': {...providerId, 'nativeResourceId': 'approval-1'},
-    'conversation': {...providerId, 'nativeResourceId': 'conversation-1'},
-    'turn': {...providerId, 'nativeResourceId': 'turn-1'},
+    'resource': {..._providerResourceFields, 'nativeResourceId': 'approval-1'},
+    'conversation': {..._providerResourceFields, 'nativeResourceId': 'conversation-1'},
+    'turn': {..._providerResourceFields, 'nativeResourceId': 'turn-1'},
     'kind': 'command',
     'title': 'Run command',
     'description': 'Run the command',
@@ -1333,14 +1365,7 @@ JsonMap _approvalEvent(
     approval['resolvedAt'] = 4000;
     approval['decision'] = decision;
   }
-  return {
-    'protocolVersion': 1,
-    'eventCursor': cursor,
-    'event': name,
-    'payload': {
-      'approval': approval,
-    },
-  };
+  return approval;
 }
 
 class _FakeTransport
@@ -1572,6 +1597,13 @@ JsonMap _turnSendResult({required JsonMap selection}) {
     'effectiveSelection': selection,
   };
 }
+
+JsonMap _turnJson(String turnId, {String status = 'running'}) => {
+  'resource': {..._providerResourceFields, 'nativeResourceId': turnId},
+  'conversation': {..._providerResourceFields, 'nativeResourceId': 'conversation-1'},
+  'status': status,
+  'updatedAt': 3000,
+};
 
 ConversationSummary _domainConversation() =>
     const GeneratedGatewayMapper().conversation(

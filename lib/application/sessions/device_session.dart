@@ -66,6 +66,21 @@ class DeviceSessionRuntimeLease {
         selection: selection,
       );
 
+  bool get supportsConversationControl =>
+      _client is ConversationControlGatewayClient;
+
+  Future<TurnTask> interruptTurn({
+    required ConversationSummary conversation,
+    required TurnTask turn,
+  }) => (_client as ConversationControlGatewayClient)
+      .interruptTurn(conversation: conversation, turn: turn);
+
+  Future<GatewayMessage> resolveApproval({
+    required GatewayMessage approval,
+    required ApprovalDecision decision,
+  }) => (_client as ConversationControlGatewayClient)
+      .resolveApproval(approval: approval, decision: decision);
+
 }
 
 class DeviceSession extends ApplicationNotifier {

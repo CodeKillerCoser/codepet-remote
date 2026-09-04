@@ -402,6 +402,51 @@ void main() {
     });
   }
 
+  testWidgets('stops the active turn and resolves a pending approval', (tester) async {
+    final now = DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true);
+    final turn = TurnTask(
+      id: 'provider\u0000turn-active', providerId: 'provider',
+      conversationId: _conversation.id, status: TurnStatus.running,
+      updatedAt: now,
+      resource: const RoutedResourceId(providerId: 'provider', nativeResourceId: 'turn-active'),
+      conversationResource: _conversation.resource,
+    );
+    final provider = GatewayProvider(
+      id: _detailProviderId, displayName: 'Provider', status: ProviderStatus.ready,
+      capabilities: const GatewayCapabilities(
+        revision: 'revision-1',
+        methods: ['conversation.get', 'turn.send', 'turn.interrupt', 'approval.resolve'],
+        turnSend: TurnSendCapabilities(),
+      ),
+    );
+    final approval = GatewayMessage(
+      id: 'provider\u0000approval-1', itemId: 'approval-1',
+      turnId: turn.id, role: MessageRole.system, kind: 'approval',
+      content: '允许执行测试命令吗？', title: '执行命令',
+      approvalDescription: '允许执行测试命令吗？', approvalStatus: 'pending',
+      status: 'pending',
+      approvalDecisions: const [ApprovalDecision.approve, ApprovalDecision.deny],
+      resource: const RoutedResourceId(providerId: 'provider', nativeResourceId: 'approval-1'),
+      createdAt: now, isStreaming: false,
+    );
+    final client = _DetailClient(provider: provider, committedMessages: [approval]);
+    await _pumpDetail(tester, client, conversation: _idleConversation(activeTurn: turn));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('turn-interrupt')), findsOneWidget);
+    expect(find.byKey(const Key('pending-approval-title')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('approval-approve')));
+    await tester.pumpAndSettle();
+    expect(client.approvalCalls, [ApprovalDecision.approve]);
+    expect(find.text('已批准'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('turn-interrupt')));
+    await tester.pumpAndSettle();
+    expect(client.interruptCalls, [turn.id]);
+    expect(find.byKey(const Key('turn-send')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('event stream failure preserves rendered detail and live output', (tester) async {
     final client = _DetailClient();
     await _pumpDetail(tester, client);
@@ -1618,7 +1663,7 @@ ConversationSummary _idleConversation({
       resource: _conversation.resource,
     );
 
-class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
+class _DetailClient implements GatewayClient, ConversationReadGatewayClient, ConversationControlGatewayClient {
   _DetailClient({
     this.committedMessages = const [],
     this.eventDuringFirstGet,
@@ -1641,6 +1686,8 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
   int getCalls = 0;
   int acquireCalls = 0;
   final List<String> markReadCalls = [];
+  final List<String> interruptCalls = [];
+  final List<ApprovalDecision> approvalCalls = [];
 
   @override Stream<GatewayEvent> get events => eventsController.stream;
   @override String? get latestEventCursor => _cursor;
@@ -1694,6 +1741,25 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient {
     sendCalls.add(call);
     final handler = onSend;
     return handler == null ? Future.value(_receipt(call)) : handler(call);
+  }
+  @override Future<TurnTask> interruptTurn({required ConversationSummary conversation, required TurnTask turn}) async {
+    interruptCalls.add(turn.id);
+    return TurnTask(id: turn.id, providerId: turn.providerId,
+      conversationId: turn.conversationId, status: TurnStatus.interrupted,
+      updatedAt: turn.updatedAt.add(const Duration(milliseconds: 1)),
+      completedAt: turn.updatedAt.add(const Duration(milliseconds: 1)),
+      resource: turn.resource, conversationResource: turn.conversationResource);
+  }
+  @override Future<GatewayMessage> resolveApproval({required GatewayMessage approval, required ApprovalDecision decision}) async {
+    approvalCalls.add(decision);
+    final status = decision == ApprovalDecision.approve ? 'approved' : 'denied';
+    return GatewayMessage(id: approval.id, itemId: approval.itemId,
+      turnId: approval.turnId, role: approval.role, kind: approval.kind,
+      content: approval.content, createdAt: approval.createdAt, isStreaming: false,
+      title: approval.title, status: status, approvalStatus: status,
+      approvalDescription: approval.approvalDescription,
+      approvalDecisions: approval.approvalDecisions,
+      approvalDecision: decision, resource: approval.resource);
   }
   @override Future<void> close() async {}
 }

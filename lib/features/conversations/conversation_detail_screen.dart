@@ -51,6 +51,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   ModelSelection? get _modelSelection => _controller.modelSelection;
   bool get _sending => _controller.sending;
   bool get _outcomeUnknown => _controller.outcomeUnknown;
+  GatewayMessage? get _pendingApproval => _controller.pendingApproval;
 
   @override
   void initState() {
@@ -145,6 +146,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   }
 
   void _clearUnknownOutcome() => _controller.clearUnknownOutcome();
+  Future<void> _interrupt() => _controller.interrupt();
+  Future<void> _resolveApproval(ApprovalDecision decision) =>
+      _controller.resolveApproval(decision);
   void _convergeHiddenMessageCount(int messageCount) {
     if (_hiddenMessageCount <= messageCount) return;
     _hiddenMessageCount = messageCount > _messagePageSize
@@ -531,6 +535,17 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (_pendingApproval != null) ...[
+                _ApprovalActions(
+                  approval: _pendingApproval!,
+                  resolving: _controller.resolvingApprovalId != null,
+                  canApprove: _controller.canResolveApproval(ApprovalDecision.approve),
+                  canDeny: _controller.canResolveApproval(ApprovalDecision.deny),
+                  onApprove: () => unawaited(_resolveApproval(ApprovalDecision.approve)),
+                  onDeny: () => unawaited(_resolveApproval(ApprovalDecision.deny)),
+                ),
+                const SizedBox(height: 8),
+              ],
               TextField(
                 key: const Key('turn-input'),
                 controller: _draftController,
@@ -573,6 +588,16 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                       ),
                     ],
                   ),
+              ],
+              if (_controller.controlError != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _controller.controlError!,
+                  key: const Key('conversation-control-error'),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                ),
               ],
               const SizedBox(height: 6),
               Row(
@@ -630,17 +655,30 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  IconButton.filled(
-                    key: const Key('turn-send'),
-                    tooltip: '发送',
-                    onPressed: _canSend ? () => unawaited(_send()) : null,
-                    icon: _sending
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.arrow_upward),
-                  ),
+                  if (_controller.canInterrupt || _controller.interrupting)
+                    IconButton.filled(
+                      key: const Key('turn-interrupt'),
+                      tooltip: '停止任务',
+                      onPressed: _controller.canInterrupt ? () => unawaited(_interrupt()) : null,
+                      icon: _controller.interrupting
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.stop_rounded),
+                    )
+                  else
+                    IconButton.filled(
+                      key: const Key('turn-send'),
+                      tooltip: '发送',
+                      onPressed: _canSend ? () => unawaited(_send()) : null,
+                      icon: _sending
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.arrow_upward),
+                    ),
                 ],
               ),
             ],
@@ -651,6 +689,61 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   }
 
   String get _composerHint => _controller.composerHint;
+}
+
+class _ApprovalActions extends StatelessWidget {
+  const _ApprovalActions({required this.approval, required this.resolving,
+    required this.canApprove, required this.canDeny,
+    required this.onApprove, required this.onDeny});
+
+  final GatewayMessage approval;
+  final bool resolving;
+  final bool canApprove;
+  final bool canDeny;
+  final VoidCallback onApprove;
+  final VoidCallback onDeny;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(approval.title ?? '需要审批', key: const Key('pending-approval-title'),
+              style: Theme.of(context).textTheme.titleSmall),
+            if (approval.approvalDescription?.isNotEmpty == true) ...[
+              const SizedBox(height: 2),
+              Text(approval.approvalDescription!,
+                key: const Key('pending-approval-description'),
+                maxLines: 3, overflow: TextOverflow.ellipsis),
+            ],
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (resolving)
+                  const Padding(padding: EdgeInsets.only(right: 12),
+                    child: SizedBox.square(dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))),
+                TextButton(key: const Key('approval-deny'),
+                  onPressed: canDeny ? onDeny : null, child: const Text('拒绝')),
+                const SizedBox(width: 4),
+                FilledButton(key: const Key('approval-approve'),
+                  onPressed: canApprove ? onApprove : null, child: const Text('批准')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ConversationTitle extends StatelessWidget {

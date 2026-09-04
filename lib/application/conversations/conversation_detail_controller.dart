@@ -39,6 +39,7 @@ class ConversationDetailController extends ApplicationNotifier {
   String? _error;
   String? _sendError;
   String? _interactionError;
+  String? _controlError;
   String? _accessModeId;
   String? _reasoningEffortId;
   ModelSelection? _modelSelection;
@@ -51,6 +52,8 @@ class ConversationDetailController extends ApplicationNotifier {
   bool _outcomeUnknown = false;
   bool _staleCapabilities = false;
   bool _refreshingTerminal = false;
+  bool _interrupting = false;
+  String? _resolvingApprovalId;
   bool _followOutputRequested = false;
   String? _markingReadToken;
 
@@ -60,6 +63,7 @@ class ConversationDetailController extends ApplicationNotifier {
   String? get error => _error;
   String? get sendError => _sendError;
   String? get interactionError => _interactionError;
+  String? get controlError => _controlError;
   String? get accessModeId => _accessModeId;
   String? get reasoningEffortId => _reasoningEffortId;
   ModelSelection? get modelSelection => _modelSelection;
@@ -68,6 +72,20 @@ class ConversationDetailController extends ApplicationNotifier {
   bool get outcomeUnknown => _outcomeUnknown;
   bool get staleCapabilities => _staleCapabilities;
   bool get refreshingTerminal => _refreshingTerminal;
+  bool get interrupting => _interrupting;
+  String? get resolvingApprovalId => _resolvingApprovalId;
+
+  GatewayMessage? get pendingApproval {
+    final pending = _detail?.committedMessages
+        .where((message) => message.kind == 'approval' &&
+            message.approvalStatus == 'pending' &&
+            message.resource != null &&
+            message.approvalDecisions.isNotEmpty)
+        .toList(growable: false);
+    if (pending == null || pending.isEmpty) return null;
+    pending.sort((left, right) => right.createdAt.compareTo(left.createdAt));
+    return pending.first;
+  }
 
   ConversationSummary get currentConversation {
     final key = conversationRoutingKey(_conversation);
@@ -151,6 +169,7 @@ class ConversationDetailController extends ApplicationNotifier {
     }
     _sendError = preserveUnknown ? unknownTurnOutcomeMessage : null;
     _interactionError = null;
+    _controlError = null;
     _accessModeId = null;
     _reasoningEffortId = null;
     _modelSelection = null;
@@ -164,6 +183,8 @@ class ConversationDetailController extends ApplicationNotifier {
     }
     _staleCapabilities = false;
     _refreshingTerminal = false;
+    _interrupting = false;
+    _resolvingApprovalId = null;
     notifyApplicationListeners();
     if (previousWindow != null) unawaited(previousWindow.close());
     if (lease == null || provider == null || binding == null) return;
@@ -594,6 +615,98 @@ class ConversationDetailController extends ApplicationNotifier {
       !_refreshingTerminal &&
       !conversationBlocksSend &&
       !_outcomeUnknown;
+
+  bool get canInterrupt {
+    final lease = _session.runtimeLease;
+    final turn = _detail?.activeTurn;
+    final provider = _provider;
+    return lease != null &&
+        lease.supportsConversationControl &&
+        _session.ownsRuntimeLease(lease) &&
+        provider?.status == ProviderStatus.ready &&
+        provider?.methods.contains('turn.interrupt') == true &&
+        turn != null &&
+        !turn.status.isTerminal &&
+        !_interrupting;
+  }
+
+  bool canResolveApproval(ApprovalDecision decision) {
+    final lease = _session.runtimeLease;
+    final approval = pendingApproval;
+    final provider = _provider;
+    return lease != null &&
+        lease.supportsConversationControl &&
+        _session.ownsRuntimeLease(lease) &&
+        provider?.status == ProviderStatus.ready &&
+        provider?.methods.contains('approval.resolve') == true &&
+        approval != null &&
+        approval.approvalDecisions.contains(decision) &&
+        _resolvingApprovalId == null;
+  }
+
+  Future<bool> interrupt() async {
+    if (!canInterrupt) return false;
+    final lease = _session.runtimeLease!;
+    final binding = _binding;
+    final turn = _detail!.activeTurn!;
+    if (binding == null) return false;
+    final epoch = _runtimeEpoch;
+    _interrupting = true;
+    _controlError = null;
+    notifyApplicationListeners();
+    try {
+      final interrupted = await lease.interruptTurn(
+        conversation: currentConversation,
+        turn: turn,
+      );
+      if (!_acceptsRuntime(epoch, lease, binding)) return false;
+      _detail = _detail?.withTurn(interrupted);
+      notifyApplicationListeners();
+      return true;
+    } catch (error) {
+      if (!_acceptsRuntime(epoch, lease, binding)) return false;
+      _controlError = '停止任务失败：$error';
+      notifyApplicationListeners();
+      return false;
+    } finally {
+      if (_acceptsRuntime(epoch, lease, binding)) {
+        _interrupting = false;
+        notifyApplicationListeners();
+      }
+    }
+  }
+
+  Future<bool> resolveApproval(ApprovalDecision decision) async {
+    if (!canResolveApproval(decision)) return false;
+    final lease = _session.runtimeLease!;
+    final binding = _binding;
+    final approval = pendingApproval!;
+    if (binding == null) return false;
+    final epoch = _runtimeEpoch;
+    _resolvingApprovalId = approval.id;
+    _controlError = null;
+    notifyApplicationListeners();
+    try {
+      final resolved = await lease.resolveApproval(
+        approval: approval,
+        decision: decision,
+      );
+      if (!_acceptsRuntime(epoch, lease, binding)) return false;
+      _detail = _detail?.withApproval(resolved);
+      notifyApplicationListeners();
+      return true;
+    } catch (error) {
+      if (!_acceptsRuntime(epoch, lease, binding)) return false;
+      _controlError = '处理审批失败：$error';
+      notifyApplicationListeners();
+      return false;
+    } finally {
+      if (_acceptsRuntime(epoch, lease, binding)) {
+        _resolvingApprovalId = null;
+        notifyApplicationListeners();
+      }
+    }
+  }
 
   Future<bool> send(String text) async {
     if (!canSend(text)) return false;

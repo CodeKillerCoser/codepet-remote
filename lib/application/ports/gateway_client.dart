@@ -84,6 +84,19 @@ abstract interface class ConversationReadGatewayClient {
   );
 }
 
+/// Optional write surface for active turns and pending approvals.
+abstract interface class ConversationControlGatewayClient {
+  Future<TurnTask> interruptTurn({
+    required ConversationSummary conversation,
+    required TurnTask turn,
+  });
+
+  Future<GatewayMessage> resolveApproval({
+    required GatewayMessage approval,
+    required ApprovalDecision decision,
+  });
+}
+
 class ConversationSnapshot {
   const ConversationSnapshot({
     required this.detail,

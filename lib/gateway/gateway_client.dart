@@ -15,6 +15,7 @@ final class ProtocolGatewayClient
     implements
         GatewayClient,
         ConversationReadGatewayClient,
+        ConversationControlGatewayClient,
         ProjectGatewayClient {
   ProtocolGatewayClient({
     required this.transport,
@@ -762,6 +763,89 @@ final class ProtocolGatewayClient
             ),
       effectiveSelection: effectiveSelection,
     );
+  }
+
+  @override
+  Future<TurnTask> interruptTurn({
+    required ConversationSummary conversation,
+    required TurnTask turn,
+  }) async {
+    final provider = await _requireProviderCapability(
+      conversation.providerId,
+      method: 'turn.interrupt',
+    );
+    if (provider.status != ProviderStatus.ready ||
+        !provider.methods.contains('turn.interrupt')) {
+      throw const FormatException('Provider turn.interrupt capability is unavailable');
+    }
+    final conversationResource = conversation.resource;
+    final turnResource = turn.resource;
+    if (conversationResource == null || turnResource == null) {
+      throw const FormatException('Conversation or turn has no routed identity');
+    }
+    if (conversationResource.providerId != turnResource.providerId ||
+        conversationResource.providerId != conversation.providerId ||
+        turn.conversationResource != conversationResource) {
+      throw const FormatException('Turn does not belong to the conversation');
+    }
+    final response = await _call(() => _protocol.turnInterrupt(
+          sdk.TurnInterruptRequest(
+            conversation: _mapper.sdkResourceId(conversationResource),
+            turn: _mapper.sdkResourceId(turnResource),
+          ),
+        ));
+    final interrupted = _mapper.turn(response.turn);
+    if (interrupted.id != turn.id || interrupted.conversationId != conversation.id) {
+      throw const FormatException('turn.interrupt returned a different routed turn');
+    }
+    return interrupted;
+  }
+
+  @override
+  Future<GatewayMessage> resolveApproval({
+    required GatewayMessage approval,
+    required ApprovalDecision decision,
+  }) async {
+    final resource = approval.resource;
+    if (resource == null || approval.kind != 'approval') {
+      throw const FormatException('Approval has no routed identity');
+    }
+    final provider = await _requireProviderCapability(
+      resource.providerId,
+      method: 'approval.resolve',
+    );
+    if (provider.status != ProviderStatus.ready ||
+        !provider.methods.contains('approval.resolve') ||
+        approval.approvalStatus != 'pending' ||
+        !approval.approvalDecisions.contains(decision)) {
+      throw const FormatException('Provider approval.resolve capability is unavailable or invalid');
+    }
+    final response = await _call(() => _protocol.approvalResolve(
+          sdk.ApprovalResolveRequest(
+            approval: _mapper.sdkResourceId(resource),
+            decision: switch (decision) {
+              ApprovalDecision.approve => sdk.ApprovalDecision.approve,
+              ApprovalDecision.deny => sdk.ApprovalDecision.deny,
+            },
+          ),
+        ));
+    for (final routed in [
+      response.approval.resource,
+      response.approval.conversation,
+      response.approval.turn,
+    ]) {
+      _mapper.requireExpectedResource(
+        routed,
+        expectedDeviceId: expectedDeviceId,
+        expectedProviderRouteKeys: _providerIds,
+      );
+    }
+    if (!_mapper.hasSameRoute(response.approval.resource, response.approval.conversation) ||
+        !_mapper.hasSameRoute(response.approval.resource, response.approval.turn) ||
+        _mapper.resourceKey(response.approval.resource) != approval.id) {
+      throw const FormatException('Invalid routed approval.resolve response');
+    }
+    return _mapper.approval(response.approval);
   }
 
   @override

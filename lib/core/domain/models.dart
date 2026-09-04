@@ -133,6 +133,14 @@ enum TurnStatus {
 
 enum MessageRole { user, assistant, system }
 
+enum ApprovalDecision {
+  approve('approve'),
+  deny('deny');
+
+  const ApprovalDecision(this.wireValue);
+  final String wireValue;
+}
+
 class GatewayMessageContent {
   const GatewayMessageContent({
     required this.id,
@@ -1081,6 +1089,9 @@ class GatewayMessage {
     this.status,
     this.approvalStatus,
     this.approvalDescription,
+    this.resource,
+    this.approvalDecisions = const [],
+    this.approvalDecision,
     this.relatedItemId,
     this.sequence,
     this.tool,
@@ -1103,6 +1114,9 @@ class GatewayMessage {
   final String? status;
   final String? approvalStatus;
   final String? approvalDescription;
+  final RoutedResourceId? resource;
+  final List<ApprovalDecision> approvalDecisions;
+  final ApprovalDecision? approvalDecision;
   final String? relatedItemId;
   final int? sequence;
   final GatewayToolInvocation? tool;
@@ -1132,6 +1146,9 @@ class GatewayMessage {
       status: status,
       approvalStatus: approvalStatus,
       approvalDescription: approvalDescription,
+      resource: resource,
+      approvalDecisions: approvalDecisions,
+      approvalDecision: approvalDecision,
       relatedItemId: relatedItemId,
       sequence: sequence,
       tool: tool,
@@ -1261,6 +1278,31 @@ class ConversationDetail {
 
   String? _clientRequestIdForTurn(String turnId) =>
       _turnById(turnId)?.clientRequestId;
+
+  ConversationDetail withTurn(TurnTask turn) => ConversationDetail(
+        summary: summary.withTurn(turn),
+        committedMessages: committedMessages,
+        liveOutputMessages: liveOutputMessages,
+        turns: _upsertTurn(turns, turn),
+        lastEventCursor: lastEventCursor,
+      );
+
+  ConversationDetail withApproval(GatewayMessage approval) {
+    final nextMessages = [...committedMessages];
+    final index = nextMessages.indexWhere((message) => message.id == approval.id);
+    if (index == -1) {
+      nextMessages.add(approval);
+    } else {
+      nextMessages[index] = approval;
+    }
+    return ConversationDetail(
+      summary: summary,
+      committedMessages: nextMessages,
+      liveOutputMessages: liveOutputMessages,
+      turns: turns,
+      lastEventCursor: lastEventCursor,
+    );
+  }
 
   ConversationDetail apply(GatewayEvent event) {
     if (event is ConversationUpsertedEvent &&
