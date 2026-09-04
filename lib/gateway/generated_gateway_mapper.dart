@@ -421,6 +421,7 @@ final class GeneratedGatewayMapper {
             command: input.command,
             cwd: input.cwd,
             shell: input.shell,
+            truncation: _truncation(input.truncation),
             actions: input.actions?.map(_toolAction).toList(growable: false) ??
                 const [],
           ),

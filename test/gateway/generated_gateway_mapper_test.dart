@@ -22,6 +22,11 @@ void main() {
             'kind': 'command',
             'command': 'dart test',
             'cwd': '/workspace',
+            'truncation': {
+              'originalBytes': 9000,
+              'retainedBytes': 256,
+              'strategy': 'head-tail',
+            },
           },
           outcome: {
             'kind': 'success',
@@ -112,6 +117,10 @@ void main() {
 
     final command = mapped[2].tool!;
     expect(command.input, isA<GatewayCommandToolInput>());
+    final commandInput = command.input as GatewayCommandToolInput;
+    expect(commandInput.truncation?.originalBytes, 9000);
+    expect(commandInput.truncation?.retainedBytes, 256);
+    expect(commandInput.truncation?.strategy, 'head-tail');
     expect(command.outcome, isA<GatewayToolSuccess>());
     expect(mapped[2].contentIds, ['command:output']);
 

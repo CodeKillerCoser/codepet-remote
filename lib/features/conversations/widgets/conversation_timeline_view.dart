@@ -434,7 +434,7 @@ class _ToolInvocationDetails extends StatelessWidget {
     final inputTruncation = switch (tool.input) {
       GatewayStructuredToolInput value => value.truncation,
       GatewayOpaqueToolInput value => value.truncation,
-      GatewayCommandToolInput _ => null,
+      GatewayCommandToolInput value => value.truncation,
     };
     final input = inputTruncation == null
         ? inputValue

@@ -219,12 +219,14 @@ final class GatewayCommandToolInput extends GatewayToolInput {
     required this.command,
     this.cwd,
     this.shell,
+    this.truncation,
     this.actions = const [],
   });
 
   final String command;
   final String? cwd;
   final String? shell;
+  final GatewayContentTruncation? truncation;
   final List<GatewayToolCommandAction> actions;
 }
 

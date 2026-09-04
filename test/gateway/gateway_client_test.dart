@@ -631,6 +631,9 @@ void main() {
     final outcome = history[2].tool?.outcome as GatewayToolSuccess;
     expect(input.command, 'git status --short');
     expect(input.cwd, '/workspace');
+    expect(input.truncation?.originalBytes, 4096);
+    expect(input.truncation?.retainedBytes, 16);
+    expect(input.truncation?.strategy, 'head-tail');
     expect(outcome.exitCode, 0);
     expect(history[2].tool?.durationMs, 24);
     expect(outcome.content.single.text, 'working tree clean');

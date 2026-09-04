@@ -313,10 +313,7 @@ final class ConversationTimelineProjector {
           sourceItemIds: common.sourceItemIds,
           isStreaming: common.isStreaming,
           title: item.title ?? '命令执行',
-          command: switch (item.tool?.input) {
-            GatewayCommandToolInput input => input.command,
-            _ => '',
-          },
+          command: _commandInputText(item.tool),
           output: _toolOutcomeText(item.tool).isNotEmpty
               ? _toolOutcomeText(item.tool)
               : _textFor(contents, const {'output'}),
@@ -428,6 +425,17 @@ final class ConversationTimelineProjector {
         })
         .where((value) => value.isNotEmpty)
         .join('\n\n');
+  }
+
+  String _commandInputText(GatewayToolInvocation? tool) {
+    final input = tool?.input;
+    if (input is! GatewayCommandToolInput) return '';
+    final truncation = input.truncation;
+    if (truncation == null) return input.command;
+    return '${input.command}\n'
+        '[内容已截断：originalBytes=${truncation.originalBytes}, '
+        'retainedBytes=${truncation.retainedBytes}, '
+        'strategy=${truncation.strategy}]';
   }
 
   String _legacyContentKind(String itemKind) => switch (itemKind) {

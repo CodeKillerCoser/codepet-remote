@@ -523,6 +523,11 @@ void main() {
             input: const GatewayCommandToolInput(
               command: 'find lib -type f',
               cwd: '/workspace',
+              truncation: GatewayContentTruncation(
+                originalBytes: 8192,
+                retainedBytes: 16,
+                strategy: 'tail',
+              ),
             ),
             outcome: const GatewayToolSuccess(
               content: [
@@ -574,10 +579,13 @@ void main() {
     expect(find.byKey(const Key('tool-detail-sheet')), findsOneWidget);
     expect(find.byKey(const Key('tool-detail-command')), findsOneWidget);
     expect(find.text('工具详情'), findsOneWidget);
-    expect(find.text('find lib -type f'), findsOneWidget);
+    expect(find.textContaining('find lib -type f'), findsOneWidget);
     expect(find.textContaining('调用：shell'), findsOneWidget);
     expect(find.textContaining('目录：/workspace'), findsOneWidget);
     expect(find.textContaining('lib/main.dart'), findsOneWidget);
+    expect(find.textContaining('originalBytes=8192'), findsOneWidget);
+    expect(find.textContaining('retainedBytes=16'), findsOneWidget);
+    expect(find.textContaining('strategy=tail'), findsOneWidget);
     expect(find.textContaining('originalBytes=4096'), findsOneWidget);
     expect(find.textContaining('retainedBytes=13'), findsOneWidget);
     expect(find.textContaining('strategy=head-tail'), findsOneWidget);
