@@ -37,6 +37,7 @@ class RemoteHomeScreen extends StatefulWidget {
 class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
   final Set<DeviceSession> _listenedSessions = {};
   final Map<String, _DeviceHomeViewState> _deviceViewStates = {};
+  final Set<String> _scheduledProjectConversationCounts = {};
 
   @override
   void initState() {
@@ -292,6 +293,10 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     final visibleCount = requestedCount < projects.length
         ? requestedCount
         : projects.length;
+    _scheduleProjectConversationCounts(
+      session,
+      projects.take(visibleCount),
+    );
     final widgets = <Widget>[];
     widgets.addAll(projects.take(visibleCount).map((project) {
       return Padding(
@@ -333,6 +338,31 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       );
     }
     return widgets;
+  }
+
+  void _scheduleProjectConversationCounts(
+    DeviceSession session,
+    Iterable<GatewayProject> projects,
+  ) {
+    for (final project in projects) {
+      if (session.hasLoadedProjectConversations(project) ||
+          session.isLoadingProjectConversations(project)) {
+        continue;
+      }
+      final key = '${session.device.deviceId}\u0000${project.key}';
+      if (!_scheduledProjectConversationCounts.add(key)) continue;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          _scheduledProjectConversationCounts.remove(key);
+          return;
+        }
+        unawaited(
+          session.ensureProjectConversations(project).whenComplete(() {
+            _scheduledProjectConversationCounts.remove(key);
+          }),
+        );
+      });
+    }
   }
 
   List<Widget> _recentWidgets(
@@ -729,6 +759,7 @@ class _ProjectCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final roots = project.roots.map((root) => root.path).join(' · ');
+    final conversationCount = session.projectConversationCountLabel(project);
     final canUpdate = provider.status == ProviderStatus.ready &&
         provider.methods.contains('project.update');
     final canDelete = provider.status == ProviderStatus.ready &&
@@ -750,8 +781,24 @@ class _ProjectCard extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        trailing: canUpdate || canDelete
-            ? PopupMenuButton<String>(
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (conversationCount == null)
+              Text(
+                '…',
+                key: Key('project-conversation-count-${project.key}'),
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            else
+              Text(
+                '$conversationCount 个对话',
+                key: Key('project-conversation-count-${project.key}'),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            const SizedBox(width: 4),
+            if (canUpdate || canDelete)
+              PopupMenuButton<String>(
                 key: Key('project-menu-${project.key}'),
                 onSelected: (value) {
                   if (value == 'edit') {
@@ -778,7 +825,10 @@ class _ProjectCard extends StatelessWidget {
                     const PopupMenuItem(value: 'delete', child: Text('删除项目')),
                 ],
               )
-            : const Icon(Icons.chevron_right),
+            else
+              const Icon(Icons.chevron_right),
+          ],
+        ),
         onTap: onOpenProject,
       ),
     );

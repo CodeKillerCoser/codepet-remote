@@ -117,6 +117,7 @@ class DeviceSession extends ApplicationNotifier {
   StreamSubscription<void>? _reconnectSignalSubscription;
   final Map<_ConversationListScope, String?> _conversationCursors = {};
   final Set<_ConversationListScope> _loadedConversationScopes = {};
+  final Set<_ConversationListScope> _loadingProjectConversationScopes = {};
   final Map<String, String?> _projectCursors = {};
   final Set<String> _projectRefreshes = {};
   final Set<String> _pendingProjectRefreshes = {};
@@ -239,6 +240,19 @@ class DeviceSession extends ApplicationNotifier {
           (conversation) => conversation.project == project.resource,
         ),
       );
+  bool hasLoadedProjectConversations(GatewayProject project) =>
+      _loadedConversationScopes.contains(
+        _ConversationListScope.project(project.resource),
+      );
+  bool isLoadingProjectConversations(GatewayProject project) =>
+      _loadingProjectConversationScopes.contains(
+        _ConversationListScope.project(project.resource),
+      );
+  String? projectConversationCountLabel(GatewayProject project) {
+    if (!hasLoadedProjectConversations(project)) return null;
+    final count = conversationsForProject(project).length;
+    return '$count${canLoadMoreProjectConversations(project) ? '+' : ''}';
+  }
   bool get canLoadMoreSelectedProviderConversations {
     final provider = selectedProvider;
     if (provider == null) return false;
@@ -307,7 +321,9 @@ class DeviceSession extends ApplicationNotifier {
       _conversationCursors.values.any((cursor) => cursor != null);
   String get conversationCountLabel =>
       '${conversations.length}${canLoadMoreConversations ? '+' : ''}';
-  bool get isLoadingMoreConversations => _isLoadingMoreConversations;
+  bool get isLoadingMoreConversations =>
+      _isLoadingMoreConversations ||
+      _loadingProjectConversationScopes.isNotEmpty;
   String? get loadMoreError => _loadMoreError;
 
   Future<void> connect() {
@@ -573,7 +589,10 @@ class DeviceSession extends ApplicationNotifier {
 
   Future<void> ensureProjectConversations(GatewayProject project) async {
     final scope = _ConversationListScope.project(project.resource);
-    if (_loadedConversationScopes.contains(scope)) return;
+    if (_loadedConversationScopes.contains(scope) ||
+        _loadingProjectConversationScopes.contains(scope)) {
+      return;
+    }
     await _loadProjectConversationPage(scope, cursor: null);
   }
 
@@ -596,11 +615,11 @@ class DeviceSession extends ApplicationNotifier {
     final client = _client;
     if (connectionState != DeviceConnectionState.online ||
         client == null ||
-        _isLoadingMoreConversations) {
+        _loadingProjectConversationScopes.contains(scope)) {
       return;
     }
     final generation = _runtimeGeneration;
-    _isLoadingMoreConversations = true;
+    _loadingProjectConversationScopes.add(scope);
     _loadMoreError = null;
     _notifyListenersImmediately();
     try {
@@ -633,7 +652,7 @@ class DeviceSession extends ApplicationNotifier {
       }
     } finally {
       if (_ownsRuntime(generation, client)) {
-        _isLoadingMoreConversations = false;
+        _loadingProjectConversationScopes.remove(scope);
         _notifyListenersImmediately();
       }
     }
@@ -952,6 +971,7 @@ class DeviceSession extends ApplicationNotifier {
     projects = const [];
     _conversationCursors.clear();
     _loadedConversationScopes.clear();
+    _loadingProjectConversationScopes.clear();
     _projectCursors.clear();
     _projectRefreshes.clear();
     _pendingProjectRefreshes.clear();

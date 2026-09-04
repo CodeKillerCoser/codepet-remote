@@ -64,6 +64,15 @@ void main() {
     final project = session.selectedProviderProjects.single;
     expect(find.byKey(const Key('projects-section-demo-studio')), findsOneWidget);
     expect(find.byKey(Key('project-card-${project.key}')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      tester
+          .widget<Text>(
+            find.byKey(Key('project-conversation-count-${project.key}')),
+          )
+          .data,
+      '${session.conversationsForProject(project).length} 个对话',
+    );
     expect(find.text('Gateway 协议契约核对'), findsOneWidget);
     expect(find.text('实现 Remote 会话流'), findsNothing);
 
