@@ -5,6 +5,14 @@ import 'package:codepet_remote/gateway/pinned_web_socket_transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('enables WebSocket compression without context takeover', () {
+    const options = PinnedWebSocketGatewayTransport.compressionOptions;
+
+    expect(options.enabled, isTrue);
+    expect(options.clientNoContextTakeover, isTrue);
+    expect(options.serverNoContextTakeover, isTrue);
+  });
+
   test('rejects a non-wss URI before attempting a connection', () async {
     final transport = PinnedWebSocketGatewayTransport(
       gatewayUri: Uri.parse('ws://127.0.0.1:1/remote/v1/gateway'),

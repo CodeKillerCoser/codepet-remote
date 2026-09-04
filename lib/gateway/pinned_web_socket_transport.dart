@@ -8,6 +8,11 @@ import '../security/pinned_tls.dart';
 import 'transport.dart';
 
 class PinnedWebSocketGatewayTransport implements GatewayTransport {
+  static const compressionOptions = CompressionOptions(
+    clientNoContextTakeover: true,
+    serverNoContextTakeover: true,
+  );
+
   PinnedWebSocketGatewayTransport({
     required this.gatewayUri,
     required this.credential,
@@ -51,6 +56,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
       gatewayUri.toString(),
       headers: {'Authorization': 'Bearer $credential'},
       customClient: client,
+      compression: compressionOptions,
     );
     try {
       final socket = await connection.timeout(
