@@ -208,7 +208,8 @@ class _ToolActivityLauncher extends StatelessWidget {
   final TimelineApproval? approval;
 
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context) {
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _ActivityHeader(
@@ -226,6 +227,7 @@ class _ToolActivityLauncher extends StatelessWidget {
             ),
         ],
       );
+  }
 }
 
 void _showToolDetails(
@@ -352,7 +354,12 @@ class _CommandDetails extends StatelessWidget {
   final CommandBlock block;
 
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context) {
+    final input = block.tool?.input;
+    final outcome = block.tool?.outcome;
+    final commandInput = input is GatewayCommandToolInput ? input : null;
+    final failure = outcome is GatewayToolFailure ? outcome : null;
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (block.tool != null) ...[
@@ -365,11 +372,11 @@ class _CommandDetails extends StatelessWidget {
             const SizedBox(height: 18),
           if (block.output.isNotEmpty)
             _ToolDetailSection(label: '输出', text: block.output),
-          if (block.tool?.commandActions.isNotEmpty == true) ...[
+          if (commandInput?.actions.isNotEmpty == true) ...[
             const SizedBox(height: 18),
             _ToolDetailSection(
               label: '命令动作',
-              text: block.tool!.commandActions
+              text: commandInput!.actions
                   .map((action) => [
                         action.kind,
                         action.path ?? action.query ?? action.name,
@@ -378,7 +385,7 @@ class _CommandDetails extends StatelessWidget {
                   .join('\n'),
             ),
           ],
-          if (block.tool?.errorMessage case final String error) ...[
+          if (failure?.error.message case final String error) ...[
             if (block.output.isNotEmpty || block.command.isNotEmpty)
               const SizedBox(height: 18),
             _ToolDetailSection(label: '错误', text: error),
@@ -392,6 +399,7 @@ class _CommandDetails extends StatelessWidget {
             ),
         ],
       );
+  }
 }
 
 class _ToolInvocationDetails extends StatelessWidget {
@@ -413,28 +421,44 @@ class _ToolInvocationDetails extends StatelessWidget {
             )
           : _MarkdownContent(data: fallback);
     }
-    final input = tool.input.isEmpty
-        ? tool.rawInput
-        : const JsonEncoder.withIndent('  ').convert(tool.input);
-    final result = tool.resultContent
+    final inputValue = switch (tool.input) {
+      GatewayCommandToolInput value => [
+          value.command,
+          if (value.cwd != null) 'cwd: ${value.cwd}',
+          if (value.shell != null) 'shell: ${value.shell}',
+        ].join('\n'),
+      GatewayStructuredToolInput value =>
+        const JsonEncoder.withIndent('  ').convert(value.value),
+      GatewayOpaqueToolInput value => value.value,
+    };
+    final inputTruncation = switch (tool.input) {
+      GatewayStructuredToolInput value => value.truncation,
+      GatewayOpaqueToolInput value => value.truncation,
+      GatewayCommandToolInput _ => null,
+    };
+    final input = inputTruncation == null
+        ? inputValue
+        : '$inputValue\n[内容已截断：originalBytes=${inputTruncation.originalBytes}, '
+            'retainedBytes=${inputTruncation.retainedBytes}, '
+            'strategy=${inputTruncation.strategy}]';
+    final outcome = tool.outcome;
+    final result = (outcome?.content ?? const <GatewayMessageContent>[])
         .map((content) {
-          final value = content.text ?? content.uri ?? '';
-          if (!content.truncated) return value;
-          final size = content.totalBytes == null
-              ? ''
-              : '，原始 ${content.totalBytes} bytes';
-          return '$value\n[内容已截断$size]';
+          final value = content.displayText;
+          final truncation = content.truncation;
+          if (truncation == null) return value;
+          return '$value\n[内容已截断：originalBytes=${truncation.originalBytes}, '
+              'retainedBytes=${truncation.retainedBytes}, '
+              'strategy=${truncation.strategy}]';
         })
         .where((value) => value.isNotEmpty)
         .join('\n\n');
-    final structured = tool.structuredContent == null
-        ? null
-        : const JsonEncoder.withIndent('  ').convert(tool.structuredContent);
+    final failure = outcome is GatewayToolFailure ? outcome : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _ToolInvocationSummary(tool: tool),
-        if (input != null && input.isNotEmpty) ...[
+        if (input.isNotEmpty) ...[
           const SizedBox(height: 18),
           _ToolDetailSection(label: '参数', text: input),
         ],
@@ -442,25 +466,13 @@ class _ToolInvocationDetails extends StatelessWidget {
           const SizedBox(height: 18),
           _ToolDetailSection(label: '结果', text: result),
         ],
-        if (structured != null && structured.isNotEmpty) ...[
-          const SizedBox(height: 18),
-          _ToolDetailSection(label: '结构化结果', text: structured),
-        ],
-        if (tool.errorMessage case final String error) ...[
+        if (failure?.error.message case final String error) ...[
           const SizedBox(height: 18),
           _ToolDetailSection(label: '错误', text: error),
         ],
-        if (tool.errorDetails != null) ...[
-          const SizedBox(height: 18),
-          _ToolDetailSection(
-            label: '错误详情',
-            text: const JsonEncoder.withIndent('  ').convert(tool.errorDetails),
-          ),
-        ],
-        if (input == null &&
+        if (input.isEmpty &&
             result.isEmpty &&
-            structured == null &&
-            tool.errorMessage == null &&
+            failure == null &&
             fallback.isNotEmpty) ...[
           const SizedBox(height: 18),
           _MarkdownContent(data: fallback),
@@ -482,13 +494,18 @@ class _ToolInvocationSummary extends StatelessWidget {
         .where((value) => value.isNotEmpty)
         .join(' · ');
     final duration = tool.durationMs == null ? null : '${tool.durationMs} ms';
+    final commandInput =
+        tool.input is GatewayCommandToolInput
+            ? tool.input as GatewayCommandToolInput
+            : null;
+    final outcome = tool.outcome;
     final details = <String>[
       '调用：${tool.namespace == null ? tool.name : '${tool.namespace}/${tool.name}'}',
       '来源：$source',
       '类别：${tool.category}',
-      if (tool.cwd != null) '目录：${tool.cwd}',
-      if (tool.exitCode != null) '退出码：${tool.exitCode}',
-      if (tool.processId != null) '进程：${tool.processId}',
+      if (commandInput?.cwd != null) '目录：${commandInput!.cwd}',
+      if (outcome?.exitCode != null) '退出码：${outcome!.exitCode}',
+      if (outcome?.processId != null) '进程：${outcome!.processId}',
       if (duration != null) '耗时：$duration',
       if (tool.readOnly != null) '只读：${tool.readOnly! ? '是' : '否'}',
       if (tool.destructive != null) '破坏性：${tool.destructive! ? '是' : '否'}',

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 typedef JsonMap = Map<String, dynamic>;
 
 const gatewayProtocolVersion = 1;
@@ -145,40 +147,51 @@ class GatewayMessageContent {
   const GatewayMessageContent({
     required this.id,
     required this.kind,
-    required this.text,
-  });
-
-  final String id;
-  final String kind;
-  final String text;
-
-  GatewayMessageContent copyWith({String? text}) => GatewayMessageContent(
-        id: id,
-        kind: kind,
-        text: text ?? this.text,
-      );
-}
-
-class GatewayToolContent {
-  const GatewayToolContent({
-    required this.id,
-    required this.kind,
     this.text,
+    this.value,
     this.uri,
     this.mimeType,
     this.name,
-    this.truncated = false,
-    this.totalBytes,
+    this.truncation,
   });
 
   final String id;
   final String kind;
   final String? text;
+  final JsonMap? value;
   final String? uri;
   final String? mimeType;
   final String? name;
-  final bool truncated;
-  final int? totalBytes;
+  final GatewayContentTruncation? truncation;
+
+  String get displayText {
+    if (text != null) return text!;
+    if (value != null) return jsonEncode(value);
+    return uri ?? '';
+  }
+
+  GatewayMessageContent copyWith({String? text}) => GatewayMessageContent(
+        id: id,
+        kind: kind,
+        text: text ?? this.text,
+        value: value,
+        uri: uri,
+        mimeType: mimeType,
+        name: name,
+        truncation: truncation,
+      );
+}
+
+class GatewayContentTruncation {
+  const GatewayContentTruncation({
+    required this.originalBytes,
+    required this.retainedBytes,
+    required this.strategy,
+  });
+
+  final int originalBytes;
+  final int retainedBytes;
+  final String strategy;
 }
 
 class GatewayToolCommandAction {
@@ -197,6 +210,89 @@ class GatewayToolCommandAction {
   final String? query;
 }
 
+sealed class GatewayToolInput {
+  const GatewayToolInput();
+}
+
+final class GatewayCommandToolInput extends GatewayToolInput {
+  const GatewayCommandToolInput({
+    required this.command,
+    this.cwd,
+    this.shell,
+    this.actions = const [],
+  });
+
+  final String command;
+  final String? cwd;
+  final String? shell;
+  final List<GatewayToolCommandAction> actions;
+}
+
+final class GatewayStructuredToolInput extends GatewayToolInput {
+  const GatewayStructuredToolInput({
+    required this.value,
+    this.truncation,
+  });
+
+  final JsonMap value;
+  final GatewayContentTruncation? truncation;
+}
+
+final class GatewayOpaqueToolInput extends GatewayToolInput {
+  const GatewayOpaqueToolInput({
+    required this.value,
+    this.mimeType,
+    this.truncation,
+  });
+
+  final String value;
+  final String? mimeType;
+  final GatewayContentTruncation? truncation;
+}
+
+class GatewayToolError {
+  const GatewayToolError({
+    required this.message,
+    this.code,
+    this.retryable,
+  });
+
+  final String message;
+  final String? code;
+  final bool? retryable;
+}
+
+sealed class GatewayToolOutcome {
+  const GatewayToolOutcome({
+    required this.content,
+    this.exitCode,
+    this.processId,
+  });
+
+  final List<GatewayMessageContent> content;
+  final int? exitCode;
+  final String? processId;
+}
+
+final class GatewayToolSuccess extends GatewayToolOutcome {
+  const GatewayToolSuccess({
+    required super.content,
+    super.exitCode,
+    super.processId,
+  });
+}
+
+final class GatewayToolFailure extends GatewayToolOutcome {
+  const GatewayToolFailure({
+    required super.content,
+    required this.error,
+    super.exitCode,
+    super.processId,
+  });
+
+  final GatewayToolError error;
+}
+
 class GatewayToolInvocation {
   const GatewayToolInvocation({
     required this.callId,
@@ -206,21 +302,10 @@ class GatewayToolInvocation {
     required this.input,
     this.namespace,
     this.originName,
-    this.rawInput,
-    this.resultContent = const [],
-    this.structuredContent,
-    this.errorCode,
-    this.errorMessage,
-    this.errorRetryable,
-    this.errorDetails,
+    this.outcome,
     this.startedAt,
     this.completedAt,
     this.durationMs,
-    this.command,
-    this.cwd,
-    this.exitCode,
-    this.processId,
-    this.commandActions = const [],
     this.readOnly,
     this.destructive,
     this.idempotent,
@@ -233,22 +318,11 @@ class GatewayToolInvocation {
   final String category;
   final String originKind;
   final String? originName;
-  final JsonMap input;
-  final String? rawInput;
-  final List<GatewayToolContent> resultContent;
-  final JsonMap? structuredContent;
-  final String? errorCode;
-  final String? errorMessage;
-  final bool? errorRetryable;
-  final JsonMap? errorDetails;
+  final GatewayToolInput input;
+  final GatewayToolOutcome? outcome;
   final DateTime? startedAt;
   final DateTime? completedAt;
   final int? durationMs;
-  final String? command;
-  final String? cwd;
-  final int? exitCode;
-  final String? processId;
-  final List<GatewayToolCommandAction> commandActions;
   final bool? readOnly;
   final bool? destructive;
   final bool? idempotent;
@@ -1453,12 +1527,12 @@ class ConversationDetail {
         } else {
           final content = nextContents[contentIndex];
           nextContents[contentIndex] = content.copyWith(
-            text: '${content.text}${event.delta}',
+            text: '${content.text ?? ''}${event.delta}',
           );
         }
         nextMessages[messageIndex] = current.copyWith(
           content: nextContents
-              .map((content) => content.text)
+              .map((content) => content.displayText)
               .where((text) => text.isNotEmpty)
               .join('\n'),
           isStreaming: true,

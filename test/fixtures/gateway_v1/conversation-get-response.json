@@ -80,42 +80,35 @@
           "kind": "command",
           "status": "completed",
           "title": "Run git status --short",
-          "contents": [
-            {
-              "contentId": "command-01:command",
+          "tool": {
+            "callId": "command-01",
+            "name": "shell",
+            "category": "command",
+            "origin": { "kind": "builtin", "name": "codex" },
+            "input": {
               "kind": "command",
-              "text": "git status --short"
+              "command": "git status --short",
+              "cwd": "/workspace"
             },
-            {
-              "contentId": "command-01:output",
-              "kind": "output",
-          "text": ""
-        }
-      ],
-      "tool": {
-        "callId": "command-01",
-        "name": "shell",
-        "category": "command",
-        "origin": { "kind": "builtin", "name": "codex" },
-        "input": { "command": "git status --short", "cwd": "/workspace" },
-        "result": {
-          "content": [
-            {
-              "contentId": "command-01:output",
-              "kind": "text",
-              "text": "working tree clean",
-              "mimeType": "text/plain"
-            }
-          ]
+            "outcome": {
+              "kind": "success",
+              "content": [
+                {
+                  "contentId": "command-01:output",
+                  "kind": "output",
+                  "text": "working tree clean",
+                  "truncation": {
+                    "originalBytes": 42,
+                    "retainedBytes": 18,
+                    "strategy": "head"
+                  }
+                }
+              ],
+              "exitCode": 0
+            },
+            "timing": { "durationMs": 24 }
+          }
         },
-        "timing": { "durationMs": 24 },
-        "command": {
-          "command": "git status --short",
-          "cwd": "/workspace",
-          "exitCode": 0
-        }
-      }
-    },
         {
           "resource": {
             "providerId": "codex-work",
@@ -132,13 +125,6 @@
           "kind": "approval",
           "status": "approved",
           "title": "Approve command",
-          "contents": [
-            {
-              "contentId": "approval-command-01:summary",
-              "kind": "activity-summary",
-              "text": "Run git status --short"
-            }
-          ],
           "relatedItem": {
             "providerId": "codex-work",
             "nativeResourceId": "command-01"

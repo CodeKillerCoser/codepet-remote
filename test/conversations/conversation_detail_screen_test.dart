@@ -520,21 +520,26 @@ void main() {
             category: 'command',
             originKind: 'builtin',
             originName: 'codex',
-            input: const {
-              'command': 'find lib -type f',
-              'cwd': '/workspace',
-            },
-            resultContent: const [
-              GatewayToolContent(
+            input: const GatewayCommandToolInput(
+              command: 'find lib -type f',
+              cwd: '/workspace',
+            ),
+            outcome: const GatewayToolSuccess(
+              content: [
+              GatewayMessageContent(
                 id: 'running-command:output',
-                kind: 'text',
+                kind: 'output',
                 text: 'lib/main.dart',
+                truncation: GatewayContentTruncation(
+                  originalBytes: 4096,
+                  retainedBytes: 13,
+                  strategy: 'head-tail',
+                ),
               ),
-            ],
+              ],
+              exitCode: 0,
+            ),
             durationMs: 18,
-            command: 'find lib -type f',
-            cwd: '/workspace',
-            exitCode: 0,
           ),
         ),
       ],
@@ -572,7 +577,10 @@ void main() {
     expect(find.text('find lib -type f'), findsOneWidget);
     expect(find.textContaining('调用：shell'), findsOneWidget);
     expect(find.textContaining('目录：/workspace'), findsOneWidget);
-    expect(find.text('lib/main.dart'), findsOneWidget);
+    expect(find.textContaining('lib/main.dart'), findsOneWidget);
+    expect(find.textContaining('originalBytes=4096'), findsOneWidget);
+    expect(find.textContaining('retainedBytes=13'), findsOneWidget);
+    expect(find.textContaining('strategy=head-tail'), findsOneWidget);
     expect(
       find.descendant(of: command, matching: find.byType(AnimatedCrossFade)),
       findsNothing,

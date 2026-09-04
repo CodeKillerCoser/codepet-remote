@@ -2,6 +2,20 @@ import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 
 import '../core/domain/models.dart';
 
+typedef _ItemParts = ({
+  sdk.RoutedResourceId resource,
+  sdk.RoutedResourceId turn,
+  sdk.RoutedResourceId conversation,
+  String kind,
+  sdk.ConversationItemStatus status,
+  sdk.ConversationItemRole? role,
+  String? title,
+  sdk.RoutedResourceId? relatedItem,
+  sdk.Approval? approval,
+  sdk.ToolInvocation? tool,
+  List<sdk.ContentBlock> contents,
+});
+
 /// Maps generated Gateway SDK values into protocol-neutral application models.
 ///
 /// JSON-RPC envelopes and wire DTO validation stay entirely inside the
@@ -134,58 +148,254 @@ final class GeneratedGatewayMapper {
   }
 
   GatewayMessage message(sdk.ConversationItem value, int index) {
-    final contents = value.contents
-        .map(
-          (content) => GatewayMessageContent(
-            id: content.contentId,
-            kind: content.kind.wireValue,
-            text: content.text,
-          ),
-        )
-        .toList(growable: false);
-    final text = value.contents
-        .map((content) => content.text)
+    final parts = _itemParts(value);
+    final contents = parts.contents.map(_content).toList(growable: false);
+    final mappedTool = parts.tool == null ? null : tool(parts.tool!);
+    final text = contents
+        .map((content) => content.displayText)
         .where((content) => content.isNotEmpty)
         .join('\n');
-    final fallback = value.approval?.description ??
-        value.title ??
-        value.status.wireValue;
+    final fallback = parts.approval?.description ??
+        parts.title ??
+        parts.status.wireValue;
+    final contentIds = <String>{
+      ...contents.map((content) => content.id),
+      ...?mappedTool?.outcome?.content.map((content) => content.id),
+    }.toList(growable: false);
     return GatewayMessage(
-      id: resourceKey(value.resource),
-      itemId: value.resource.nativeResourceId,
-      turnId: resourceKey(value.turn),
-      role: switch (value.role?.wireValue) {
+      id: resourceKey(parts.resource),
+      itemId: parts.resource.nativeResourceId,
+      turnId: resourceKey(parts.turn),
+      role: switch (parts.role?.wireValue) {
         'user' => MessageRole.user,
         'assistant' => MessageRole.assistant,
         _ => MessageRole.system,
       },
-      kind: value.kind.wireValue,
+      kind: parts.kind,
       content: text.isEmpty ? fallback : text,
       createdAt: _epoch,
       isStreaming: false,
-      contentIds: value.contents
-          .map((content) => content.contentId)
-          .toList(growable: false),
+      contentIds: contentIds,
       contents: contents,
-      title: value.title ?? value.approval?.title,
-      status: value.status.wireValue,
-      approvalStatus: value.approval?.status.wireValue,
-      approvalDescription: value.approval?.description,
-      resource: resourceId(value.resource),
-      approvalDecisions: value.approval?.decisions
+      title: parts.title ?? parts.approval?.title,
+      status: parts.status.wireValue,
+      approvalStatus: parts.approval?.status.wireValue,
+      approvalDescription: parts.approval?.description,
+      resource: resourceId(parts.resource),
+      approvalDecisions: parts.approval?.decisions
               .map(_approvalDecision)
               .toList(growable: false) ??
           const [],
-      approvalDecision: value.approval?.decision == null
+      approvalDecision: parts.approval?.decision == null
           ? null
-          : _approvalDecision(value.approval!.decision!),
-      relatedItemId: value.relatedItem == null
+          : _approvalDecision(parts.approval!.decision!),
+      relatedItemId: parts.relatedItem == null
           ? null
-          : resourceKey(value.relatedItem!),
+          : resourceKey(parts.relatedItem!),
       sequence: index,
-      tool: value.tool == null ? null : tool(value.tool!),
+      tool: mappedTool,
     );
   }
+
+  _ItemParts _itemParts(sdk.ConversationItem value) => switch (value) {
+        sdk.MessageConversationItem item => (
+            resource: item.resource,
+            turn: item.turn,
+            conversation: item.conversation,
+            kind: item.kind.wireValue,
+            status: item.status,
+            role: item.role,
+            title: null,
+            relatedItem: null,
+            approval: null,
+            tool: null,
+            contents: item.contents,
+          ),
+        sdk.ReasoningConversationItem item => (
+            resource: item.resource,
+            turn: item.turn,
+            conversation: item.conversation,
+            kind: item.kind.wireValue,
+            status: item.status,
+            role: null,
+            title: null,
+            relatedItem: null,
+            approval: null,
+            tool: null,
+            contents: item.contents,
+          ),
+        sdk.CommandConversationItem item => (
+            resource: item.resource,
+            turn: item.turn,
+            conversation: item.conversation,
+            kind: item.kind.wireValue,
+            status: item.status,
+            role: null,
+            title: item.title,
+            relatedItem: null,
+            approval: null,
+            tool: item.tool,
+            contents: const [],
+          ),
+        sdk.FileChangeConversationItem item => (
+            resource: item.resource,
+            turn: item.turn,
+            conversation: item.conversation,
+            kind: item.kind.wireValue,
+            status: item.status,
+            role: null,
+            title: item.title,
+            relatedItem: null,
+            approval: null,
+            tool: null,
+            contents: item.contents,
+          ),
+        sdk.ToolConversationItem item => (
+            resource: item.resource,
+            turn: item.turn,
+            conversation: item.conversation,
+            kind: item.kind.wireValue,
+            status: item.status,
+            role: null,
+            title: item.title,
+            relatedItem: null,
+            approval: null,
+            tool: item.tool,
+            contents: const [],
+          ),
+        sdk.ApprovalConversationItem item => (
+            resource: item.resource,
+            turn: item.turn,
+            conversation: item.conversation,
+            kind: item.kind.wireValue,
+            status: item.status,
+            role: null,
+            title: item.title,
+            relatedItem: item.relatedItem,
+            approval: item.approval,
+            tool: null,
+            contents: const [],
+          ),
+        sdk.UnknownConversationItem item => (
+            resource: item.resource,
+            turn: item.turn,
+            conversation: item.conversation,
+            kind: item.kind.wireValue,
+            status: item.status,
+            role: null,
+            title: item.title,
+            relatedItem: null,
+            approval: null,
+            tool: null,
+            contents: const [],
+          ),
+      };
+
+  sdk.RoutedResourceId itemResource(sdk.ConversationItem value) =>
+      _itemParts(value).resource;
+
+  sdk.RoutedResourceId itemTurn(sdk.ConversationItem value) =>
+      _itemParts(value).turn;
+
+  sdk.RoutedResourceId itemConversation(sdk.ConversationItem value) =>
+      _itemParts(value).conversation;
+
+  sdk.RoutedResourceId? itemRelatedItem(sdk.ConversationItem value) =>
+      _itemParts(value).relatedItem;
+
+  sdk.Approval? itemApproval(sdk.ConversationItem value) =>
+      _itemParts(value).approval;
+
+  bool isUserMessage(sdk.ConversationItem value) =>
+      value is sdk.MessageConversationItem &&
+      value.role == sdk.ConversationItemRole.user;
+
+  GatewayMessageContent _content(sdk.ContentBlock value) {
+    final truncation = switch (value) {
+      sdk.TextContentBlock block => block.truncation,
+      sdk.ReasoningSummaryContentBlock block => block.truncation,
+      sdk.OutputContentBlock block => block.truncation,
+      sdk.ActivitySummaryContentBlock block => block.truncation,
+      sdk.StructuredJsonContentBlock block => block.truncation,
+      sdk.ImageContentBlock block => block.truncation,
+      sdk.AudioContentBlock block => block.truncation,
+      sdk.ResourceLinkContentBlock block => block.truncation,
+      sdk.EmbeddedResourceContentBlock block => block.truncation,
+    };
+    return switch (value) {
+      sdk.TextContentBlock block => GatewayMessageContent(
+          id: block.contentId,
+          kind: block.kind.wireValue,
+          text: block.text,
+          truncation: _truncation(truncation),
+        ),
+      sdk.ReasoningSummaryContentBlock block => GatewayMessageContent(
+          id: block.contentId,
+          kind: block.kind.wireValue,
+          text: block.text,
+          truncation: _truncation(truncation),
+        ),
+      sdk.OutputContentBlock block => GatewayMessageContent(
+          id: block.contentId,
+          kind: block.kind.wireValue,
+          text: block.text,
+          truncation: _truncation(truncation),
+        ),
+      sdk.ActivitySummaryContentBlock block => GatewayMessageContent(
+          id: block.contentId,
+          kind: block.kind.wireValue,
+          text: block.text,
+          truncation: _truncation(truncation),
+        ),
+      sdk.StructuredJsonContentBlock block => GatewayMessageContent(
+          id: block.contentId,
+          kind: block.kind.wireValue,
+          value: Map<String, dynamic>.from(block.value),
+          truncation: _truncation(truncation),
+        ),
+      sdk.ImageContentBlock block => GatewayMessageContent(
+          id: block.contentId,
+          kind: block.kind.wireValue,
+          uri: block.uri,
+          mimeType: block.mimeType,
+          name: block.name,
+          truncation: _truncation(truncation),
+        ),
+      sdk.AudioContentBlock block => GatewayMessageContent(
+          id: block.contentId,
+          kind: block.kind.wireValue,
+          uri: block.uri,
+          mimeType: block.mimeType,
+          name: block.name,
+          truncation: _truncation(truncation),
+        ),
+      sdk.ResourceLinkContentBlock block => GatewayMessageContent(
+          id: block.contentId,
+          kind: block.kind.wireValue,
+          uri: block.uri,
+          mimeType: block.mimeType,
+          name: block.name,
+          truncation: _truncation(truncation),
+        ),
+      sdk.EmbeddedResourceContentBlock block => GatewayMessageContent(
+          id: block.contentId,
+          kind: block.kind.wireValue,
+          text: block.text,
+          mimeType: block.mimeType,
+          name: block.name,
+          truncation: _truncation(truncation),
+        ),
+    };
+  }
+
+  GatewayContentTruncation? _truncation(sdk.ContentTruncation? value) =>
+      value == null
+          ? null
+          : GatewayContentTruncation(
+              originalBytes: value.originalBytes,
+              retainedBytes: value.retainedBytes,
+              strategy: value.strategy.wireValue,
+            );
 
   GatewayToolInvocation tool(sdk.ToolInvocation value) =>
       GatewayToolInvocation(
@@ -195,51 +405,61 @@ final class GeneratedGatewayMapper {
         category: value.category.wireValue,
         originKind: value.origin.kind.wireValue,
         originName: value.origin.name,
-        input: Map<String, dynamic>.from(value.input),
-        rawInput: value.rawInput,
-        resultContent: value.result?.content
-                .map((content) => GatewayToolContent(
-                      id: content.contentId,
-                      kind: content.kind.wireValue,
-                      text: content.text,
-                      uri: content.uri,
-                      mimeType: content.mimeType,
-                      name: content.name,
-                      truncated: content.truncated ?? false,
-                      totalBytes: content.totalBytes,
-                    ))
-                .toList(growable: false) ??
-            const [],
-        structuredContent: value.result?.structuredContent == null
-            ? null
-            : Map<String, dynamic>.from(value.result!.structuredContent!),
-        errorCode: value.result?.error?.code,
-        errorMessage: value.result?.error?.message,
-        errorRetryable: value.result?.error?.retryable,
-        errorDetails: value.result?.error?.details == null
-            ? null
-            : Map<String, dynamic>.from(value.result!.error!.details!),
+        input: _toolInput(value.input),
+        outcome: value.outcome == null ? null : _toolOutcome(value.outcome!),
         startedAt: _time(value.timing?.startedAt),
         completedAt: _time(value.timing?.completedAt),
         durationMs: value.timing?.durationMs,
-        command: value.command?.command,
-        cwd: value.command?.cwd,
-        exitCode: value.command?.exitCode,
-        processId: value.command?.processId,
-        commandActions: value.command?.actions
-                ?.map((action) => GatewayToolCommandAction(
-                      kind: action.kind.wireValue,
-                      command: action.command,
-                      name: action.name,
-                      path: action.path,
-                      query: action.query,
-                    ))
-                .toList(growable: false) ??
-            const [],
         readOnly: value.annotations?.readOnly,
         destructive: value.annotations?.destructive,
         idempotent: value.annotations?.idempotent,
         openWorld: value.annotations?.openWorld,
+      );
+
+  GatewayToolInput _toolInput(sdk.ToolInput value) => switch (value) {
+        sdk.CommandToolInput input => GatewayCommandToolInput(
+            command: input.command,
+            cwd: input.cwd,
+            shell: input.shell,
+            actions: input.actions?.map(_toolAction).toList(growable: false) ??
+                const [],
+          ),
+        sdk.StructuredToolInput input => GatewayStructuredToolInput(
+            value: Map<String, dynamic>.from(input.value),
+            truncation: _truncation(input.truncation),
+          ),
+        sdk.OpaqueToolInput input => GatewayOpaqueToolInput(
+            value: input.value,
+            mimeType: input.mimeType,
+            truncation: _truncation(input.truncation),
+          ),
+      };
+
+  GatewayToolOutcome _toolOutcome(sdk.ToolOutcome value) => switch (value) {
+        sdk.ToolSuccessOutcome outcome => GatewayToolSuccess(
+            content: outcome.content.map(_content).toList(growable: false),
+            exitCode: outcome.exitCode,
+            processId: outcome.processId,
+          ),
+        sdk.ToolFailureOutcome outcome => GatewayToolFailure(
+            content: outcome.content.map(_content).toList(growable: false),
+            error: GatewayToolError(
+              code: outcome.error.code,
+              message: outcome.error.message,
+              retryable: outcome.error.retryable,
+            ),
+            exitCode: outcome.exitCode,
+            processId: outcome.processId,
+          ),
+      };
+
+  GatewayToolCommandAction _toolAction(sdk.ToolCommandAction action) =>
+      GatewayToolCommandAction(
+        kind: action.kind.wireValue,
+        command: action.command,
+        name: action.name,
+        path: action.path,
+        query: action.query,
       );
 
   GatewayMessage approval(sdk.Approval value) => GatewayMessage(
@@ -311,16 +531,17 @@ final class GeneratedGatewayMapper {
         );
       case sdk.ProtocolEventName.conversationItemUpserted:
         final payload = envelope.payload as sdk.ConversationItemUpsertedEvent;
-        _requireSameRoute(payload.item.resource, payload.item.turn);
-        _requireSameRoute(payload.item.resource, payload.item.conversation);
+        final item = _itemParts(payload.item);
+        _requireSameRoute(item.resource, item.turn);
+        _requireSameRoute(item.resource, item.conversation);
         _requireResourceRoute(
-          payload.item.resource,
+          item.resource,
           expectedDeviceId: expectedDeviceId,
           expectedProviderRouteKeys: expectedProviderRouteKeys,
         );
         return ConversationItemUpsertedEvent(
           eventCursor: cursor,
-          conversationId: resourceKey(payload.item.conversation),
+          conversationId: resourceKey(item.conversation),
           item: message(payload.item, 0),
         );
       case sdk.ProtocolEventName.conversationActivityChanged:

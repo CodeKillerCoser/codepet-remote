@@ -242,7 +242,7 @@ final class ConversationTimelineProjector {
         turnId: current.turnId,
         role: current.role == MessageRole.system ? message.role : current.role,
         kind: current.kind == 'unknown' ? message.kind : current.kind,
-        content: contents.map((content) => content.text).join('\n'),
+        content: contents.map((content) => content.displayText).join('\n'),
         createdAt: current.createdAt,
         isStreaming: current.isStreaming || message.isStreaming,
         isLiveOutput: current.isLiveOutput || message.isLiveOutput,
@@ -313,9 +313,13 @@ final class ConversationTimelineProjector {
           sourceItemIds: common.sourceItemIds,
           isStreaming: common.isStreaming,
           title: item.title ?? '命令执行',
-          command: item.tool?.command ?? _textFor(contents, const {'command'}),
-          output: _toolResultText(item.tool) ??
-              _textFor(contents, const {'output', 'activity-summary'}),
+          command: switch (item.tool?.input) {
+            GatewayCommandToolInput input => input.command,
+            _ => '',
+          },
+          output: _toolOutcomeText(item.tool).isNotEmpty
+              ? _toolOutcomeText(item.tool)
+              : _textFor(contents, const {'output'}),
           tool: item.tool,
           approval: approval,
           status: common.status,
@@ -328,7 +332,9 @@ final class ConversationTimelineProjector {
           isStreaming: common.isStreaming,
           title: item.title ?? '工具调用',
           summary: _textFor(contents, const {'activity-summary', 'text'}),
-          detail: _textFor(contents, const {'command', 'output'}),
+          detail: _toolOutcomeText(item.tool).isNotEmpty
+              ? _toolOutcomeText(item.tool)
+              : _textFor(contents, const {'output'}),
           tool: item.tool,
           approval: approval,
           status: common.status,
@@ -404,17 +410,24 @@ final class ConversationTimelineProjector {
   ) =>
       contents
           .where((content) => acceptedKinds.contains(content.kind))
-          .map((content) => content.text)
+          .map((content) => content.displayText)
           .where((text) => text.trim().isNotEmpty)
           .join('\n\n');
 
-  String? _toolResultText(GatewayToolInvocation? tool) {
-    if (tool == null) return null;
-    final text = tool.resultContent
-        .map((content) => content.text ?? content.uri ?? '')
+  String _toolOutcomeText(GatewayToolInvocation? tool) {
+    final outcome = tool?.outcome;
+    if (outcome == null) return '';
+    return outcome.content
+        .map((content) {
+          final truncation = content.truncation;
+          if (truncation == null) return content.displayText;
+          return '${content.displayText}\n'
+              '[内容已截断：originalBytes=${truncation.originalBytes}, '
+              'retainedBytes=${truncation.retainedBytes}, '
+              'strategy=${truncation.strategy}]';
+        })
         .where((value) => value.isNotEmpty)
         .join('\n\n');
-    return text.isEmpty ? null : text;
   }
 
   String _legacyContentKind(String itemKind) => switch (itemKind) {

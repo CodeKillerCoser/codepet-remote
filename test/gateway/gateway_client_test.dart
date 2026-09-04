@@ -132,6 +132,7 @@ void main() {
     expect(transport.requests[3].params['projectFilter'], {'kind': 'all'});
     expect(transport.requests[3].params['limit'], 25);
     expect(transport.requests[4].method, 'conversation.get');
+    expect(transport.requests[4].params['limit'], 10);
     expect(detail.detail.summary.resource!.nativeResourceId, 'conversation-1');
     expect(detail.detail.messages, isEmpty);
 
@@ -623,16 +624,19 @@ void main() {
     expect(history[1].content, 'Inspecting the stored thread items.');
     expect(history[2].kind, 'command');
     expect(history[2].title, 'Run git status --short');
-    expect(
-      history[2].contents.map((content) => content.kind),
-      ['command', 'output'],
-    );
+    expect(history[2].contents, isEmpty);
+    expect(history[2].contentIds, ['command-01:output']);
     expect(history[2].tool?.name, 'shell');
-    expect(history[2].tool?.command, 'git status --short');
-    expect(history[2].tool?.cwd, '/workspace');
-    expect(history[2].tool?.exitCode, 0);
+    final input = history[2].tool?.input as GatewayCommandToolInput;
+    final outcome = history[2].tool?.outcome as GatewayToolSuccess;
+    expect(input.command, 'git status --short');
+    expect(input.cwd, '/workspace');
+    expect(outcome.exitCode, 0);
     expect(history[2].tool?.durationMs, 24);
-    expect(history[2].tool?.resultContent.single.text, 'working tree clean');
+    expect(outcome.content.single.text, 'working tree clean');
+    expect(outcome.content.single.truncation?.originalBytes, 42);
+    expect(outcome.content.single.truncation?.retainedBytes, 18);
+    expect(outcome.content.single.truncation?.strategy, 'head');
     expect(history[3].kind, 'approval');
     expect(history[3].approvalStatus, 'approved');
     expect(history[4].role, MessageRole.assistant);
@@ -701,16 +705,63 @@ void main() {
         .toList(growable: false);
     expect(
       requests.map((request) => request.params['limit']),
-      [40, 20, 10, 5, 2, 1, 1],
+      [10, 5, 2, 1, 1],
     );
     expect(
       requests.map((request) => request.params['cursor']),
-      [null, null, null, null, null, null, 'older-page'],
+      [null, null, null, null, 'older-page'],
     );
     expect(
       snapshot.detail.committedMessages.map((message) => message.content),
       ['older', 'newer'],
     );
+    await client.close();
+  });
+
+  test('preserves item order within cursor pages without omissions', () async {
+    final transport = _FakeTransport(
+      {
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      },
+      responseBuilder: (method, params, id) {
+        if (method != 'conversation.get') return null;
+        final cursor = params['cursor'] as String?;
+        final older = cursor == 'older-page';
+        final prefix = older ? 'older' : 'newer';
+        return {
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': {
+            'conversation': _conversationJson(),
+            'items': [
+              _historyItemJson('$prefix-a', '$prefix-a'),
+              _historyItemJson('$prefix-b', '$prefix-b'),
+            ],
+            'pageInfo': older ? <String, dynamic>{} : {'nextCursor': 'older-page'},
+            'snapshotCursor': 'opaque-snapshot',
+          },
+        };
+      },
+    );
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+
+    final snapshot = await client.getConversation(_domainConversation());
+
+    expect(
+      snapshot.detail.committedMessages.map((message) => message.content),
+      ['older-a', 'older-b', 'newer-a', 'newer-b'],
+    );
+    final requests = transport.requests
+        .where((request) => request.method == 'conversation.get');
+    expect(requests.map((request) => request.params['cursor']), [null, 'older-page']);
     await client.close();
   });
 
@@ -1237,14 +1288,20 @@ void main() {
           'kind': 'command',
           'status': 'completed',
           'title': 'git status --short',
-          'contents': const [],
           'tool': {
             'callId': 'command-live',
             'name': 'shell',
             'category': 'command',
             'origin': {'kind': 'builtin', 'name': 'codex'},
-            'input': {'command': 'git status --short'},
-            'command': {'command': 'git status --short', 'exitCode': 0},
+            'input': {
+              'kind': 'command',
+              'command': 'git status --short',
+            },
+            'outcome': {
+              'kind': 'success',
+              'content': const [],
+              'exitCode': 0,
+            },
           },
         },
       },
@@ -1253,7 +1310,7 @@ void main() {
 
     final event = received.single as ConversationItemUpsertedEvent;
     expect(event.item.tool?.name, 'shell');
-    expect(event.item.tool?.exitCode, 0);
+    expect(event.item.tool?.outcome?.exitCode, 0);
     expect(event.conversationId, contains('conversation-1'));
     await subscription.cancel();
     await client.close();

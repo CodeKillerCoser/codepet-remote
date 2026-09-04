@@ -550,7 +550,7 @@ final class ProtocolGatewayClient
       throw const FormatException('Conversation has no routed identity');
     }
     final requested = _mapper.sdkResourceId(resourceId);
-    const desiredLimit = 40;
+    const desiredLimit = 10;
     var effectiveLimit = desiredLimit;
     String? cursor;
     final seenCursors = <String>{};
@@ -604,18 +604,22 @@ final class ProtocolGatewayClient
         throw const FormatException('Conversation active turn providerId mismatch');
       }
       for (final item in response.items) {
-        final approval = item.approval;
-        if (_mapper.resourceKey(item.conversation) !=
+        final approval = _mapper.itemApproval(item);
+        final itemConversation = _mapper.itemConversation(item);
+        final itemResource = _mapper.itemResource(item);
+        final itemTurn = _mapper.itemTurn(item);
+        final relatedItem = _mapper.itemRelatedItem(item);
+        if (_mapper.resourceKey(itemConversation) !=
                 _mapper.resourceKey(requested) ||
-            !_mapper.hasSameRoute(item.resource, requested) ||
-            !_mapper.hasSameRoute(item.turn, requested) ||
-            (item.relatedItem != null &&
-                !_mapper.hasSameRoute(item.relatedItem!, requested)) ||
+            !_mapper.hasSameRoute(itemResource, requested) ||
+            !_mapper.hasSameRoute(itemTurn, requested) ||
+            (relatedItem != null &&
+                !_mapper.hasSameRoute(relatedItem, requested)) ||
             (approval != null &&
                 (_mapper.resourceKey(approval.conversation) !=
                         _mapper.resourceKey(requested) ||
                     _mapper.resourceKey(approval.turn) !=
-                        _mapper.resourceKey(item.turn) ||
+                        _mapper.resourceKey(itemTurn) ||
                     !_mapper.hasSameRoute(approval.resource, requested)))) {
           throw const FormatException('Conversation history providerId mismatch');
         }
@@ -823,12 +827,15 @@ final class ProtocolGatewayClient
             _mapper.resourceKey(resource) ||
         !_mapper.hasSameRoute(response.turn.resource, resource) ||
         (userItem != null &&
-            (_mapper.resourceKey(userItem.conversation) !=
+            (_mapper.resourceKey(_mapper.itemConversation(userItem)) !=
                     _mapper.resourceKey(resource) ||
-                _mapper.resourceKey(userItem.turn) !=
+                _mapper.resourceKey(_mapper.itemTurn(userItem)) !=
                     _mapper.resourceKey(response.turn.resource) ||
-                !_mapper.hasSameRoute(userItem.resource, resource) ||
-                userItem.role != sdk.ConversationItemRole.user)) ||
+                !_mapper.hasSameRoute(
+                  _mapper.itemResource(userItem),
+                  resource,
+                ) ||
+                !_mapper.isUserMessage(userItem))) ||
         !provider.capabilities.turnSend!.accepts(effectiveSelection)) {
       throw const FormatException('Invalid routed turn.send response');
     }

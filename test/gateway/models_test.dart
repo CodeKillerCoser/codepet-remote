@@ -377,6 +377,51 @@ void main() {
       expect(detail.lastEventCursor, 'event-after-snapshot');
     });
 
+    test('suppresses deltas by content identity across every committed variant', () {
+      const ids = [
+        'content:text',
+        'content:reasoning',
+        'content:output',
+        'content:activity',
+        'content:json',
+        'content:image',
+        'content:audio',
+        'content:link',
+        'content:embedded',
+      ];
+      var detail = ConversationDetail(
+        summary: summary,
+        committedMessages: [
+          GatewayMessage(
+            id: 'canonical-item',
+            turnId: 'turn-1',
+            role: MessageRole.system,
+            kind: 'tool',
+            content: '',
+            contentIds: ids,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+            isStreaming: false,
+          ),
+        ],
+      );
+
+      for (final id in ids) {
+        detail = detail.apply(TurnOutputDeltaEvent(
+          eventCursor: 'cursor-$id',
+          providerId: 'codex',
+          conversationId: 'conversation-1',
+          turnId: 'turn-1',
+          itemId: 'canonical-item',
+          contentId: id,
+          kind: 'output',
+          delta: 'different text must not drive deduplication',
+        ));
+      }
+
+      expect(detail.liveOutputMessages, isEmpty);
+      expect(detail.committedMessages.single.contentIds, ids);
+    });
+
     test('accepts a canonical turn without fabricating a user item', () {
       final turn = TurnTask(
         id: 'turn-accepted',

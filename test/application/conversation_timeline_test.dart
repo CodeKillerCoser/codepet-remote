@@ -13,18 +13,22 @@ void main() {
           id: 'command-item',
           kind: 'command',
           role: MessageRole.system,
-          contents: const [
-            GatewayMessageContent(
-              id: 'command-item:command',
-              kind: 'command',
-              text: 'git status --short',
+          tool: const GatewayToolInvocation(
+            callId: 'command-item',
+            name: 'shell',
+            category: 'command',
+            originKind: 'builtin',
+            input: GatewayCommandToolInput(command: 'git status --short'),
+            outcome: GatewayToolSuccess(
+              content: [
+                GatewayMessageContent(
+                  id: 'command-item:output',
+                  kind: 'output',
+                  text: ' M lib/main.dart',
+                ),
+              ],
             ),
-            GatewayMessageContent(
-              id: 'command-item:output',
-              kind: 'output',
-              text: ' M lib/main.dart',
-            ),
-          ],
+          ),
         ),
       ],
     );
@@ -43,13 +47,13 @@ void main() {
           itemId: 'command',
           kind: 'command',
           role: MessageRole.system,
-          contents: const [
-            GatewayMessageContent(
-              id: 'command:text',
-              kind: 'command',
-              text: 'flutter build apk',
-            ),
-          ],
+          tool: const GatewayToolInvocation(
+            callId: 'command',
+            name: 'shell',
+            category: 'command',
+            originKind: 'builtin',
+            input: GatewayCommandToolInput(command: 'flutter build apk'),
+          ),
         ),
         GatewayMessage(
           id: 'approval',
@@ -89,18 +93,23 @@ void main() {
   });
 
   test('projects live command and output deltas onto the same block', () {
-    var detail = ConversationDetail(summary: _summary);
-    detail = detail.apply(
-      const TurnOutputDeltaEvent(
-        eventCursor: 'command-delta',
-        providerId: 'provider',
-        conversationId: 'conversation',
-        turnId: 'turn',
-        itemId: 'live-command',
-        contentId: 'live-command:command',
-        kind: 'command',
-        delta: 'pwd',
-      ),
+    var detail = ConversationDetail(
+      summary: _summary,
+      committedMessages: [
+        _message(
+          id: 'live-command',
+          itemId: 'live-command',
+          kind: 'command',
+          role: MessageRole.system,
+          tool: const GatewayToolInvocation(
+            callId: 'live-command',
+            name: 'shell',
+            category: 'command',
+            originKind: 'builtin',
+            input: GatewayCommandToolInput(command: 'pwd'),
+          ),
+        ),
+      ],
     );
     detail = detail.apply(
       const TurnOutputDeltaEvent(
@@ -130,6 +139,7 @@ GatewayMessage _message({
   MessageRole role = MessageRole.assistant,
   String content = '',
   List<GatewayMessageContent> contents = const [],
+  GatewayToolInvocation? tool,
 }) =>
     GatewayMessage(
       id: id,
@@ -142,6 +152,7 @@ GatewayMessage _message({
       contentIds: contents.map((value) => value.id).toList(growable: false),
       createdAt: _epoch,
       isStreaming: false,
+      tool: tool,
     );
 
 final _epoch = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
