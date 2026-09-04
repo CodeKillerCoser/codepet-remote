@@ -35,6 +35,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('conversation-provider-icon')), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('conversation-device-context')))
+          .data,
+      'Test · TestOS 1',
+    );
     final appBar = tester.widget<AppBar>(find.byType(AppBar));
     expect(appBar.leadingWidth, 48);
     expect(appBar.titleSpacing, 0);

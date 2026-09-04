@@ -75,6 +75,8 @@ void main() {
     );
     expect(find.text('Gateway 协议契约核对'), findsOneWidget);
     expect(find.text('实现 Remote 会话流'), findsNothing);
+    expect(find.text('会话'), findsOneWidget);
+    expect(find.text('最近'), findsNothing);
 
     await tester.tap(find.byKey(Key('project-${project.key}')));
     await tester.pump();
@@ -82,6 +84,13 @@ void main() {
     await tester.pump();
 
     expect(find.text('实现 Remote 会话流'), findsOneWidget);
+    expect(find.byKey(const Key('project-provider-icon')), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('project-device-context')))
+          .data,
+      '${session.displayDeviceName} · ${session.displaySystemLabel}',
+    );
     expect(
       session.conversationsForProject(project).single.workspaceRoot,
       '/projects/codepet-remote',

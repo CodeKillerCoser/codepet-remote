@@ -258,6 +258,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         title: _ConversationTitle(
           summary: summary,
           status: displayStatus,
+          session: widget.session,
           expanded: _metadataExpanded,
           onTap: () => setState(() {
             _metadataExpanded = !_metadataExpanded;
@@ -757,6 +758,7 @@ class _ConversationTitle extends StatelessWidget {
   const _ConversationTitle({
     required this.summary,
     required this.status,
+    required this.session,
     required this.providerIcon,
     required this.expanded,
     required this.onTap,
@@ -764,6 +766,7 @@ class _ConversationTitle extends StatelessWidget {
 
   final ConversationSummary summary;
   final ConversationStatus status;
+  final DeviceSession session;
   final Widget providerIcon;
   final bool expanded;
   final VoidCallback onTap;
@@ -801,6 +804,21 @@ class _ConversationTitle extends StatelessWidget {
                 Row(
                   key: const Key('conversation-title-status'),
                   children: [
+                    Expanded(
+                      child: Text(
+                        '${session.displayDeviceName} · ${session.displaySystemLabel}',
+                        key: const Key('conversation-device-context'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context)
+                            .textTheme
+                            .labelSmall
+                            ?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     Container(
                       width: 6,
                       height: 6,

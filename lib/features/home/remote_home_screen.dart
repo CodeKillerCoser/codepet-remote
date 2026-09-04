@@ -221,7 +221,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                   const SizedBox(height: 28),
                   _SectionTitle(
                     key: Key('recent-section-${session.device.deviceId}'),
-                    title: '最近',
+                    title: '会话',
                     countLabel: session.selectedProviderConversationCountLabel,
                     expanded: viewState.recentExpanded,
                     onTap: () => setState(() {
@@ -1085,7 +1085,16 @@ class _ProjectConversationsScreenState
         widget.session.isLoadingMoreConversations;
     final selectedProvider = widget.session.selectedProvider;
     return Scaffold(
-      appBar: AppBar(title: Text(_project.name)),
+      appBar: AppBar(
+        leadingWidth: 48,
+        titleSpacing: 0,
+        toolbarHeight: 64,
+        title: _ProjectConversationTitle(
+          project: _project,
+          session: widget.session,
+          provider: selectedProvider,
+        ),
+      ),
       body: ListView.separated(
         key: const Key('project-conversation-list'),
         padding: const EdgeInsets.all(16),
@@ -1144,6 +1153,56 @@ class _ProjectConversationsScreenState
       ),
     );
   }
+}
+
+class _ProjectConversationTitle extends StatelessWidget {
+  const _ProjectConversationTitle({
+    required this.project,
+    required this.session,
+    required this.provider,
+  });
+
+  final GatewayProject project;
+  final DeviceSession session;
+  final GatewayProvider? provider;
+
+  @override
+  Widget build(BuildContext context) => Row(
+        children: [
+          ProviderIcon(
+            key: const Key('project-provider-icon'),
+            icon: provider?.icon,
+            providerIdentity: provider?.id ?? project.resource.providerId,
+            size: 22,
+            color: Theme.of(context).colorScheme.primary,
+            semanticLabel: provider?.displayName ?? 'Provider',
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  project.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  '${session.displayDeviceName} · ${session.displaySystemLabel}',
+                  key: const Key('project-device-context'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
 }
 
 class _ConversationActionsBar extends StatelessWidget {

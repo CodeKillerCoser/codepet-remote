@@ -150,6 +150,14 @@ class DeviceSession extends ApplicationNotifier {
   bool get isReconnecting =>
       connectionState == DeviceConnectionState.connecting &&
       _isReconnectAttempt;
+  DeviceDescriptor? get deviceDescriptor =>
+      handshake?.deviceDescriptor ?? device.descriptor;
+  String get displayDeviceName => device.effectiveName;
+  String get displaySystemLabel {
+    final descriptor = deviceDescriptor;
+    if (descriptor == null) return '系统未知';
+    return '${descriptor.operatingSystem} ${descriptor.systemVersion}';
+  }
 
   DeviceSessionRuntimeLease? get runtimeLease {
     final currentClient = _client;

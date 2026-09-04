@@ -187,7 +187,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
       return const _SearchMessage(
         icon: Icons.manage_search_outlined,
         title: '搜索远程会话',
-        message: '搜索由当前选中的 Provider 执行，结果不会加入首页最近列表。',
+        message: '搜索由当前选中的 Provider 执行，结果不会加入首页会话列表。',
       );
     }
     if (_isLoading && _conversations.isEmpty) {
