@@ -215,7 +215,7 @@ void main() {
           )
           .controller!
           .text,
-      startsWith('/Users/test/.codex/codepet-workspaces/task-'),
+      startsWith('/Users/test/.codepet/remote_workspace/codex/task-'),
     );
 
     await tester.pumpWidget(const SizedBox());
@@ -270,7 +270,7 @@ void main() {
           )
           .controller!
           .text,
-      startsWith('/Users/test/.codex/codepet-workspaces/task-'),
+      startsWith('/Users/test/.codepet/remote_workspace/codex/task-'),
     );
 
     await tester.tap(find.byKey(const Key('new-conversation-project')));
@@ -306,7 +306,7 @@ void main() {
     expect(client.createdProject, isNull);
     expect(
       client.createdWorkspaceRoot,
-      startsWith('/Users/test/.codex/codepet-workspaces/task-'),
+      startsWith('/Users/test/.codepet/remote_workspace/codex/task-'),
     );
     await tester.pumpWidget(const SizedBox());
     session.dispose();
@@ -1001,7 +1001,7 @@ const _homeListProvider = GatewayProvider(
   id: _homeRoute,
   displayName: 'Codex Work',
   icon: 'codex',
-  defaultWorkspaceRoot: '/Users/test/.codex/codepet-workspaces',
+  defaultWorkspaceRoot: '/Users/test/.codepet/remote_workspace/codex',
   status: ProviderStatus.ready,
   runtimeVersion: '0.151.0',
   executablePath: '/usr/local/bin/codex',
@@ -1048,7 +1048,7 @@ const _homeProjectProvider = GatewayProvider(
   id: _homeRoute,
   displayName: 'Codex Work',
   icon: 'codex',
-  defaultWorkspaceRoot: '/Users/test/.codex/codepet-workspaces',
+  defaultWorkspaceRoot: '/Users/test/.codepet/remote_workspace/codex',
   status: ProviderStatus.ready,
   capabilities: GatewayCapabilities(
     revision: 'test-project-create-1',
