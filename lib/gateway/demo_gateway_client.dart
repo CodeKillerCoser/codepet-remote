@@ -23,6 +23,7 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
   late final GatewayProvider _provider = GatewayProvider(
         id: _providerId,
         displayName: 'Codex Demo',
+        defaultWorkspaceRoot: '/demo/codex',
         status: ProviderStatus.ready,
         runtimeVersion: '1.0.0',
         executablePath: '/demo/codex',

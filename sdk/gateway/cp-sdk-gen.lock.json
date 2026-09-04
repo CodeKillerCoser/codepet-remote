@@ -4,6 +4,6 @@
   "package": "gateway",
   "role": "client",
   "protocolVersion": 1,
-  "protocolDigest": "sha256:f5ae4e682de5516f17e270c9f1bb76efe390d4fcaaf050d0a75559c09caec500",
+  "protocolDigest": "sha256:93dc5bfabe8944dfb0c0b59f76fbc222ec97a938873513a0766a6d7c02861c11",
   "language": "dart"
 }

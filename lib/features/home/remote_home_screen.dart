@@ -1081,9 +1081,6 @@ class _ProjectConversationsScreenState
                   session: widget.session,
                   provider: selectedProvider,
                   project: _project,
-                  workspaceRoot: _project.roots.isEmpty
-                      ? null
-                      : _project.roots.first.path,
                 ),
       ),
     );
@@ -1286,8 +1283,11 @@ class _NewConversationDialog extends StatefulWidget {
 }
 
 class _NewConversationDialogState extends State<_NewConversationDialog> {
+  static const _standaloneProjectKey = '';
+
   late final TextEditingController _titleController;
   late final TextEditingController _workspaceController;
+  late String _selectedProjectKey;
   String? _permissionLevel;
   String? _reasoningEffort;
   String? _model;
@@ -1301,11 +1301,29 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
   TurnSendCapabilities? get _selectionCapabilities =>
       _createCapabilities?.selection ?? widget.provider.capabilities.turnSend;
 
+  bool get _supportsProjects =>
+      widget.provider.methods.contains('project.list');
+
+  List<GatewayProject> get _projects => widget.session.projects
+      .where((project) => project.resource.providerId == widget.provider.id)
+      .toList(growable: false);
+
+  GatewayProject? get _selectedProject {
+    if (_selectedProjectKey == _standaloneProjectKey) return null;
+    for (final project in _projects) {
+      if (project.key == _selectedProjectKey) return project;
+    }
+    return widget.project;
+  }
+
   @override
   void initState() {
     super.initState();
     _titleController = TextEditingController();
-    _workspaceController = TextEditingController(text: widget.workspaceRoot);
+    _workspaceController = TextEditingController(
+      text: widget.workspaceRoot ?? widget.provider.defaultWorkspaceRoot,
+    );
+    _selectedProjectKey = widget.project?.key ?? _standaloneProjectKey;
     final selection = _selectionCapabilities;
     _permissionLevel = _initialChoice(selection?.accessMode) ??
         PermissionLevel.workspaceWrite;
@@ -1334,6 +1352,13 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
 
   Future<void> _create() async {
     if (_creating) return;
+    final project = _selectedProject;
+    if (project == null && _workspaceController.text.trim().isEmpty) {
+      setState(() {
+        _error = '无项目会话需要填写工作区路径';
+      });
+      return;
+    }
     setState(() {
       _creating = true;
       _error = null;
@@ -1342,12 +1367,12 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
       final conversation = await widget.session.createConversation(
         provider: widget.provider,
         title: _titleController.text,
-        workspaceRoot: _workspaceController.text,
+        workspaceRoot: project == null ? _workspaceController.text : null,
         permissionLevel: _permissionLevel,
         reasoningEffort: _reasoningEffort,
         model: _model,
         workspaceMode: _workspaceMode,
-        project: widget.project,
+        project: project,
       );
       if (mounted) Navigator.of(context).pop(conversation);
     } catch (error) {
@@ -1379,15 +1404,49 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                 ),
                 const SizedBox(height: 12),
               ],
-              TextField(
-                key: const Key('new-conversation-workspace'),
-                controller: _workspaceController,
-                enabled: !_creating,
-                decoration: const InputDecoration(
-                  labelText: '工作区路径（可选）',
-                  prefixIcon: Icon(Icons.folder_outlined),
+              if (_supportsProjects) ...[
+                DropdownButtonFormField<String>(
+                  key: const Key('new-conversation-project'),
+                  initialValue: _selectedProjectKey,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: '项目',
+                    prefixIcon: Icon(Icons.folder_copy_outlined),
+                  ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: _standaloneProjectKey,
+                      child: Text('无项目'),
+                    ),
+                    for (final project in _projects)
+                      DropdownMenuItem(
+                        value: project.key,
+                        child: Text(
+                          project.name,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: _creating
+                      ? null
+                      : (value) => setState(() {
+                            _selectedProjectKey =
+                                value ?? _standaloneProjectKey;
+                            _error = null;
+                          }),
                 ),
-              ),
+                const SizedBox(height: 12),
+              ],
+              if (_selectedProject == null)
+                TextField(
+                  key: const Key('new-conversation-workspace'),
+                  controller: _workspaceController,
+                  enabled: !_creating,
+                  decoration: const InputDecoration(
+                    labelText: '工作区路径',
+                    prefixIcon: Icon(Icons.folder_outlined),
+                  ),
+                ),
               if (_createCapabilities?.workspaceMode != null) ...[
                 const SizedBox(height: 12),
                 _choiceField(

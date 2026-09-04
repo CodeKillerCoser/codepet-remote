@@ -551,6 +551,10 @@ void main() {
 
     expect(handshake.deviceDescriptor.deviceName, 'MacBook');
     expect(handshake.deviceDescriptor.operatingSystem, 'macOS');
+    expect(
+      handshake.providers.single.defaultWorkspaceRoot,
+      '/Users/test/.codex',
+    );
     expect(history, hasLength(5));
     expect(history[0].role, MessageRole.user);
     expect(history[0].content, 'Show the Gateway history.');
@@ -1519,6 +1523,7 @@ JsonMap _providerSummaryJson() => {
       'identity': {
         'displayName': 'Codex',
         'icon': 'https://cdn.example.com/codex.png',
+        'defaultWorkspaceRoot': '/Users/test/.codex',
       },
       'runtime': {
         'status': 'ready',

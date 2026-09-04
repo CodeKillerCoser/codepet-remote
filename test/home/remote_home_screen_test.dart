@@ -190,6 +190,15 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const Key('new-conversation-model')), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const Key('new-conversation-workspace')),
+          )
+          .controller!
+          .text,
+      '/Users/test/.codex',
+    );
 
     await tester.pumpWidget(const SizedBox());
     session.dispose();
@@ -210,11 +219,53 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('project-new')));
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('new-conversation-project')), findsOneWidget);
+    expect(find.byKey(const Key('new-conversation-workspace')), findsNothing);
     await tester.tap(find.byKey(const Key('confirm-new-conversation')));
     await tester.pumpAndSettle();
 
     expect(client.createdProject, project.resource);
-    expect(client.createdWorkspaceRoot, project.roots.single.path);
+    expect(client.createdWorkspaceRoot, isNull);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('home conversation can choose a project or stay standalone',
+      (tester) async {
+    _useTallSurface(tester);
+    final project = _homeProject();
+    final client = _ProjectConversationCreateClient(project);
+    final session = _sessionForClient('choose-conversation-project', client);
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    await tester.tap(find.byKey(const Key('home-new')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('无项目'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const Key('new-conversation-workspace')),
+          )
+          .controller!
+          .text,
+      '/Users/test/.codex',
+    );
+
+    await tester.tap(find.byKey(const Key('new-conversation-project')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(project.name).last);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('new-conversation-workspace')), findsNothing);
+    await tester.tap(find.byKey(const Key('confirm-new-conversation')));
+    await tester.pumpAndSettle();
+
+    expect(client.createdProject, project.resource);
+    expect(client.createdWorkspaceRoot, isNull);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
@@ -836,6 +887,7 @@ const _homeListProvider = GatewayProvider(
   id: _homeRoute,
   displayName: 'Codex Work',
   icon: 'codex',
+  defaultWorkspaceRoot: '/Users/test/.codex',
   status: ProviderStatus.ready,
   runtimeVersion: '0.151.0',
   executablePath: '/usr/local/bin/codex',
@@ -882,6 +934,7 @@ const _homeProjectProvider = GatewayProvider(
   id: _homeRoute,
   displayName: 'Codex Work',
   icon: 'codex',
+  defaultWorkspaceRoot: '/Users/test/.codex',
   status: ProviderStatus.ready,
   capabilities: GatewayCapabilities(
     revision: 'test-project-create-1',

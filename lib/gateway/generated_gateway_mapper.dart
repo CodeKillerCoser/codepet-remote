@@ -17,6 +17,7 @@ final class GeneratedGatewayMapper {
         id: value.id,
         displayName: value.identity.displayName,
         icon: value.identity.icon,
+        defaultWorkspaceRoot: value.identity.defaultWorkspaceRoot,
         status: ProviderStatus.fromWire(value.runtime.status.wireValue),
         runtimeVersion: value.runtime.version,
         executablePath: value.runtime.executablePath,

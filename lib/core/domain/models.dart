@@ -786,6 +786,7 @@ class GatewayProvider {
     required this.status,
     required this.capabilities,
     this.icon,
+    this.defaultWorkspaceRoot,
     this.runtimeVersion,
     this.executablePath,
     this.authenticationStatus,
@@ -798,6 +799,7 @@ class GatewayProvider {
   final String id;
   final String displayName;
   final String? icon;
+  final String? defaultWorkspaceRoot;
   final String? runtimeVersion;
   final String? executablePath;
   final String? authenticationStatus;
@@ -816,6 +818,7 @@ class GatewayProvider {
         status: status,
         capabilities: value,
         icon: icon,
+        defaultWorkspaceRoot: defaultWorkspaceRoot,
         runtimeVersion: runtimeVersion,
         executablePath: executablePath,
         authenticationStatus: authenticationStatus,
