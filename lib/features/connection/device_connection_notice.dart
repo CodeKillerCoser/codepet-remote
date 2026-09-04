@@ -69,6 +69,7 @@ class _DeviceConnectionNoticeState extends State<DeviceConnectionNotice> {
     final failed = session.connectionState == DeviceConnectionState.failed;
     final connecting =
         session.connectionState == DeviceConnectionState.connecting;
+    final reconnecting = session.isReconnecting;
     final colorScheme = Theme.of(context).colorScheme;
     return Card(
       key: const Key('device-connection-notice'),
@@ -103,7 +104,9 @@ class _DeviceConnectionNoticeState extends State<DeviceConnectionNotice> {
                     children: [
                       Text(
                         connecting
-                            ? '正在连接设备'
+                            ? reconnecting
+                                ? '正在重新连接设备'
+                                : '正在连接设备'
                             : failed && _reconnectAttempted
                                 ? '重新连接失败'
                                 : '设备连接已断开',
@@ -112,7 +115,9 @@ class _DeviceConnectionNoticeState extends State<DeviceConnectionNotice> {
                       const SizedBox(height: 4),
                       Text(
                         connecting
-                            ? '正在尝试恢复连接，请稍候。'
+                            ? reconnecting
+                                ? '连接已中断，正在尝试恢复连接，请稍候。'
+                                : '正在尝试恢复连接，请稍候。'
                             : failed && session.error?.trim().isNotEmpty == true
                             ? session.error!
                             : widget.showReconnectAction
@@ -138,7 +143,13 @@ class _DeviceConnectionNoticeState extends State<DeviceConnectionNotice> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.refresh),
-                  label: Text(connecting ? '连接中' : '重新连接'),
+                  label: Text(
+                    connecting
+                        ? reconnecting
+                            ? '重新连接中'
+                            : '连接中'
+                        : '重新连接',
+                  ),
                 ),
               ),
             ],

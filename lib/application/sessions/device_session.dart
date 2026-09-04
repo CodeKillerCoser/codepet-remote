@@ -133,6 +133,8 @@ class DeviceSession extends ApplicationNotifier {
   int _projectRequestSequence = 0;
   int _runtimeGeneration = 0;
   int _reconnectAttempt = 0;
+  bool _hasStartedConnection = false;
+  bool _isReconnectAttempt = false;
   bool _reconnectEnabled = false;
   bool _retryableFailure = false;
   bool _disposed = false;
@@ -143,6 +145,10 @@ class DeviceSession extends ApplicationNotifier {
   String? error;
   List<ConversationSummary> conversations = const [];
   List<GatewayProject> projects = const [];
+
+  bool get isReconnecting =>
+      connectionState == DeviceConnectionState.connecting &&
+      _isReconnectAttempt;
 
   DeviceSessionRuntimeLease? get runtimeLease {
     final currentClient = _client;
@@ -314,6 +320,8 @@ class DeviceSession extends ApplicationNotifier {
 
   Future<void> _connect() async {
     if (connectionState == DeviceConnectionState.connecting) return;
+    _isReconnectAttempt = _hasStartedConnection;
+    _hasStartedConnection = true;
     logger.info(
       'Starting connection attempt for device ${device.deviceId} '
       '(attempt ${_reconnectAttempt + 1})',

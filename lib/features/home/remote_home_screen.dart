@@ -436,9 +436,14 @@ class _DeviceSelector extends StatelessWidget {
           final deviceName = alias?.isNotEmpty == true
               ? alias!
               : descriptor?.deviceName ?? session.device.displayName;
-          final systemLabel = descriptor == null
-              ? _deviceStateLabel(session.connectionState)
-              : '${descriptor.operatingSystem} ${descriptor.systemVersion}';
+          final systemLabel = session.connectionState ==
+                  DeviceConnectionState.online
+              ? descriptor == null
+                  ? _deviceStateLabel(session.connectionState)
+                  : '${descriptor.operatingSystem} ${descriptor.systemVersion}'
+              : session.isReconnecting
+                  ? '重新连接中'
+                  : _deviceStateLabel(session.connectionState);
           final selected = index == selectedIndex;
           final colorScheme = Theme.of(context).colorScheme;
           return Semantics(
@@ -534,6 +539,9 @@ class _DeviceSelector extends StatelessWidget {
                             const SizedBox(height: 2),
                             Text(
                               systemLabel,
+                              key: Key(
+                                'device-status-${session.device.deviceId}',
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: Theme.of(context)

@@ -430,6 +430,63 @@ void main() {
     session.dispose();
   });
 
+  testWidgets('shows an explicit state while reconnecting a live connection',
+      (tester) async {
+    _useTallSurface(tester);
+    final connected = _ReconnectEventClient();
+    final reconnect = Completer<GatewayHandshake>();
+    final clients = <GatewayClient>[
+      connected,
+      _ReconnectEventClient(onConnect: () => reconnect.future),
+    ];
+    var clientBuilds = 0;
+    final session = DeviceSession(
+      device: const PairedDevice(
+        deviceId: 'automatic-reconnect',
+        displayName: 'Automatic reconnect',
+        connectionKind: DeviceConnectionKind.demo,
+      ),
+      clientFactory: () => clients[clientBuilds++],
+      reconnectDelays: const [Duration.zero],
+    );
+    await session.connect();
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+
+    unawaited(session.connect());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump();
+
+    expect(session.isReconnecting, isTrue);
+    expect(
+      tester
+          .widget<Text>(
+            find.byKey(const Key('device-status-automatic-reconnect')),
+          )
+          .data,
+      '重新连接中',
+    );
+    expect(find.text('正在重新连接设备'), findsOneWidget);
+    expect(find.text('连接已中断，正在尝试恢复连接，请稍候。'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '重新连接中'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+    reconnect.complete(const GatewayHandshake(
+      protocolVersion: 1,
+      providers: [],
+      eventCursor: 'handshake',
+      deviceDescriptor: DeviceDescriptor(
+        deviceName: 'Recovered Host',
+        operatingSystem: 'TestOS',
+        systemVersion: '10',
+      ),
+    ));
+    await tester.pump();
+  });
+
   testWidgets('recent pagination loads and deduplicates the shared projection', (tester) async {
     _useTallSurface(tester);
     final initial = [
@@ -735,6 +792,13 @@ class _EventClient implements GatewayClient {
   @override Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
   @override Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
   @override Future<void> close() => controller.close();
+}
+
+class _ReconnectEventClient extends _EventClient {
+  _ReconnectEventClient({super.onConnect});
+
+  @override
+  Future<void> close() async {}
 }
 
 typedef _PageHandler = Future<ConversationPage> Function({
