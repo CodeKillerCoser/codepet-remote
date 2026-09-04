@@ -120,7 +120,7 @@ void main() {
       )));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('device-host-persisted')), findsOneWidget);
+      expect(find.byKey(const Key('home-device-menu')), findsOneWidget);
       expect(find.text('Real Host Name'), findsOneWidget);
       expect(find.text('TestOS 1'), findsOneWidget);
       expect(restoredCredentials, ['restored-credential']);
@@ -134,7 +134,7 @@ void main() {
       )));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('device-host-persisted')), findsOneWidget);
+      expect(find.byKey(const Key('home-device-menu')), findsOneWidget);
       expect(restoredCredentials, [
         'restored-credential',
         'restored-credential',
@@ -149,7 +149,7 @@ void main() {
       )));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('device-host-persisted')), findsNothing);
+      expect(find.byKey(const Key('home-device-menu')), findsNothing);
       expect(find.text('还没有设备'), findsOneWidget);
       expect(connections, 2);
     },
@@ -183,7 +183,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('device-host-persisted')), findsOneWidget);
+      expect(find.byKey(const Key('home-device-menu')), findsOneWidget);
       expect(find.text('设备连接已断开'), findsOneWidget);
       expect(find.textContaining('安全凭据不存在'), findsOneWidget);
       expect(clientBuilds, 0);

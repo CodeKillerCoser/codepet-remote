@@ -7,11 +7,18 @@ void main() {
     await tester.pumpWidget(const CodePetRemoteApp(includeDemoDevices: true));
     await tester.pumpAndSettle();
     expect(find.text('CodePet Remote'), findsOneWidget);
+    expect(find.byKey(const Key('home-device-menu')), findsOneWidget);
+    expect(find.byKey(const Key('device-demo-studio')), findsNothing);
+    await tester.tap(find.byKey(const Key('home-device-menu')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('device-demo-studio')), findsOneWidget);
     expect(find.byKey(const Key('device-demo-laptop')), findsOneWidget);
     await tester.tap(find.byKey(const Key('device-demo-laptop')));
     await tester.pumpAndSettle();
     expect(find.text('Gateway 协议契约核对'), findsNothing);
+    final harnessTop = tester.getTopLeft(
+      find.byKey(const Key('connected-providers')),
+    ).dy;
     await tester.scrollUntilVisible(
       find.text('无项目临时会话'),
       240,
@@ -21,11 +28,17 @@ void main() {
       ).first,
     );
     expect(find.text('无项目临时会话'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('connected-providers'))).dy,
+      harnessTop,
+    );
     final homeScroll = find.descendant(
       of: find.byKey(const Key('remote-home')),
       matching: find.byType(Scrollable),
     ).first;
     await tester.drag(homeScroll, const Offset(0, 1000));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-device-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('device-demo-studio')));
     await tester.pumpAndSettle();

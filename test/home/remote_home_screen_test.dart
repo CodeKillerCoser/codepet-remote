@@ -337,11 +337,19 @@ void main() {
       findsOneWidget,
     );
     expect(find.byIcon(Icons.terminal), findsOneWidget);
+    expect(find.byKey(const Key('device-selector')), findsNothing);
     expect(
-      tester
-          .widget<ListView>(find.byKey(const Key('device-selector')))
-          .scrollDirection,
-      Axis.horizontal,
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.byKey(const Key('home-device-menu')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const Key('home-device-menu'))).dx,
+      lessThan(
+        tester.getTopLeft(find.byKey(const Key('home-overflow-menu'))).dx,
+      ),
     );
     expect(
       tester

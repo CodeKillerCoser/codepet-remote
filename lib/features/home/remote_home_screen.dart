@@ -147,6 +147,12 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       appBar: AppBar(
         title: const Text('CodePet Remote'),
         actions: [
+          if (session != null)
+            _DeviceDropdown(
+              sessions: sessions,
+              selectedIndex: selectedIndex,
+              onSelect: widget.onSelectDevice,
+            ),
           PopupMenuButton<String>(
             key: const Key('home-overflow-menu'),
             onSelected: (value) {
@@ -162,22 +168,24 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       ),
       body: sessions.isEmpty
           ? _EmptyDevices(onAddDevice: widget.onAddDevice)
-          : ListView(
-                key: const Key('remote-home'),
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-                children: [
-                  _DeviceSelector(
-                    sessions: sessions,
-                    selectedIndex: selectedIndex,
-                    onSelect: widget.onSelectDevice,
-                  ),
-                  const SizedBox(height: 12),
-                  _DeviceActions(
+          : Column(
+              key: const Key('remote-home'),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                  child: _DeviceActions(
                     session: session!,
                     selectedProvider: selectedProvider,
                     onSelectProvider: session.selectProvider,
                   ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ListView(
+                    key: const Key('home-content-scroll'),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+                    children: [
                   if (DeviceConnectionNotice.shouldShow(
                     session,
                     includeConnecting: true,
@@ -232,8 +240,11 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     const SizedBox(height: 10),
                     ..._recentWidgets(context, session, recent, viewState),
                   ],
-                ],
-              ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
       bottomNavigationBar: session == null
           ? null
           : _ConversationActionsBar(
@@ -443,158 +454,171 @@ class _DeviceHomeViewState {
   int recentPages = 1;
 }
 
-class _DeviceSelector extends StatelessWidget {
-  const _DeviceSelector({required this.sessions, required this.selectedIndex, required this.onSelect});
+class _DeviceDropdown extends StatelessWidget {
+  const _DeviceDropdown({
+    required this.sessions,
+    required this.selectedIndex,
+    required this.onSelect,
+  });
+
   final List<DeviceSession> sessions;
   final int selectedIndex;
   final ValueChanged<int> onSelect;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 62,
-      child: ListView.separated(
-        key: const Key('device-selector'),
-        scrollDirection: Axis.horizontal,
-        itemCount: sessions.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 10),
-        itemBuilder: (context, index) {
-          final session = sessions[index];
-          final descriptor = session.handshake?.deviceDescriptor ??
-              session.device.descriptor;
-          final alias = session.device.alias?.trim();
-          final deviceName = alias?.isNotEmpty == true
-              ? alias!
-              : descriptor?.deviceName ?? session.device.displayName;
-          final systemLabel = session.connectionState ==
-                  DeviceConnectionState.online
-              ? descriptor == null
-                  ? _deviceStateLabel(session.connectionState)
-                  : '${descriptor.operatingSystem} ${descriptor.systemVersion}'
-              : session.isReconnecting
-                  ? '重新连接中'
-                  : _deviceStateLabel(session.connectionState);
-          final selected = index == selectedIndex;
-          final colorScheme = Theme.of(context).colorScheme;
-          return Semantics(
-            key: Key('device-${session.device.deviceId}'),
-            button: true,
-            selected: selected,
-            label: '$deviceName，$systemLabel，${_deviceStateLabel(session.connectionState)}',
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () => onSelect(index),
-                borderRadius: BorderRadius.circular(16),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOut,
-                  width: 158,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? colorScheme.secondaryContainer
-                        : colorScheme.surfaceContainerLow,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: selected
-                          ? colorScheme.primary.withValues(alpha: 0.55)
-                          : colorScheme.outlineVariant,
+    final selected = sessions[selectedIndex];
+    final colorScheme = Theme.of(context).colorScheme;
+    return PopupMenuButton<int>(
+      key: const Key('home-device-menu'),
+      tooltip: '切换设备',
+      onSelected: onSelect,
+      itemBuilder: (context) => [
+        for (var index = 0; index < sessions.length; index++)
+          PopupMenuItem<int>(
+            key: Key('device-${sessions[index].device.deviceId}'),
+            value: index,
+            child: _DeviceMenuItem(
+              session: sessions[index],
+              selected: index == selectedIndex,
+            ),
+          ),
+      ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 132),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _DeviceStateIcon(session: selected, size: 28),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      selected.displayDeviceName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelLarge,
                     ),
-                  ),
-                  child: Row(
-                    children: [
-                      Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? colorScheme.primary.withValues(alpha: 0.12)
-                                  : colorScheme.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(11),
-                            ),
-                            alignment: Alignment.center,
-                            child: Icon(
-                              operatingSystemIconData(
-                                descriptor?.operatingSystem ??
-                                    session.device.displayName,
-                              ),
-                              size: 22,
-                              color: selected
-                                  ? colorScheme.primary
-                                  : colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          Positioned(
-                            right: -2,
-                            bottom: -2,
-                            child: Container(
-                              width: 10,
-                              height: 10,
-                              decoration: BoxDecoration(
-                                color: _deviceStateColor(
-                                  colorScheme,
-                                  session.connectionState,
-                                ),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: selected
-                                      ? colorScheme.secondaryContainer
-                                      : colorScheme.surfaceContainerLow,
-                                  width: 2,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                    Text(
+                      _deviceTriggerSubtitle(selected),
+                      key: Key(
+                        'device-status-${selected.device.deviceId}',
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              deviceName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.copyWith(fontWeight: FontWeight.w700),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              systemLabel,
-                              key: Key(
-                                'device-status-${session.device.deviceId}',
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-          );
-        },
+              const Icon(Icons.arrow_drop_down, size: 20),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
+
+class _DeviceMenuItem extends StatelessWidget {
+  const _DeviceMenuItem({required this.session, required this.selected});
+
+  final DeviceSession session;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) => Row(
+        children: [
+          _DeviceStateIcon(session: session, size: 32),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  session.displayDeviceName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: selected
+                      ? const TextStyle(fontWeight: FontWeight.w700)
+                      : null,
+                ),
+                Text(
+                  '${session.displaySystemLabel} · ${_deviceMenuStateLabel(session)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          if (selected) const Icon(Icons.check, size: 18),
+        ],
+      );
+}
+
+class _DeviceStateIcon extends StatelessWidget {
+  const _DeviceStateIcon({required this.session, required this.size});
+
+  final DeviceSession session;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: colorScheme.primary.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(size * 0.28),
+          ),
+          alignment: Alignment.center,
+          child: Icon(
+            operatingSystemIconData(session.displaySystemLabel),
+            size: size * 0.62,
+            color: colorScheme.primary,
+          ),
+        ),
+        Positioned(
+          right: -1,
+          bottom: -1,
+          child: Container(
+            width: 9,
+            height: 9,
+            decoration: BoxDecoration(
+              color: _deviceStateColor(
+                colorScheme,
+                session.connectionState,
+              ),
+              shape: BoxShape.circle,
+              border: Border.all(color: colorScheme.surface, width: 1.5),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+String _deviceMenuStateLabel(DeviceSession session) => session.isReconnecting
+    ? '重新连接中'
+    : _deviceStateLabel(session.connectionState);
+
+String _deviceTriggerSubtitle(DeviceSession session) =>
+    session.connectionState == DeviceConnectionState.online
+        ? session.displaySystemLabel
+        : _deviceMenuStateLabel(session);
 
 Color _deviceStateColor(
   ColorScheme colorScheme,
