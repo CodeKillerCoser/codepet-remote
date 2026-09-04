@@ -260,9 +260,10 @@ void main() {
     session.dispose();
   });
 
-  testWidgets('failed state uses the shared notice without home reconnect controls', (tester) async {
+  testWidgets('failed state can reconnect directly from the shared notice', (tester) async {
     _useTallSurface(tester);
     var clientBuilds = 0;
+    final reconnect = Completer<GatewayHandshake>();
     final session = DeviceSession(
       device: const PairedDevice(
         deviceId: 'bounded-retry',
@@ -271,7 +272,7 @@ void main() {
       ),
       clientFactory: () {
         clientBuilds++;
-        return _EventClient();
+        return _EventClient(onConnect: () => reconnect.future);
       },
       autoReconnect: false,
     );
@@ -287,9 +288,69 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(find.text('设备连接已断开'), findsOneWidget);
     expect(find.textContaining('all Gateway candidates timed out'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, '重新连接'), findsNothing);
+    expect(find.widgetWithText(TextButton, '重新连接'), findsOneWidget);
     expect(find.byTooltip('设备管理'), findsNothing);
     expect(clientBuilds, 0);
+
+    await tester.tap(find.byKey(const Key('device-connection-reconnect')));
+    await tester.pump();
+
+    expect(clientBuilds, 1);
+    expect(session.connectionState, DeviceConnectionState.connecting);
+    expect(find.text('正在连接设备'), findsOneWidget);
+    expect(find.text('正在尝试恢复连接，请稍候。'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '连接中'), findsOneWidget);
+
+    reconnect.complete(const GatewayHandshake(
+      protocolVersion: 1,
+      providers: [],
+      eventCursor: 'handshake',
+      deviceDescriptor: DeviceDescriptor(
+        deviceName: 'Recovered Host',
+        operatingSystem: 'TestOS',
+        systemVersion: '9',
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(session.connectionState, DeviceConnectionState.online);
+    expect(find.byKey(const Key('device-connection-notice')), findsNothing);
+    expect(find.text('设备已重新连接'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  testWidgets('failed reconnect keeps the latest error and allows another try',
+      (tester) async {
+    _useTallSurface(tester);
+    final session = DeviceSession(
+      device: const PairedDevice(
+        deviceId: 'failed-reconnect',
+        displayName: 'Failed reconnect',
+        connectionKind: DeviceConnectionKind.demo,
+      ),
+      clientFactory: () => _EventClient(
+        onConnect: () => Future<GatewayHandshake>.error(
+          StateError('Host is still unavailable'),
+        ),
+      ),
+      autoReconnect: false,
+    );
+    session.connectionState = DeviceConnectionState.failed;
+    session.error = 'Initial connection failure';
+
+    await tester.pumpWidget(
+      MaterialApp(home: _HomeHarness(sessions: [session])),
+    );
+    await tester.tap(find.byKey(const Key('device-connection-reconnect')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(session.connectionState, DeviceConnectionState.failed);
+    expect(find.textContaining('Host is still unavailable'), findsWidgets);
+    expect(find.widgetWithText(TextButton, '重新连接'), findsOneWidget);
+    expect(find.textContaining('重新连接失败'), findsOneWidget);
+
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
@@ -582,12 +643,15 @@ ConversationSummary _conversation(
 );
 
 class _EventClient implements GatewayClient {
+  _EventClient({this.onConnect});
+
+  final Future<GatewayHandshake> Function()? onConnect;
   final StreamController<GatewayEvent> controller = StreamController<GatewayEvent>.broadcast();
   void emit(GatewayEvent event) => controller.add(event);
   @override Stream<GatewayEvent> get events => controller.stream;
   @override String? get latestEventCursor => 'handshake';
   @override GatewayEventWindow openEventWindow() => GatewayEventWindow.forStream('handshake', events);
-  @override Future<GatewayHandshake> connect() async => const GatewayHandshake(protocolVersion: 1, providers: [], eventCursor: 'handshake', deviceDescriptor: DeviceDescriptor(deviceName: 'Host Metadata', operatingSystem: 'TestOS', systemVersion: '9'));
+  @override Future<GatewayHandshake> connect() async => onConnect?.call() ?? const GatewayHandshake(protocolVersion: 1, providers: [], eventCursor: 'handshake', deviceDescriptor: DeviceDescriptor(deviceName: 'Host Metadata', operatingSystem: 'TestOS', systemVersion: '9'));
   @override Future<GatewayProvider> describeProvider(String providerId) => throw UnimplementedError();
   @override Future<ConversationPage> listConversations({required String providerId, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
   @override Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();

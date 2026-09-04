@@ -70,7 +70,10 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           ),
           if (DeviceConnectionNotice.shouldShow(session)) ...[
             const SizedBox(height: 12),
-            DeviceConnectionNotice(session: session),
+            DeviceConnectionNotice(
+              session: session,
+              showReconnectAction: false,
+            ),
           ],
           const SizedBox(height: 12),
           Row(

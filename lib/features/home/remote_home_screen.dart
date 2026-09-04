@@ -176,7 +176,10 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     selectedProvider: selectedProvider,
                     onSelectProvider: session.selectProvider,
                   ),
-                  if (DeviceConnectionNotice.shouldShow(session)) ...[
+                  if (DeviceConnectionNotice.shouldShow(
+                    session,
+                    includeConnecting: true,
+                  )) ...[
                     const SizedBox(height: 20),
                     DeviceConnectionNotice(session: session),
                   ],

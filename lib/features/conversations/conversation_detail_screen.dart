@@ -275,7 +275,11 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       body: Stack(
         children: [
           Positioned.fill(child: _buildBody()),
-          if (_detail != null && DeviceConnectionNotice.shouldShow(widget.session))
+          if (_detail != null &&
+              DeviceConnectionNotice.shouldShow(
+                widget.session,
+                includeConnecting: true,
+              ))
             Positioned(
               top: 8,
               left: 12,
@@ -361,7 +365,10 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   Widget _buildBody() {
     final detail = _detail;
     if (detail == null && _error == null) {
-      if (DeviceConnectionNotice.shouldShow(widget.session)) {
+      if (DeviceConnectionNotice.shouldShow(
+        widget.session,
+        includeConnecting: true,
+      )) {
         return Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
