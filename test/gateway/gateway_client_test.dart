@@ -132,7 +132,7 @@ void main() {
     expect(transport.requests[3].params['projectFilter'], {'kind': 'all'});
     expect(transport.requests[3].params['limit'], 25);
     expect(transport.requests[4].method, 'conversation.get');
-    expect(transport.requests[4].params['limit'], 10);
+    expect(transport.requests[4].params['limit'], 40);
     expect(detail.detail.summary.resource!.nativeResourceId, 'conversation-1');
     expect(detail.detail.messages, isEmpty);
 
@@ -659,7 +659,7 @@ void main() {
         if (method != 'conversation.get') return null;
         final limit = params['limit'] as int;
         final cursor = params['cursor'] as String?;
-        if (cursor == null && limit > 1) {
+        if (cursor == null && limit > 5) {
           return {
             'jsonrpc': '2.0',
             'id': id,
@@ -708,7 +708,7 @@ void main() {
         .toList(growable: false);
     expect(
       requests.map((request) => request.params['limit']),
-      [10, 5, 2, 1, 1],
+      [40, 20, 10, 5, 5],
     );
     expect(
       requests.map((request) => request.params['cursor']),
@@ -717,6 +717,157 @@ void main() {
     expect(
       snapshot.detail.committedMessages.map((message) => message.content),
       ['older', 'newer'],
+    );
+    await client.close();
+  });
+
+  test('retries the same cursor and keeps the successful page limit',
+      () async {
+    var oversizedOlderPage = true;
+    final transport = _FakeTransport(
+      {
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      },
+      responseBuilder: (method, params, id) {
+        if (method != 'conversation.get') return null;
+        final cursor = params['cursor'] as String?;
+        if (cursor == 'older-page' && oversizedOlderPage) {
+          oversizedOlderPage = false;
+          return _providerResponseTooLarge(id);
+        }
+        final nextCursor = switch (cursor) {
+          null => 'older-page',
+          'older-page' => 'oldest-page',
+          _ => null,
+        };
+        return {
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': {
+            'conversation': _conversationJson(),
+            'items': <Object>[],
+            'pageInfo': nextCursor == null
+                ? <String, dynamic>{}
+                : {'nextCursor': nextCursor},
+            'snapshotCursor': 'opaque-snapshot',
+          },
+        };
+      },
+    );
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+
+    await client.getConversation(_domainConversation());
+
+    final requests = transport.requests
+        .where((request) => request.method == 'conversation.get')
+        .toList(growable: false);
+    expect(
+      requests.map((request) => request.params['limit']),
+      [40, 40, 20, 20],
+    );
+    expect(
+      requests.map((request) => request.params['cursor']),
+      [null, 'older-page', 'older-page', 'oldest-page'],
+    );
+    await client.close();
+  });
+
+  test('does not retry unrelated protocol errors', () async {
+    final transport = _FakeTransport(
+      {
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      },
+      responseBuilder: (method, _, id) => method == 'conversation.get'
+          ? {
+              'jsonrpc': '2.0',
+              'id': id,
+              'error': {
+                'code': -32000,
+                'message': 'Conversation history is unavailable',
+                'data': {
+                  'code': 'conversation_history_unavailable',
+                  'retryable': false,
+                },
+              },
+            }
+          : null,
+    );
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+
+    await expectLater(
+      client.getConversation(_domainConversation()),
+      throwsA(
+        isA<GatewayProtocolException>().having(
+          (error) => error.code,
+          'code',
+          'conversation_history_unavailable',
+        ),
+      ),
+    );
+
+    final requests = transport.requests
+        .where((request) => request.method == 'conversation.get')
+        .toList(growable: false);
+    expect(requests.map((request) => request.params['limit']), [40]);
+    await client.close();
+  });
+
+  test('rethrows oversized history when limit one still fails', () async {
+    final transport = _FakeTransport(
+      {
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      },
+      responseBuilder: (method, _, id) => method == 'conversation.get'
+          ? _providerResponseTooLarge(id)
+          : null,
+    );
+    final client = ProtocolGatewayClient(
+      transport: transport,
+      clientId: 'client-test',
+      clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test',
+      expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+
+    await expectLater(
+      client.getConversation(_domainConversation()),
+      throwsA(
+        isA<GatewayProtocolException>().having(
+          (error) => error.code,
+          'code',
+          'provider_response_too_large',
+        ),
+      ),
+    );
+
+    final requests = transport.requests
+        .where((request) => request.method == 'conversation.get')
+        .toList(growable: false);
+    expect(
+      requests.map((request) => request.params['limit']),
+      [40, 20, 10, 5, 1],
+    );
+    expect(
+      requests.map((request) => request.params['cursor']),
+      [null, null, null, null, null],
     );
     await client.close();
   });
@@ -1537,6 +1688,20 @@ JsonMap _approvalJson({required String status, String? decision}) {
   }
   return approval;
 }
+
+JsonMap _providerResponseTooLarge(String id) => {
+      'jsonrpc': '2.0',
+      'id': id,
+      'error': {
+        'code': -32000,
+        'message':
+            'Provider response exceeds the 16777216-byte binary frame limit',
+        'data': {
+          'code': 'provider_response_too_large',
+          'retryable': false,
+        },
+      },
+    };
 
 class _FakeTransport
     implements GatewayTransport, EndpointAwareGatewayTransport,

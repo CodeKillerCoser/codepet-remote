@@ -374,11 +374,18 @@ class ConversationDetailController extends ApplicationNotifier {
     final stopwatch = Stopwatch()..start();
     try {
       final snapshot = await lease.getConversation(conversation);
+      final fetchElapsedMs = stopwatch.elapsedMilliseconds;
       if (!_acceptsRuntime(epoch, lease, binding)) {
         await window.close();
         return;
       }
       var detail = snapshot.detail;
+      // Provider history can omit client read state or lag behind the list.
+      // Preserve the activity observed when opening this snapshot so that the
+      // read acknowledgement does not get skipped or acknowledge an old version.
+      detail = detail.withSummary(detail.summary.withReadState(
+        conversation.readState.merge(detail.summary.readState),
+      ));
       final previous = _detail;
       if (completedTurnId != null && previous != null) {
         detail = previous.installCommittedSnapshot(
@@ -410,6 +417,8 @@ class ConversationDetailController extends ApplicationNotifier {
         'Conversation snapshot loaded for device ${_session.device.deviceId} '
         'conversation=${conversation.id} '
         'messages=${detail.committedMessages.length} '
+        'fetchElapsedMs=$fetchElapsedMs '
+        'installElapsedMs=${stopwatch.elapsedMilliseconds - fetchElapsedMs} '
         'elapsedMs=${stopwatch.elapsedMilliseconds}',
       );
       window.install(
@@ -442,7 +451,7 @@ class ConversationDetailController extends ApplicationNotifier {
           unawaited(window.close());
         },
       );
-      _markReadIfVisible(detail.summary, epoch, lease, binding);
+      _markReadIfVisible(_detail!.summary, epoch, lease, binding);
     } catch (error, stackTrace) {
       _session.logger.warning(
         'Conversation snapshot failed for device ${_session.device.deviceId} '

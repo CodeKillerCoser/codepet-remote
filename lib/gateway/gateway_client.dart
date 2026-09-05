@@ -53,6 +53,7 @@ final class ProtocolGatewayClient
   final TraceRecorder traceRecorder;
 
   static const _mapper = GeneratedGatewayMapper();
+  static const _conversationHistoryPageLimits = [40, 20, 10, 5, 1];
   late final GatewayProtocolInstrumentation _instrumentation;
   late final sdk.ProtocolClient _protocol;
   int _nextRequestId = 1;
@@ -545,13 +546,13 @@ final class ProtocolGatewayClient
   Future<ConversationSnapshot> getConversation(
     ConversationSummary conversation,
   ) async {
+    final totalStopwatch = Stopwatch()..start();
     final resourceId = conversation.resource;
     if (resourceId == null) {
       throw const FormatException('Conversation has no routed identity');
     }
     final requested = _mapper.sdkResourceId(resourceId);
-    const desiredLimit = 10;
-    var effectiveLimit = desiredLimit;
+    var pageLimitIndex = 0;
     String? cursor;
     final seenCursors = <String>{};
     final pages = <List<sdk.ConversationItem>>[];
@@ -559,6 +560,9 @@ final class ProtocolGatewayClient
     TurnTask? activeTurn;
     String? snapshotCursor;
     var pageCount = 0;
+    var requestCount = 0;
+    var oversizedRetryCount = 0;
+    var fetchedItemCount = 0;
 
     while (true) {
       pageCount++;
@@ -568,24 +572,61 @@ final class ProtocolGatewayClient
         );
       }
       sdk.ConversationGetResponse response;
+      var pageAttempt = 0;
       while (true) {
+        pageAttempt++;
+        requestCount++;
+        final limit = _conversationHistoryPageLimits[pageLimitIndex];
+        final requestStopwatch = Stopwatch()..start();
+        _log.fine(
+          'Conversation history page requested '
+          'conversation=${conversation.id} page=$pageCount attempt=$pageAttempt '
+          'cursor=${cursor == null ? 'initial' : 'present'} '
+          'cursorChars=${cursor == null ? 0 : cursor.length} limit=$limit',
+        );
         try {
           response = await _call(
             () => _protocol.conversationGet(
               sdk.ConversationGetRequest(
                 conversation: requested,
                 cursor: cursor,
-                limit: effectiveLimit,
+                limit: limit,
               ),
             ),
+          );
+          _log.fine(
+            'Conversation history page received '
+            'conversation=${conversation.id} page=$pageCount attempt=$pageAttempt '
+            'cursor=${cursor == null ? 'initial' : 'present'} limit=$limit '
+            'items=${response.items.length} '
+            'hasNextCursor=${response.pageInfo?.nextCursor != null} '
+            'elapsedMs=${requestStopwatch.elapsedMilliseconds}',
           );
           break;
         } on GatewayProtocolException catch (error) {
           if (error.code != 'provider_response_too_large' ||
-              effectiveLimit == 1) {
+              pageLimitIndex == _conversationHistoryPageLimits.length - 1) {
+            _log.warning(
+              'Conversation history page failed '
+              'conversation=${conversation.id} page=$pageCount '
+              'attempt=$pageAttempt cursor=${cursor == null ? 'initial' : 'present'} '
+              'limit=$limit elapsedMs=${requestStopwatch.elapsedMilliseconds} '
+              'code=${error.code}',
+              error: error,
+            );
             rethrow;
           }
-          effectiveLimit = effectiveLimit ~/ 2;
+          oversizedRetryCount++;
+          pageLimitIndex++;
+          _log.fine(
+            'Conversation history page exceeded transport limit; retrying '
+            'conversation=${conversation.id} page=$pageCount '
+            'attempt=$pageAttempt cursor=${cursor == null ? 'initial' : 'present'} '
+            'previousLimit=$limit '
+            'nextLimit=${_conversationHistoryPageLimits[pageLimitIndex]} '
+            'elapsedMs=${requestStopwatch.elapsedMilliseconds} '
+            'retryCount=$oversizedRetryCount',
+          );
         }
       }
 
@@ -630,6 +671,7 @@ final class ProtocolGatewayClient
           responseActiveTurn == null ? null : _mapper.turn(responseActiveTurn);
       snapshotCursor ??= response.snapshotCursor;
       pages.add(response.items);
+      fetchedItemCount += response.items.length;
 
       final nextCursor = response.pageInfo?.nextCursor;
       if (nextCursor == null) break;
@@ -641,19 +683,30 @@ final class ProtocolGatewayClient
       cursor = nextCursor;
     }
 
+    final mappingStopwatch = Stopwatch()..start();
     final orderedItems = pages.reversed.expand((page) => page).toList();
-    return ConversationSnapshot(
+    final committedMessages = [
+      for (var index = 0; index < orderedItems.length; index++)
+        _mapper.message(orderedItems[index], index),
+    ];
+    final snapshot = ConversationSnapshot(
       detail: ConversationDetail(
         summary: summary,
-        committedMessages: [
-          for (var index = 0; index < orderedItems.length; index++)
-            _mapper.message(orderedItems[index], index),
-        ],
+        committedMessages: committedMessages,
         turns: [?activeTurn],
         lastEventCursor: snapshotCursor,
       ),
       snapshotCursor: snapshotCursor,
     );
+    _log.fine(
+      'Conversation history assembled conversation=${conversation.id} '
+      'pages=$pageCount requests=$requestCount '
+      'oversizedRetries=$oversizedRetryCount items=$fetchedItemCount '
+      'messages=${committedMessages.length} '
+      'mappingUs=${mappingStopwatch.elapsedMicroseconds} '
+      'elapsedMs=${totalStopwatch.elapsedMilliseconds}',
+    );
+    return snapshot;
   }
 
   @override

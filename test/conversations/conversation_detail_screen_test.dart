@@ -1526,6 +1526,54 @@ void main() {
     expect(controller.interactionAcquired, isTrue);
   });
 
+  for (final snapshotVersion in [0, 2, 4]) {
+    test('preserves observed unread activity with snapshot version $snapshotVersion',
+        () async {
+      final conversation = _idleConversation().withReadState(
+        const ConversationReadState(
+          unread: true,
+          activityVersion: 'activity-3',
+        ),
+      );
+      final client = _DetailClient(
+        onGet: (_) async => ConversationSnapshot(
+          detail: ConversationDetail(
+            summary: _idleConversation().withReadState(ConversationReadState(
+              unread: snapshotVersion != 0,
+              activityVersion: 'activity-$snapshotVersion',
+            )),
+          ),
+          snapshotCursor: 'H',
+        ),
+      );
+      final session = DeviceSession(
+        device: const PairedDevice(
+          deviceId: 'host',
+          displayName: 'Host',
+          connectionKind: DeviceConnectionKind.demo,
+        ),
+        clientFactory: () => client,
+        autoReconnect: false,
+      );
+      addTearDown(session.dispose);
+      await session.connect();
+      session.conversations = [conversation];
+      final controller = ConversationDetailController(
+        session: session,
+        conversation: conversation,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.reload();
+      await Future<void>.delayed(Duration.zero);
+
+      final expectedVersion = snapshotVersion > 3 ? snapshotVersion : 3;
+      expect(client.markReadCalls, ['activity-$expectedVersion']);
+      expect(session.conversations.single.readState.unread, isFalse);
+      expect(controller.detail!.summary.readState.unread, isFalse);
+    });
+  }
+
   testWidgets('acknowledges the visible activity version as read',
       (tester) async {
     final client = _DetailClient();

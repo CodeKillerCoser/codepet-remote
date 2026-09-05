@@ -29,25 +29,39 @@ class PairDeviceUseCase implements DevicePairer {
   @override
   Future<PairedDevice> pair(String rawPayload) async {
     logger.info('QR pairing started');
+    final totalStopwatch = Stopwatch()..start();
     try {
+      final stageStopwatch = Stopwatch()..start();
       final clientId = await repository.loadOrCreateClientId();
+      final identityElapsedMs = stageStopwatch.elapsedMilliseconds;
+      stageStopwatch.reset();
       final descriptor = await descriptorProvider.load();
+      final descriptorElapsedMs = stageStopwatch.elapsedMilliseconds;
+      stageStopwatch.reset();
       final registration = await gateway.exchange(
         rawPayload: rawPayload,
         clientId: clientId,
         clientDevice: descriptor,
       );
+      final exchangeElapsedMs = stageStopwatch.elapsedMilliseconds;
+      stageStopwatch.reset();
       await repository.register(
         registration.device,
         registration.credential,
       );
+      final persistenceElapsedMs = stageStopwatch.elapsedMilliseconds;
       logger.info(
-        'QR pairing succeeded for device ${registration.device.deviceId}',
+        'QR pairing succeeded for device ${registration.device.deviceId} '
+        'identityElapsedMs=$identityElapsedMs '
+        'descriptorElapsedMs=$descriptorElapsedMs '
+        'exchangeElapsedMs=$exchangeElapsedMs '
+        'persistenceElapsedMs=$persistenceElapsedMs '
+        'elapsedMs=${totalStopwatch.elapsedMilliseconds}',
       );
       return registration.device;
     } catch (error, stackTrace) {
       logger.warning(
-        'QR pairing failed',
+        'QR pairing failed elapsedMs=${totalStopwatch.elapsedMilliseconds}',
         error: error,
         stackTrace: stackTrace,
       );

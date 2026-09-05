@@ -29,7 +29,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   final Duration connectTimeout;
   final Duration keepAliveInterval;
   final StreamController<JsonMap> _events = StreamController<JsonMap>.broadcast();
-  final Map<String, Completer<Object?>> _pending = {};
+  final Map<String, _PendingGatewayRequest> _pending = {};
   WebSocket? _socket;
   HttpClient? _httpClient;
   bool _closing = false;
@@ -166,10 +166,19 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
       throw const FormatException('Generated Gateway request envelope is invalid');
     }
     final completer = Completer<Object?>();
-    _pending[id] = completer;
+    final encodeStopwatch = Stopwatch()..start();
+    final encodedRequest = jsonEncode(request);
+    final requestBytes = utf8.encode(encodedRequest).length;
+    final requestJsonEncodeUs = encodeStopwatch.elapsedMicroseconds;
+    final pending = _PendingGatewayRequest(
+      completer: completer,
+      requestBytes: requestBytes,
+      requestJsonEncodeUs: requestJsonEncodeUs,
+    );
+    _pending[id] = pending;
     final stopwatch = Stopwatch()..start();
     try {
-      socket.add(jsonEncode(request));
+      socket.add(encodedRequest);
       final response = await completer.future.timeout(
         const Duration(seconds: 15),
         onTimeout: () {
@@ -182,7 +191,12 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
       );
       _log.fine(
         'Gateway RPC completed method=$method requestId=$id '
-        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+        'elapsedMs=${stopwatch.elapsedMilliseconds} '
+        'requestJsonBytes=$requestBytes '
+        'requestJsonEncodeUs=$requestJsonEncodeUs '
+        'responseJsonBytes=${pending.responseBytes ?? -1} '
+        'responseJsonDecodeUs=${pending.responseJsonDecodeUs ?? -1} '
+        'compressionRequested=permessage-deflate',
       );
       return response;
     } catch (error, stackTrace) {
@@ -200,7 +214,10 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
   void _handleFrame(dynamic frame) {
     try {
       if (frame is! String) throw const FormatException('Gateway requires text frames');
+      final frameBytes = utf8.encode(frame).length;
+      final decodeStopwatch = Stopwatch()..start();
       final decoded = jsonDecode(frame);
+      final jsonDecodeUs = decodeStopwatch.elapsedMicroseconds;
       if (decoded is! Map) throw const FormatException('Gateway envelope must be an object');
       final json = Map<String, dynamic>.from(decoded);
       if (json['jsonrpc'] != '2.0') throw const FormatException('Unexpected JSON-RPC version');
@@ -215,7 +232,9 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
         _log.fine('Ignoring unmatched Gateway response requestId=$id');
         return;
       }
-      pending.complete(json);
+      pending.responseBytes = frameBytes;
+      pending.responseJsonDecodeUs = jsonDecodeUs;
+      pending.completer.complete(json);
     } catch (error, stack) {
       _log.warning(
         'Gateway frame rejected at transport boundary',
@@ -256,7 +275,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     _fail(error);
     if (!_closing && !_events.isClosed) _events.addError(error);
   }
-  void _fail(Object error) { final pending = _pending.values.toList(); _pending.clear(); for (final item in pending) { if (!item.isCompleted) item.completeError(error); } }
+  void _fail(Object error) { final pending = _pending.values.toList(); _pending.clear(); for (final item in pending) { if (!item.completer.isCompleted) item.completer.completeError(error); } }
 
   @override
   Future<void> close() => _closeFuture ??= _close();
@@ -279,6 +298,20 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     if (socket != null) await _closeSocket(socket);
     if (!_events.isClosed) await _events.close();
   }
+}
+
+final class _PendingGatewayRequest {
+  _PendingGatewayRequest({
+    required this.completer,
+    required this.requestBytes,
+    required this.requestJsonEncodeUs,
+  });
+
+  final Completer<Object?> completer;
+  final int requestBytes;
+  final int requestJsonEncodeUs;
+  int? responseBytes;
+  int? responseJsonDecodeUs;
 }
 
 bool isRetryableWebSocketCloseCode(int? closeCode) =>
