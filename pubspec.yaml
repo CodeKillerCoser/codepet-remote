@@ -30,6 +30,8 @@ environment:
 dependencies:
   archive: ^4.2.0
   cached_network_image: ^4.0.0
+  codepet_agent_sdk:
+    path: sdk/gateway/codepet-agent-sdk
   codepet_core_sdk:
     path: sdk/gateway/codepet-core-sdk
   codepet_gateway_sdk:
@@ -51,6 +53,8 @@ dependencies:
   sonner_toast: ^2.0.2
 
 dependency_overrides:
+  codepet_agent_sdk:
+    path: sdk/gateway/codepet-agent-sdk
   codepet_core_sdk:
     path: sdk/gateway/codepet-core-sdk
 
