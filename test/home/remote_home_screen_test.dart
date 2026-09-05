@@ -216,7 +216,7 @@ void main() {
           )
           .controller!
           .text,
-      startsWith('/Users/test/.codepet/remote_workspace/codex/task-'),
+      startsWith('/Users/test/.codepet/remote_workspace/codex/task/'),
     );
 
     await tester.pumpWidget(const SizedBox());
@@ -244,7 +244,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(client.createdProject, project.resource);
-    expect(client.createdWorkspaceRoot, isNull);
+    expect(client.createdWorkspaceRoot, '/partial');
+    expect(client.createdWorkspaceMode, 'main');
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
@@ -271,7 +272,7 @@ void main() {
           )
           .controller!
           .text,
-      startsWith('/Users/test/.codepet/remote_workspace/codex/task-'),
+      startsWith('/Users/test/.codepet/remote_workspace/codex/task/'),
     );
 
     await tester.tap(find.byKey(const Key('new-conversation-project')));
@@ -280,11 +281,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('new-conversation-workspace')), findsNothing);
+    await tester.tap(find.byKey(const Key('new-conversation-workspace-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Worktree').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('confirm-new-conversation')));
     await tester.pumpAndSettle();
 
     expect(client.createdProject, project.resource);
-    expect(client.createdWorkspaceRoot, isNull);
+    expect(client.createdWorkspaceRoot, '/partial');
+    expect(client.createdWorkspaceMode, 'worktree');
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
@@ -307,7 +313,7 @@ void main() {
     expect(client.createdProject, isNull);
     expect(
       client.createdWorkspaceRoot,
-      startsWith('/Users/test/.codepet/remote_workspace/codex/task-'),
+      startsWith('/Users/test/.codepet/remote_workspace/codex/task/'),
     );
     await tester.pumpWidget(const SizedBox());
     session.dispose();
@@ -944,6 +950,7 @@ class _ProjectConversationCreateClient extends _PagedClient
   final GatewayProject project;
   RoutedResourceId? createdProject;
   String? createdWorkspaceRoot;
+  String? createdWorkspaceMode;
 
   @override
   Future<GatewayHandshake> connect() async => const GatewayHandshake(
@@ -980,6 +987,10 @@ class _ProjectConversationCreateClient extends _PagedClient
   }) async {
     createdProject = project;
     createdWorkspaceRoot = workspaceRoot;
+    createdWorkspaceMode = workspaceMode;
+    if (workspaceMode != null && workspaceRoot == null) {
+      throw StateError('Codex workspace mode requires workspaceRoot');
+    }
     return ConversationSummary(
       id: 'created-conversation',
       providerId: providerId,
@@ -1088,6 +1099,13 @@ const _homeProjectProvider = GatewayProvider(
     ],
     conversationCreate: ConversationCreateCapabilities(
       supportsTitle: false,
+      workspaceMode: ProviderChoiceSet(
+        options: [
+          ProviderChoice(id: 'main', displayName: 'Main workspace'),
+          ProviderChoice(id: 'worktree', displayName: 'Worktree'),
+        ],
+        defaultId: 'main',
+      ),
       selection: TurnSendCapabilities(
         accessMode: ProviderChoiceSet(
           options: [

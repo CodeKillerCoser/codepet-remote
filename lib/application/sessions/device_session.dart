@@ -793,6 +793,14 @@ class DeviceSession extends ApplicationNotifier {
         (workspaceModes?.availableOptions.isNotEmpty == true
             ? workspaceModes!.availableOptions.first.id
             : null);
+    final requestedWorkspaceRoot = workspaceRoot?.trim();
+    // Project ownership and the execution directory are separate request fields.
+    final effectiveWorkspaceRoot = requestedWorkspaceRoot?.isNotEmpty == true
+        ? requestedWorkspaceRoot
+        : project?.roots
+            .map((root) => root.path.trim())
+            .where((path) => path.isNotEmpty)
+            .firstOrNull;
     logger.info(
       'Conversation create started for device ${device.deviceId} '
       'provider=${provider.id} projectAttached=${project != null}',
@@ -805,9 +813,7 @@ class DeviceSession extends ApplicationNotifier {
         permissionLevel: effectivePermissionLevel,
         model: effectiveModel,
         reasoningEffort: effectiveReasoningEffort,
-        workspaceRoot: workspaceRoot?.trim().isEmpty == true
-            ? null
-            : workspaceRoot?.trim(),
+        workspaceRoot: effectiveWorkspaceRoot,
         workspaceMode: effectiveWorkspaceMode,
         project: project?.resource,
       );

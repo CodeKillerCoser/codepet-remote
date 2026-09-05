@@ -1796,8 +1796,8 @@ String? _newStandaloneWorkspace(String? parent) {
   final needsSeparator = !trimmed.endsWith('/') && !trimmed.endsWith('\\');
   final sequence = _standaloneWorkspaceSequence++;
   final taskName =
-      'task-${DateTime.now().toUtc().microsecondsSinceEpoch}-$sequence';
-  return '$trimmed${needsSeparator ? separator : ''}$taskName';
+      '${DateTime.now().toUtc().microsecondsSinceEpoch}-$sequence';
+  return '$trimmed${needsSeparator ? separator : ''}task$separator$taskName';
 }
 
 void _openConversation(BuildContext context, DeviceSession session, ConversationSummary conversation) {
