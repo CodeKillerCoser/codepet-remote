@@ -107,6 +107,52 @@ void main() {
     session.dispose();
   });
 
+  test('heartbeat updates only the matching provider and discards older generations', () async {
+    const second = GatewayProvider(id: 'second', displayName: 'Second',
+      status: ProviderStatus.ready, connectionStatus: 'online', generation: 2,
+      capabilities: GatewayCapabilities(revision: 'second-1', methods: ['conversation.list']));
+    const offline = GatewayProvider(id: 'second', displayName: 'Second',
+      status: ProviderStatus.ready, connectionStatus: 'offline', generation: 2,
+      capabilitiesLoaded: false,
+      capabilities: GatewayCapabilities(revision: 'second-1', methods: []));
+    final client = _FakeClient(const [], providers: [_listProvider, second]);
+    final session = DeviceSession(device: _device('heartbeat-providers'), clientFactory: () => client);
+    await session.connect();
+    client.snapshots.add([_listProvider, offline]);
+    await Future<void>.delayed(Duration.zero);
+    expect(session.handshake!.providers.first.id, _primaryRoute);
+    expect(session.handshake!.providers.first.displayName, 'Codex Work');
+    expect(session.handshake!.providers.last.isAvailable, isFalse);
+    expect(session.handshake!.providers.last.methods, ['conversation.list']);
+    client.emit(const GatewayProviderChangedEvent(eventCursor: 'old-runtime',
+      provider: GatewayProvider(id: 'second', displayName: 'Stale', status: ProviderStatus.ready,
+        connectionStatus: 'online', generation: 1,
+        capabilities: GatewayCapabilities(revision: 'old', methods: []))));
+    await Future<void>.delayed(Duration.zero);
+    expect(session.handshake!.providers.last.connectionStatus, 'offline');
+    expect(client.describeProviderIds, isEmpty);
+    client.snapshots.add([offline]);
+    await Future<void>.delayed(Duration.zero);
+    expect(session.handshake!.providers.single.id, 'second');
+    expect(session.selectedProvider?.id, 'second');
+    session.dispose();
+  });
+
+  test('provider becoming ready after connection loads its projects', () async {
+    final waiting = GatewayProvider(id: _primaryRoute, displayName: 'Starting',
+      status: ProviderStatus.connecting, connectionStatus: 'online',
+      capabilities: _projectProvider.capabilities);
+    final client = _ProjectFakeClient(projects: [_gatewayProject()], conversations: [], providers: [waiting]);
+    final session = DeviceSession(device: _device('late-projects'), clientFactory: () => client);
+    await session.connect();
+    expect(client.projectListCalls, 0);
+    client.snapshots.add([_projectProvider]);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(client.projectListCalls, 1);
+    expect(session.projects.single.name, 'Project One');
+    session.dispose();
+  });
+
   test('loads projects independently and uses explicit conversation scopes',
       () async {
     final project = _gatewayProject();
@@ -1420,7 +1466,7 @@ class _ConversationListRequest {
   final int limit;
 }
 
-class _FakeClient implements GatewayClient {
+class _FakeClient implements GatewayClient, ProviderSnapshotGatewayClient {
   _FakeClient(
     this.values, {
     this.nextCursor,
@@ -1434,6 +1480,8 @@ class _FakeClient implements GatewayClient {
   final Future<GatewayProvider> Function(String providerId)?
       onDescribeProvider;
   final List<GatewayProvider> providers;
+  final StreamController<List<GatewayProvider>> snapshots = StreamController.broadcast();
+  @override Stream<List<GatewayProvider>> get providerSnapshots => snapshots.stream;
   final List<String> describeProviderIds = [];
   final List<_ConversationListRequest> listRequests = [];
   final StreamController<GatewayEvent> controller = StreamController<GatewayEvent>.broadcast();
@@ -1481,15 +1529,16 @@ class _FakeClient implements GatewayClient {
   @override Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async => const ConversationInteraction(selection: TurnSendSelection());
   @override Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
   @override Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
-  @override Future<void> close() async { closed = true; await controller.close(); }
+  @override Future<void> close() async { closed = true; await snapshots.close(); await controller.close(); }
 }
 
 class _ProjectFakeClient extends _FakeClient implements ProjectGatewayClient {
   _ProjectFakeClient({
     required List<GatewayProject> projects,
     required List<ConversationSummary> conversations,
+    List<GatewayProvider> providers = const [_projectProvider],
   })  : projects = List.of(projects),
-        super(conversations, providers: const [_projectProvider]);
+        super(conversations, providers: providers);
 
   final List<GatewayProject> projects;
   int projectListCalls = 0;

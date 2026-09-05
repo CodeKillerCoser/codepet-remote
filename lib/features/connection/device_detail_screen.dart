@@ -145,9 +145,11 @@ class _ProviderDetailCard extends StatelessWidget {
                     child: Text(provider.displayName,
                         style: Theme.of(context).textTheme.titleMedium),
                   ),
-                  Text(_providerStatusLabel(provider.status)),
+
                 ],
               ),
+              const SizedBox(height: 6),
+              Text('${provider.connectionLabel} · ${_providerStatusLabel(provider.status)}'),
               const Divider(height: 24),
               _DetailRow(label: '版本', value: provider.runtimeVersion ?? '未提供'),
               _DetailRow(label: '路径', value: provider.executablePath ?? '未提供'),

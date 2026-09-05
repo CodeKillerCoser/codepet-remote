@@ -40,6 +40,12 @@ class DeviceSessionRuntimeLease {
     ConversationSummary conversation,
   ) => _client.acquireInteraction(conversation);
 
+  bool get supportsConversationResume => _client is ConversationResumeGatewayClient;
+
+  Future<ConversationResumeResult> resumeConversation(
+    ConversationSummary conversation,
+  ) => (_client as ConversationResumeGatewayClient).resumeConversation(conversation);
+
   Future<ConversationPage> searchConversations({
     required String providerId,
     required String searchTerm,
@@ -345,6 +351,8 @@ class DeviceSession extends ApplicationNotifier {
     return _connect();
   }
 
+  StreamSubscription<List<GatewayProvider>>? _providerStatusSubscription;
+
   Future<void> _connect() async {
     if (connectionState == DeviceConnectionState.connecting) return;
     _isReconnectAttempt = _hasStartedConnection;
@@ -354,6 +362,8 @@ class DeviceSession extends ApplicationNotifier {
       '(attempt ${_reconnectAttempt + 1})',
     );
     final stopwatch = Stopwatch()..start();
+    final oldProviderSubscription = _providerStatusSubscription;
+    _providerStatusSubscription = null;
     final oldWindow = _eventWindow;
     final oldClient = _client;
     final generation = ++_runtimeGeneration;
@@ -364,6 +374,7 @@ class DeviceSession extends ApplicationNotifier {
     connectionState = DeviceConnectionState.connecting;
     error = null;
     _notifyListenersImmediately();
+    await oldProviderSubscription?.cancel();
     try {
       await oldWindow?.close();
     } catch (_) {}
@@ -386,6 +397,21 @@ class DeviceSession extends ApplicationNotifier {
       ]);
       if (!_ownsRuntime(generation, client)) return;
       handshake = connectedHandshake.withProviders(providers);
+      if (client is ProviderSnapshotGatewayClient) {
+        _providerStatusSubscription = (client as ProviderSnapshotGatewayClient).providerSnapshots.listen((snapshot) {
+          if (!_ownsRuntime(generation, client)) return;
+          final current = handshake;
+          if (current == null) return;
+          final ids = snapshot.map((p) => p.id).toSet();
+          handshake = current.withProviders(current.providers.where((p) => ids.contains(p.id)).toList());
+          for (final provider in snapshot) {
+            _applyProviderUpdate(provider);
+          }
+          if (!ids.contains(_selectedProviderId)) _selectedProviderId = snapshot.isEmpty ? null : snapshot.first.id;
+          _notifyListenersImmediately();
+        });
+      }
+
       if (!providers.any((provider) => provider.id == _selectedProviderId)) {
         _selectedProviderId = providers.isEmpty ? null : providers.first.id;
       }
@@ -400,7 +426,7 @@ class DeviceSession extends ApplicationNotifier {
       final projectClient = client is ProjectGatewayClient
           ? client as ProjectGatewayClient
           : null;
-      for (final provider in projectListProviders) {
+      for (final provider in projectListProviders.where((p) => p.isAvailable)) {
         if (projectClient == null) {
           throw UnsupportedError(
             'Gateway SDK adapter does not implement advertised project methods',
@@ -415,7 +441,7 @@ class DeviceSession extends ApplicationNotifier {
         projects = mergeRoutedProjects(projects, page.projects);
         _projectCursors[provider.id] = page.nextCursor;
       }
-      for (final provider in conversationListProviders) {
+      for (final provider in conversationListProviders.where((p) => p.isAvailable)) {
         final scope = _recentScope(provider);
         final page = await client.listConversations(
           providerId: provider.id,
@@ -455,6 +481,9 @@ class DeviceSession extends ApplicationNotifier {
         },
       );
       connectionState = DeviceConnectionState.online;
+      for (final provider in handshake?.providers ?? const <GatewayProvider>[]) {
+        _ensureProviderLists(provider);
+      }
       _retryableFailure = false;
       _reconnectAttempt = 0;
       logger.info(
@@ -733,7 +762,7 @@ class DeviceSession extends ApplicationNotifier {
   }) async {
     final lease = runtimeLease;
     if (lease == null ||
-        provider.status != ProviderStatus.ready ||
+        !provider.isAvailable ||
         !provider.methods.contains('conversation.create')) {
       throw StateError('当前 Provider 不支持新建会话');
     }
@@ -815,7 +844,7 @@ class DeviceSession extends ApplicationNotifier {
     if (connectionState != DeviceConnectionState.online ||
         gatewayClient == null ||
         gatewayClient is! ProjectGatewayClient ||
-        provider.status != ProviderStatus.ready ||
+        !provider.isAvailable ||
         !provider.methods.contains('project.create')) {
       throw StateError('当前 Provider 不支持新建项目');
     }
@@ -867,7 +896,7 @@ class DeviceSession extends ApplicationNotifier {
     if (connectionState != DeviceConnectionState.online ||
         gatewayClient == null ||
         gatewayClient is! ProjectGatewayClient ||
-        provider.status != ProviderStatus.ready ||
+        !provider.isAvailable ||
         !provider.methods.contains('project.update')) {
       throw StateError('当前 Provider 不支持编辑项目');
     }
@@ -923,7 +952,7 @@ class DeviceSession extends ApplicationNotifier {
     if (connectionState != DeviceConnectionState.online ||
         gatewayClient == null ||
         gatewayClient is! ProjectGatewayClient ||
-        provider.status != ProviderStatus.ready ||
+        !provider.isAvailable ||
         !provider.methods.contains('project.delete')) {
       throw StateError('当前 Provider 不支持删除项目');
     }
@@ -982,6 +1011,7 @@ class DeviceSession extends ApplicationNotifier {
       generation == _runtimeGeneration && identical(_client, client);
 
   void _resetConversationPagination() {
+    _initialConversationLoads.clear();
     conversations = const [];
     projects = const [];
     _conversationCursors.clear();
@@ -1032,34 +1062,48 @@ class DeviceSession extends ApplicationNotifier {
     }
   }
 
-  void _applyEvent(GatewayEvent event) {
-    if (event is GatewayProviderChangedEvent) {
+  void _applyProviderUpdate(GatewayProvider provider) {
       final currentHandshake = handshake;
       if (currentHandshake == null) return;
       final providers = [...currentHandshake.providers];
       final index = providers.indexWhere(
-        (provider) => provider.id == event.provider.id,
+        (item) => item.id == provider.id,
       );
-      if (index == -1) return;
+      if (index == -1) {
+        providers.add(provider);
+        handshake = currentHandshake.withProviders(providers);
+        _ensureProviderLists(provider);
+        final client = _client;
+        if (client != null) unawaited(_refreshProviderDescription(providerId: provider.id, revision: provider.capabilities.revision, generation: _runtimeGeneration, client: client));
+        _notifyListenersImmediately();
+        return;
+      }
       final previous = providers[index];
-      final revisionChanged = previous.capabilities.revision !=
-          event.provider.capabilities.revision;
+      if (previous.generation != null && provider.generation != null && provider.generation! < previous.generation!) return;
+      final revisionChanged = previous.generation != provider.generation || previous.capabilities.revision !=
+          provider.capabilities.revision;
       providers[index] = !revisionChanged && previous.capabilitiesLoaded
-          ? event.provider.withCapabilities(previous.capabilities)
-          : event.provider;
+          ? provider.withCapabilities(previous.capabilities)
+          : provider;
       handshake = currentHandshake.withProviders(providers);
       _notifyListenersImmediately();
+      _ensureProviderLists(providers[index]);
       if (revisionChanged || !providers[index].capabilitiesLoaded) {
         final client = _client;
         if (client != null) {
           unawaited(_refreshProviderDescription(
-            providerId: event.provider.id,
-            revision: event.provider.capabilities.revision,
+            providerId: provider.id,
+            revision: provider.capabilities.revision,
             generation: _runtimeGeneration,
             client: client,
           ));
         }
       }
+  }
+
+  void _applyEvent(GatewayEvent event) {
+    if (event is GatewayProviderChangedEvent) {
+      _applyProviderUpdate(event.provider);
       return;
     }
     if (event is ProjectChangedEvent) {
@@ -1135,9 +1179,11 @@ class DeviceSession extends ApplicationNotifier {
           provider.id == providerId &&
           provider.capabilities.revision == revision);
       if (index == -1) return;
+      if (providers[index].generation != described.generation) return;
       providers[index] = described;
       handshake = currentHandshake.withProviders(providers);
       _notifyListenersImmediately();
+      _ensureProviderLists(described);
     } catch (error, stackTrace) {
       // The summary remains usable. A later provider.changed event or reconnect
       // retries the lazy description without discarding runtime information.
@@ -1365,6 +1411,38 @@ class DeviceSession extends ApplicationNotifier {
         final next = _pendingConversationRefreshTurns[providerId]!.values.first;
         unawaited(_refreshConversationsForEvent(providerId, next));
       }
+    }
+  }
+
+  final Set<_ConversationListScope> _initialConversationLoads = {};
+
+  void _ensureProviderLists(GatewayProvider provider) {
+    if (connectionState != DeviceConnectionState.online || !provider.isAvailable) return;
+    if (provider.methods.contains('project.list') && !_projectCursors.containsKey(provider.id)) {
+      if (!_projectRefreshes.contains(provider.id)) _queueProjectRefresh(provider.id);
+    }
+    final scope = _recentScope(provider);
+    if (provider.methods.contains('conversation.list') && !_loadedConversationScopes.contains(scope)) {
+      unawaited(_loadInitialProviderConversations(provider, scope));
+    }
+  }
+
+  Future<void> _loadInitialProviderConversations(GatewayProvider provider, _ConversationListScope scope) async {
+    final client = _client;
+    final generation = _runtimeGeneration;
+    if (client == null || !_initialConversationLoads.add(scope)) return;
+    try {
+      final page = await client.listConversations(providerId: provider.id,
+        projectFilter: scope.filter, limit: conversationPageSize);
+      if (!_ownsRuntime(generation, client) || _providerForId(provider.id)?.generation != provider.generation) return;
+      conversations = mergeRoutedConversations(conversations, page.conversations);
+      _conversationCursors[scope] = page.nextCursor;
+      _loadedConversationScopes.add(scope);
+      _notifyListenersImmediately();
+    } catch (error, stackTrace) {
+      _logBackgroundWarning('provider:${provider.id}', 'Provider conversation loading failed', error, stackTrace);
+    } finally {
+      if (generation == _runtimeGeneration) _initialConversationLoads.remove(scope);
     }
   }
 

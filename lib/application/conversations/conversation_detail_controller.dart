@@ -9,7 +9,7 @@ import '../sessions/device_session.dart';
 import '../support/application_notifier.dart';
 import '../sync/gateway_event_window.dart';
 
-const Duration _fallbackInteractionRenewal = Duration(seconds: 10);
+const Duration _interactionRetryInterval = Duration(seconds: 10);
 const String unknownTurnOutcomeMessage =
     '上次发送结果未知。请先刷新会话核对；确认后再次发送会创建新请求，仍可能产生重复任务。';
 
@@ -30,7 +30,7 @@ class ConversationDetailController extends ApplicationNotifier {
   late ConversationSummary _conversation;
   final DateTime Function() _now;
   GatewayEventWindow? _eventWindow;
-  Timer? _interactionTimer;
+  Timer? _interactionRetryTimer;
   final Set<String> _appliedCursors = {};
   final Set<String> _refreshingTurns = {};
   final Set<String> _tracedFirstOutputTurns = {};
@@ -153,8 +153,8 @@ class ConversationDetailController extends ApplicationNotifier {
   Future<void> reload() async {
     final epoch = ++_runtimeEpoch;
     _markingReadToken = null;
-    _interactionTimer?.cancel();
-    _interactionTimer = null;
+    _interactionRetryTimer?.cancel();
+    _interactionRetryTimer = null;
     final previousBinding = _binding;
     final previousWindow = _eventWindow;
     _eventWindow = null;
@@ -201,19 +201,38 @@ class ConversationDetailController extends ApplicationNotifier {
     notifyApplicationListeners();
     if (previousWindow != null) unawaited(previousWindow.close());
     if (lease == null || provider == null || binding == null) return;
+    if (!provider.capabilitiesLoaded) return;
+    ConversationResumeResult? resumed;
+    GatewayEventWindow? resumeWindow;
     if (provider.methods.contains('turn.send')) {
-      unawaited(_acquireInteraction(
+      if (lease.supportsConversationResume) {
+        resumeWindow = lease.openEventWindow();
+      }
+      await _acquireInteraction(
         lease: lease,
         binding: binding,
         conversation: conversation,
         epoch: epoch,
-      ));
+        acquire: resumeWindow == null ? null : () async {
+          final result = await lease.resumeConversation(conversation);
+          resumed = result;
+          if (result.interaction == null) {
+            throw result.interactionError ?? StateError('Conversation interaction was not acquired');
+          }
+          return result.interaction!;
+        },
+      );
+    }
+    if (!_acceptsRuntime(epoch, lease, binding)) {
+      if (resumeWindow != null) await resumeWindow.close();
+      return;
     }
     if (!provider.methods.contains('conversation.get')) {
       if (_acceptsRuntime(epoch, lease, binding)) {
         _error = '当前 Provider 不支持加载会话详情。';
         notifyApplicationListeners();
       }
+      if (resumeWindow != null) await resumeWindow.close();
       return;
     }
     await _loadSnapshot(
@@ -222,6 +241,8 @@ class ConversationDetailController extends ApplicationNotifier {
       conversation: conversation,
       epoch: epoch,
       initializeSelection: true,
+      loadHistory: resumed?.loadHistory,
+      eventWindow: resumeWindow,
     );
   }
 
@@ -230,6 +251,7 @@ class ConversationDetailController extends ApplicationNotifier {
     required _CapabilityBinding binding,
     required ConversationSummary conversation,
     required int epoch,
+    Future<ConversationInteraction> Function()? acquire,
   }) async {
     if (_interactionRequestInFlight ||
         !_acceptsRuntime(epoch, lease, binding)) {
@@ -237,7 +259,7 @@ class ConversationDetailController extends ApplicationNotifier {
     }
     _interactionRequestInFlight = true;
     try {
-      final interaction = await lease.acquireInteraction(conversation);
+      final interaction = await (acquire?.call() ?? lease.acquireInteraction(conversation));
       if (!_acceptsRuntime(epoch, lease, binding)) return;
       if (_lastInteractionFailure != null) {
         _session.logger.info(
@@ -258,13 +280,6 @@ class ConversationDetailController extends ApplicationNotifier {
         _initializeSelectionFrom(interaction.selection);
         _selectionInitializedFromInteraction = true;
       }
-      _scheduleInteractionRenewal(
-        interaction: interaction,
-        lease: lease,
-        binding: binding,
-        conversation: conversation,
-        epoch: epoch,
-      );
       notifyApplicationListeners();
     } catch (error, stackTrace) {
       if (!_acceptsRuntime(epoch, lease, binding)) return;
@@ -295,49 +310,14 @@ class ConversationDetailController extends ApplicationNotifier {
     }
   }
 
-  void _scheduleInteractionRenewal({
-    required ConversationInteraction interaction,
-    required DeviceSessionRuntimeLease lease,
-    required _CapabilityBinding binding,
-    required ConversationSummary conversation,
-    required int epoch,
-  }) {
-    _interactionTimer?.cancel();
-    final expiresAt = interaction.leaseExpiresAt;
-    var delay = _fallbackInteractionRenewal;
-    if (expiresAt != null) {
-      final remaining = expiresAt.difference(_now());
-      final safetyMilliseconds = min(
-        5000,
-        max(500, remaining.inMilliseconds ~/ 5),
-      );
-      final expiryDelay =
-          remaining - Duration(milliseconds: safetyMilliseconds);
-      if (expiryDelay < delay) {
-        delay = expiryDelay;
-      }
-    }
-    if (delay < const Duration(milliseconds: 250)) {
-      delay = const Duration(milliseconds: 250);
-    }
-    _interactionTimer = Timer(delay, () {
-      unawaited(_acquireInteraction(
-        lease: lease,
-        binding: binding,
-        conversation: conversation,
-        epoch: epoch,
-      ));
-    });
-  }
-
   void _scheduleInteractionRetry({
     required DeviceSessionRuntimeLease lease,
     required _CapabilityBinding binding,
     required ConversationSummary conversation,
     required int epoch,
   }) {
-    _interactionTimer?.cancel();
-    _interactionTimer = Timer(_fallbackInteractionRenewal, () {
+    _interactionRetryTimer?.cancel();
+    _interactionRetryTimer = Timer(_interactionRetryInterval, () {
       unawaited(_acquireInteraction(
         lease: lease,
         binding: binding,
@@ -367,13 +347,15 @@ class ConversationDetailController extends ApplicationNotifier {
     required int epoch,
     bool initializeSelection = false,
     String? completedTurnId,
+    Future<ConversationSnapshot> Function()? loadHistory,
+    GatewayEventWindow? eventWindow,
   }) async {
     _error = null;
     notifyApplicationListeners();
-    final window = lease.openEventWindow();
+    final window = eventWindow ?? lease.openEventWindow();
     final stopwatch = Stopwatch()..start();
     try {
-      final snapshot = await lease.getConversation(conversation);
+      final snapshot = await (loadHistory?.call() ?? lease.getConversation(conversation));
       final fetchElapsedMs = stopwatch.elapsedMilliseconds;
       if (!_acceptsRuntime(epoch, lease, binding)) {
         await window.close();
@@ -689,7 +671,7 @@ class ConversationDetailController extends ApplicationNotifier {
     return lease != null &&
         _session.ownsRuntimeLease(lease) &&
         provider != null &&
-        provider.status == ProviderStatus.ready &&
+        provider.isAvailable &&
         provider.methods.contains('turn.send') &&
         provider.capabilities.turnSend != null &&
         _interactionAcquired &&
@@ -704,7 +686,7 @@ class ConversationDetailController extends ApplicationNotifier {
 
   bool get composerEnabled =>
       _detail != null &&
-      _provider?.status == ProviderStatus.ready &&
+      _provider?.isAvailable == true &&
       _provider?.methods.contains('turn.send') == true &&
       _interactionAcquired &&
       !_staleCapabilities &&
@@ -720,7 +702,7 @@ class ConversationDetailController extends ApplicationNotifier {
     return lease != null &&
         lease.supportsConversationControl &&
         _session.ownsRuntimeLease(lease) &&
-        provider?.status == ProviderStatus.ready &&
+        provider?.isAvailable == true &&
         provider?.methods.contains('turn.interrupt') == true &&
         turn != null &&
         !turn.status.isTerminal &&
@@ -734,7 +716,7 @@ class ConversationDetailController extends ApplicationNotifier {
     return lease != null &&
         lease.supportsConversationControl &&
         _session.ownsRuntimeLease(lease) &&
-        provider?.status == ProviderStatus.ready &&
+        provider?.isAvailable == true &&
         provider?.methods.contains('approval.resolve') == true &&
         approval != null &&
         approval.approvalDecisions.contains(decision) &&
@@ -982,7 +964,7 @@ class ConversationDetailController extends ApplicationNotifier {
   void dispose() {
     _disposed = true;
     _runtimeEpoch++;
-    _interactionTimer?.cancel();
+    _interactionRetryTimer?.cancel();
     _session.removeListener(_sessionChanged);
     unawaited(_eventWindow?.close());
     super.dispose();
@@ -1013,6 +995,9 @@ class _CapabilityBinding {
     required this.lease,
     required this.providerId,
     required this.revision,
+    required this.capabilitiesLoaded,
+    required this.providerGeneration,
+    required this.available,
   });
 
   factory _CapabilityBinding.from(
@@ -1024,12 +1009,18 @@ class _CapabilityBinding {
         lease: lease,
         providerId: provider.id,
         revision: provider.capabilities.revision,
+        capabilitiesLoaded: provider.capabilitiesLoaded,
+        providerGeneration: provider.generation,
+        available: provider.isAvailable,
       );
 
   final int generation;
   final DeviceSessionRuntimeLease lease;
   final String providerId;
   final String revision;
+  final bool capabilitiesLoaded;
+  final int? providerGeneration;
+  final bool available;
 
   @override
   bool operator ==(Object other) =>
@@ -1037,7 +1028,10 @@ class _CapabilityBinding {
       other.generation == generation &&
       lease.sameRuntime(other.lease) &&
       other.providerId == providerId &&
-      other.revision == revision;
+      other.revision == revision &&
+      other.capabilitiesLoaded == capabilitiesLoaded &&
+      other.providerGeneration == providerGeneration &&
+      other.available == available;
 
   @override
   int get hashCode => Object.hash(
@@ -1045,5 +1039,8 @@ class _CapabilityBinding {
         lease.runtimeIdentityHash,
         providerId,
         revision,
+        capabilitiesLoaded,
+        providerGeneration,
+        available,
       );
 }

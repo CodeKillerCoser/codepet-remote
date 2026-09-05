@@ -870,8 +870,16 @@ class GatewayProvider {
     this.usageDisplayText,
     this.usageDetails = const [],
     this.capabilitiesLoaded = true,
+    this.connectionStatus,
+    this.generation,
   });
 
+  bool get isAvailable => status == ProviderStatus.ready && connectionStatus != 'offline';
+  String get connectionLabel => switch (connectionStatus) {
+    'online' => '在线', 'offline' => '离线', 'connecting' => '连接中', _ => '状态未知',
+  };
+  final String? connectionStatus;
+  final int? generation;
   final String id;
   final String displayName;
   final String? icon;
@@ -902,6 +910,8 @@ class GatewayProvider {
         usageDisplayText: usageDisplayText,
         usageDetails: usageDetails,
         capabilitiesLoaded: true,
+        connectionStatus: connectionStatus,
+        generation: generation,
       );
 }
 
@@ -1175,6 +1185,7 @@ class GatewayMessage {
     this.sequence,
     this.tool,
     this.clientRequestId,
+    this.meta,
   });
 
   final String id;
@@ -1200,6 +1211,7 @@ class GatewayMessage {
   final int? sequence;
   final GatewayToolInvocation? tool;
   final String? clientRequestId;
+  final JsonMap? meta;
 
   GatewayMessage copyWith({
     String? turnId,
@@ -1232,6 +1244,7 @@ class GatewayMessage {
       sequence: sequence,
       tool: tool,
       clientRequestId: clientRequestId,
+      meta: meta,
     );
   }
 }

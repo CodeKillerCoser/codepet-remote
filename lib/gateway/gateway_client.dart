@@ -19,6 +19,8 @@ final AppLog _log = AppLog.named('gateway.protocol');
 final class ProtocolGatewayClient
     implements
         GatewayClient,
+        ConversationResumeGatewayClient,
+        ProviderSnapshotGatewayClient,
         ConversationReadGatewayClient,
         ConversationControlGatewayClient,
         ProjectGatewayClient {
@@ -53,10 +55,16 @@ final class ProtocolGatewayClient
   final TraceRecorder traceRecorder;
 
   static const _mapper = GeneratedGatewayMapper();
-  static const _conversationHistoryPageLimits = [40, 20, 10, 5, 1];
+  static const _conversationHistoryPageLimits = [20, 10, 5, 1];
   late final GatewayProtocolInstrumentation _instrumentation;
   late final sdk.ProtocolClient _protocol;
   int _nextRequestId = 1;
+  sdk.GatewayHeartbeatClient? _heartbeat;
+  final _providerSnapshots = StreamController<List<GatewayProvider>>.broadcast(sync: true);
+  final Map<String, int> _providerVersions = {};
+  Map<String, int> _pingVersions = {};
+  @override
+  Stream<List<GatewayProvider>> get providerSnapshots => _providerSnapshots.stream;
   final StreamController<GatewayEvent> _events =
       StreamController<GatewayEvent>.broadcast(sync: true);
   StreamSubscription<JsonMap>? _transportEvents;
@@ -103,7 +111,9 @@ final class ProtocolGatewayClient
           }
           _logReceivedEvent(event);
           if (event is GatewayProviderChangedEvent) {
-            _providersById[event.provider.id] = event.provider;
+            _providersById[event.provider.id] = _mergeProviderSummary(event.provider);
+            _providerIds = {..._providerIds, event.provider.id};
+            _providerVersions.update(event.provider.id, (v) => v + 1, ifAbsent: () => 1);
           }
           _latestEventCursor = event.eventCursor;
           final traceContext = _traceCorrelation(envelope.traceContext);
@@ -222,12 +232,43 @@ final class ProtocolGatewayClient
     if (endpoint != null && shouldPersistEndpoint) {
       await onValidatedEndpoint?.call(endpoint);
     }
+    _heartbeat = sdk.GatewayHeartbeatClient(
+      client: _protocol,
+      beforePing: () => _pingVersions = Map.of(_providerVersions),
+      onProviders: (summaries) {
+        final fresh = <String, GatewayProvider>{};
+        for (final summary in summaries) {
+          final previous = _providersById[summary.id];
+          final changedDuringPing = _providerVersions[summary.id] != _pingVersions[summary.id];
+          fresh[summary.id] = changedDuringPing && previous != null ? previous : _mergeProviderSummary(_mapper.provider(summary));
+        }
+        for (final entry in _providersById.entries) {
+          if (_providerVersions[entry.key] != _pingVersions[entry.key]) fresh[entry.key] = entry.value;
+        }
+        _providersById..clear()..addAll(fresh);
+        _providerIds = fresh.keys.toSet();
+        _providerSnapshots.add(fresh.values.toList(growable: false));
+      },
+      onFailure: (error, stack) => _events.addError(
+        GatewayConnectionException('Gateway heartbeat failed: $error', retryable: true), stack),
+    )..start();
     return GatewayHandshake(
       protocolVersion: sdk.protocolVersion,
       providers: providers,
       eventCursor: generated.eventCursor,
       deviceDescriptor: descriptor,
     );
+  }
+
+  GatewayProvider _mergeProviderSummary(GatewayProvider incoming) {
+    final previous = _providersById[incoming.id];
+    if (previous == null) return incoming;
+    if (previous.generation != null && incoming.generation != null && incoming.generation! < previous.generation!) return previous;
+    if (previous.capabilitiesLoaded && previous.generation == incoming.generation &&
+        previous.capabilities.revision == incoming.capabilities.revision) {
+      return incoming.withCapabilities(previous.capabilities);
+    }
+    return incoming;
   }
 
   void _logReceivedEvent(GatewayEvent event) {
@@ -545,7 +586,13 @@ final class ProtocolGatewayClient
   @override
   Future<ConversationSnapshot> getConversation(
     ConversationSummary conversation,
-  ) async {
+  ) => _readConversationHistory(conversation);
+
+  Future<ConversationSnapshot> _readConversationHistory(
+    ConversationSummary conversation, {
+    sdk.ConversationGetResponse? firstPage,
+    GatewayProtocolException? firstPageError,
+  }) async {
     final totalStopwatch = Stopwatch()..start();
     final resourceId = conversation.resource;
     if (resourceId == null) {
@@ -575,25 +622,36 @@ final class ProtocolGatewayClient
       var pageAttempt = 0;
       while (true) {
         pageAttempt++;
-        requestCount++;
+        final fromResume = firstPage != null || firstPageError != null;
+        if (!fromResume) requestCount++;
         final limit = _conversationHistoryPageLimits[pageLimitIndex];
         final requestStopwatch = Stopwatch()..start();
         _log.fine(
-          'Conversation history page requested '
+          'Conversation history page ${fromResume ? 'reused from resume' : 'requested'} '
           'conversation=${conversation.id} page=$pageCount attempt=$pageAttempt '
           'cursor=${cursor == null ? 'initial' : 'present'} '
           'cursorChars=${cursor == null ? 0 : cursor.length} limit=$limit',
         );
         try {
-          response = await _call(
-            () => _protocol.conversationGet(
-              sdk.ConversationGetRequest(
-                conversation: requested,
-                cursor: cursor,
-                limit: limit,
+          if (firstPageError != null) {
+            final error = firstPageError;
+            firstPageError = null;
+            throw error;
+          }
+          if (firstPage != null) {
+            response = firstPage;
+            firstPage = null;
+          } else {
+            response = await _call(
+              () => _protocol.conversationGet(
+                sdk.ConversationGetRequest(
+                  conversation: requested,
+                  cursor: cursor,
+                  limit: limit,
+                ),
               ),
-            ),
-          );
+            );
+          }
           _log.fine(
             'Conversation history page received '
             'conversation=${conversation.id} page=$pageCount attempt=$pageAttempt '
@@ -732,6 +790,49 @@ final class ProtocolGatewayClient
   }
 
   @override
+  Future<ConversationResumeResult> resumeConversation(
+    ConversationSummary conversation,
+  ) async {
+    final resource = conversation.resource;
+    if (resource == null) {
+      throw const FormatException('Conversation has no routed identity');
+    }
+    final response = await _call(
+      () => _protocol.conversationResume(sdk.ConversationResumeRequest(
+        conversation: _mapper.sdkResourceId(resource),
+        limit: _conversationHistoryPageLimits.first,
+      )),
+    );
+    if (response.interactionAcquired != (response.interaction != null) ||
+        (response.interactionAcquired && response.interactionError != null) ||
+        (response.history != null && response.historyError != null) ||
+        (response.interactionAcquired && response.history == null && response.historyError == null)) {
+      throw const FormatException('Invalid conversation.resume result');
+    }
+    final interaction = response.interaction;
+    final historyError = response.historyError;
+    return ConversationResumeResult(
+      interaction: interaction == null ? null : _mapInteraction(interaction),
+      interactionError: response.interactionError == null
+          ? null : _mapProtocolError(response.interactionError!),
+      loadHistory: response.history == null && historyError == null ? null : () =>
+          _readConversationHistory(
+            conversation,
+            firstPage: response.history,
+            firstPageError: historyError == null ? null : _mapProtocolError(historyError),
+          ),
+    );
+  }
+
+  GatewayProtocolException _mapProtocolError(sdk.ProtocolError error) =>
+      GatewayProtocolException(
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
+        details: error.details == null ? null : Map<String, dynamic>.from(error.details!),
+      );
+
+  @override
   Future<ConversationInteraction> acquireInteraction(
     ConversationSummary conversation,
   ) async {
@@ -745,7 +846,11 @@ final class ProtocolGatewayClient
         sdk.ConversationAcquireInteractionRequest(conversation: requested),
       ),
     );
-    return ConversationInteraction(
+    return _mapInteraction(response);
+  }
+
+  ConversationInteraction _mapInteraction(sdk.ConversationAcquireInteractionResponse response) =>
+      ConversationInteraction(
       selection: TurnSendSelection.fromJson(
         Map<String, dynamic>.from(response.selection.toJson()),
       ),
@@ -755,8 +860,7 @@ final class ProtocolGatewayClient
               response.leaseExpiresAt!,
               isUtc: true,
             ),
-    );
-  }
+      );
 
   @override
   Future<ConversationSummary> createConversation({
@@ -778,7 +882,7 @@ final class ProtocolGatewayClient
       providerId,
       method: 'conversation.create',
     );
-    if (provider.status != ProviderStatus.ready ||
+    if (!provider.isAvailable ||
         !provider.methods.contains('conversation.create')) {
       throw const FormatException(
         'Provider conversation.create capability is unavailable',
@@ -841,7 +945,7 @@ final class ProtocolGatewayClient
       providerId,
       method: 'turn.send',
     );
-    if (provider.status != ProviderStatus.ready ||
+    if (!provider.isAvailable ||
         !provider.methods.contains('turn.send') ||
         provider.capabilities.revision != capabilityRevision ||
         provider.capabilities.turnSend == null) {
@@ -914,7 +1018,7 @@ final class ProtocolGatewayClient
       conversation.providerId,
       method: 'turn.interrupt',
     );
-    if (provider.status != ProviderStatus.ready ||
+    if (!provider.isAvailable ||
         !provider.methods.contains('turn.interrupt')) {
       throw const FormatException('Provider turn.interrupt capability is unavailable');
     }
@@ -954,7 +1058,7 @@ final class ProtocolGatewayClient
       resource.providerId,
       method: 'approval.resolve',
     );
-    if (provider.status != ProviderStatus.ready ||
+    if (!provider.isAvailable ||
         !provider.methods.contains('approval.resolve') ||
         approval.approvalStatus != 'pending' ||
         !approval.approvalDecisions.contains(decision)) {
@@ -990,6 +1094,8 @@ final class ProtocolGatewayClient
 
   @override
   Future<void> close() async {
+    _heartbeat?.close();
+    await _providerSnapshots.close();
     _providerIds = const {};
     _providersById.clear();
     await _transportEvents?.cancel();

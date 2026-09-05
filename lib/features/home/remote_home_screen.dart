@@ -201,7 +201,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                       countLabel:
                           '${projects.length}${session.canLoadMoreSelectedProviderProjects ? '+' : ''}',
                       expanded: viewState.projectsExpanded,
-                      action: selectedProvider?.status == ProviderStatus.ready &&
+                      action: selectedProvider?.isAvailable == true &&
                               selectedProvider?.methods
                                       .contains('project.create') ==
                                   true
@@ -251,7 +251,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
               searchKey: const Key('home-search'),
               createKey: const Key('home-new'),
               canSearch: selectedProvider != null,
-              canCreate: selectedProvider?.status == ProviderStatus.ready &&
+              canCreate: selectedProvider?.isAvailable == true &&
                   selectedProvider?.methods
                           .contains('conversation.create') ==
                       true,
@@ -692,7 +692,7 @@ class _ProviderIdentity extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ready = provider.status == ProviderStatus.ready;
+    final ready = provider.isAvailable;
     return ChoiceChip(
       key: Key('provider-${provider.id}'),
       selected: selected,
@@ -708,7 +708,7 @@ class _ProviderIdentity extends StatelessWidget {
             : Theme.of(context).colorScheme.outline,
         semanticLabel: '${provider.displayName} Provider',
       ),
-      label: Text(provider.displayName),
+      label: Text('${provider.displayName} · ${provider.connectionLabel}'),
       side: BorderSide(
         color: ready
             ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.35)
@@ -784,9 +784,9 @@ class _ProjectCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final roots = project.roots.map((root) => root.path).join(' · ');
     final conversationCount = session.projectConversationCountLabel(project);
-    final canUpdate = provider.status == ProviderStatus.ready &&
+    final canUpdate = provider.isAvailable &&
         provider.methods.contains('project.update');
-    final canDelete = provider.status == ProviderStatus.ready &&
+    final canDelete = provider.isAvailable &&
         provider.methods.contains('project.delete');
     return Card(
       margin: EdgeInsets.zero,
@@ -1159,7 +1159,7 @@ class _ProjectConversationsScreenState
         searchKey: const Key('project-search'),
         createKey: const Key('project-new'),
         canSearch: selectedProvider != null,
-        canCreate: selectedProvider?.status == ProviderStatus.ready &&
+        canCreate: selectedProvider?.isAvailable == true &&
             selectedProvider?.methods.contains('conversation.create') == true,
         onSearch: () => _openSearch(
           context,

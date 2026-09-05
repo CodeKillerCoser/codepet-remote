@@ -132,7 +132,7 @@ void main() {
     expect(transport.requests[3].params['projectFilter'], {'kind': 'all'});
     expect(transport.requests[3].params['limit'], 25);
     expect(transport.requests[4].method, 'conversation.get');
-    expect(transport.requests[4].params['limit'], 40);
+    expect(transport.requests[4].params['limit'], 20);
     expect(detail.detail.summary.resource!.nativeResourceId, 'conversation-1');
     expect(detail.detail.messages, isEmpty);
 
@@ -648,6 +648,99 @@ void main() {
     await client.close();
   });
 
+  test('item metadata survives mapping and supplies tool truncation indicators', () {
+    final response = _fixtureResult('conversation-get-response.json');
+    final item = Map<String, dynamic>.from((response['items'] as List)[2] as Map);
+    item['kind'] = 'tool';
+    final tool = item['tool'] as Map;
+    (tool['input'] as Map).remove('truncation');
+    final content = ((tool['outcome'] as Map)['content'] as List).single as Map;
+    content.remove('truncation');
+    item['_meta'] = {
+      'vendor': {'trace': 'preserved'},
+      'truncations': [
+        {'path': '/tool/input/command', 'originalBytes': 4096, 'retainedBytes': 16, 'strategy': 'head-tail'},
+        {'path': '/tool/outcome/content/0/text', 'originalBytes': 42, 'retainedBytes': 18, 'strategy': 'head-tail'},
+      ],
+    };
+    final decoded = sdk.ConversationItem.fromJson(item);
+    expect(decoded.toJson()['_meta'], item['_meta']);
+    final message = const GeneratedGatewayMapper().message(decoded, 0);
+    expect(message.meta, item['_meta']);
+    expect(message.copyWith(content: 'updated').meta, item['_meta']);
+    final input = message.tool!.input as GatewayCommandToolInput;
+    expect(input.truncation?.originalBytes, 4096);
+    expect(message.tool!.outcome!.content.single.truncation?.retainedBytes, 18);
+  });
+
+  for (final hasOlderPage in [false, true]) {
+    test('resume reuses its first history page (older=$hasOlderPage)', () async {
+      final history = {
+        'conversation': _conversationJson(),
+        'items': <Object>[],
+        'pageInfo': hasOlderPage ? {'nextCursor': 'older-page'} : <String, dynamic>{},
+        'snapshotCursor': 'opaque-snapshot',
+      };
+      final transport = _FakeTransport({
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+        'conversation.resume': {
+          'interactionAcquired': true,
+          'interaction': {'selection': <String, dynamic>{}},
+          'history': history,
+        },
+        'conversation.get': {...history, 'pageInfo': <String, dynamic>{}},
+      });
+      final client = ProtocolGatewayClient(
+        transport: transport, clientId: 'client-test', clientDevice: _clientDevice,
+        expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint,
+      );
+      await client.connect();
+      final resumed = await client.resumeConversation(_domainConversation());
+      expect(resumed.interaction, isNotNull);
+      final snapshot = await resumed.loadHistory!();
+      expect(snapshot.detail.messages, isEmpty);
+      final requests = transport.requests.where((request) =>
+          request.method == 'conversation.resume' || request.method == 'conversation.get').toList();
+      expect(requests.map((request) => request.method),
+          ['conversation.resume', if (hasOlderPage) 'conversation.get']);
+      expect(requests.first.params['limit'], 20);
+      if (hasOlderPage) {
+        expect(requests.last.params['cursor'], 'older-page');
+        expect(requests.last.params['limit'], 20);
+      }
+      await client.close();
+    });
+  }
+
+  test('resume preserves interaction and reuses history oversized retry logic', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'conversation.resume': {
+        'interactionAcquired': true,
+        'interaction': {'selection': <String, dynamic>{}},
+        'historyError': {'code': 'provider_response_too_large', 'message': 'too large', 'retryable': false},
+      },
+      'conversation.get': {
+        'conversation': _conversationJson(), 'items': <Object>[],
+        'pageInfo': <String, dynamic>{}, 'snapshotCursor': 'opaque-snapshot',
+      },
+    });
+    final client = ProtocolGatewayClient(
+      transport: transport, clientId: 'client-test', clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint,
+    );
+    await client.connect();
+    final resumed = await client.resumeConversation(_domainConversation());
+    expect(resumed.interaction, isNotNull);
+    await resumed.loadHistory!();
+    final gets = transport.requests.where((request) => request.method == 'conversation.get');
+    expect(gets.map((request) => request.params['limit']), [10]);
+    expect(gets.single.params['cursor'], isNull);
+    await client.close();
+  });
+
   test('shrinks conversation history pages after an oversized response',
       () async {
     final transport = _FakeTransport(
@@ -708,11 +801,11 @@ void main() {
         .toList(growable: false);
     expect(
       requests.map((request) => request.params['limit']),
-      [40, 20, 10, 5, 5],
+      [20, 10, 5, 5],
     );
     expect(
       requests.map((request) => request.params['cursor']),
-      [null, null, null, null, 'older-page'],
+      [null, null, null, 'older-page'],
     );
     expect(
       snapshot.detail.committedMessages.map((message) => message.content),
@@ -771,7 +864,7 @@ void main() {
         .toList(growable: false);
     expect(
       requests.map((request) => request.params['limit']),
-      [40, 40, 20, 20],
+      [20, 20, 10, 10],
     );
     expect(
       requests.map((request) => request.params['cursor']),
@@ -824,7 +917,7 @@ void main() {
     final requests = transport.requests
         .where((request) => request.method == 'conversation.get')
         .toList(growable: false);
-    expect(requests.map((request) => request.params['limit']), [40]);
+    expect(requests.map((request) => request.params['limit']), [20]);
     await client.close();
   });
 
@@ -863,11 +956,11 @@ void main() {
         .toList(growable: false);
     expect(
       requests.map((request) => request.params['limit']),
-      [40, 20, 10, 5, 1],
+      [20, 10, 5, 1],
     );
     expect(
       requests.map((request) => request.params['cursor']),
-      [null, null, null, null, null],
+      [null, null, null, null],
     );
     await client.close();
   });

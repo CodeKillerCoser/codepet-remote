@@ -3,6 +3,7 @@ import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 import '../core/domain/models.dart';
 
 typedef _ItemParts = ({
+  sdk.JsonObject? meta,
   sdk.RoutedResourceId resource,
   sdk.RoutedResourceId turn,
   sdk.RoutedResourceId conversation,
@@ -33,6 +34,8 @@ final class GeneratedGatewayMapper {
         icon: value.identity.icon,
         defaultWorkspaceRoot: value.identity.defaultWorkspaceRoot,
         status: ProviderStatus.fromWire(value.runtime.status.wireValue),
+        connectionStatus: value.runtime.connectionStatus?.wireValue,
+        generation: value.runtime.generation,
         runtimeVersion: value.runtime.version,
         executablePath: value.runtime.executablePath,
         authenticationStatus:
@@ -150,7 +153,7 @@ final class GeneratedGatewayMapper {
   GatewayMessage message(sdk.ConversationItem value, int index) {
     final parts = _itemParts(value);
     final contents = parts.contents.map(_content).toList(growable: false);
-    final mappedTool = parts.tool == null ? null : tool(parts.tool!);
+    final mappedTool = parts.tool == null ? null : tool(parts.tool!, itemMeta: parts.meta);
     final text = contents
         .map((content) => content.displayText)
         .where((content) => content.isNotEmpty)
@@ -194,11 +197,13 @@ final class GeneratedGatewayMapper {
           : resourceKey(parts.relatedItem!),
       sequence: index,
       tool: mappedTool,
+      meta: parts.meta == null ? null : Map<String, dynamic>.unmodifiable(parts.meta!),
     );
   }
 
   _ItemParts _itemParts(sdk.ConversationItem value) => switch (value) {
         sdk.MessageConversationItem item => (
+            meta: item.meta,
             resource: item.resource,
             turn: item.turn,
             conversation: item.conversation,
@@ -212,6 +217,7 @@ final class GeneratedGatewayMapper {
             contents: item.contents,
           ),
         sdk.ReasoningConversationItem item => (
+            meta: item.meta,
             resource: item.resource,
             turn: item.turn,
             conversation: item.conversation,
@@ -225,6 +231,7 @@ final class GeneratedGatewayMapper {
             contents: item.contents,
           ),
         sdk.CommandConversationItem item => (
+            meta: item.meta,
             resource: item.resource,
             turn: item.turn,
             conversation: item.conversation,
@@ -238,6 +245,7 @@ final class GeneratedGatewayMapper {
             contents: const [],
           ),
         sdk.FileChangeConversationItem item => (
+            meta: item.meta,
             resource: item.resource,
             turn: item.turn,
             conversation: item.conversation,
@@ -251,6 +259,7 @@ final class GeneratedGatewayMapper {
             contents: item.contents,
           ),
         sdk.ToolConversationItem item => (
+            meta: item.meta,
             resource: item.resource,
             turn: item.turn,
             conversation: item.conversation,
@@ -264,6 +273,7 @@ final class GeneratedGatewayMapper {
             contents: const [],
           ),
         sdk.ApprovalConversationItem item => (
+            meta: item.meta,
             resource: item.resource,
             turn: item.turn,
             conversation: item.conversation,
@@ -277,6 +287,7 @@ final class GeneratedGatewayMapper {
             contents: const [],
           ),
         sdk.UnknownConversationItem item => (
+            meta: item.meta,
             resource: item.resource,
             turn: item.turn,
             conversation: item.conversation,
@@ -310,7 +321,7 @@ final class GeneratedGatewayMapper {
       value is sdk.MessageConversationItem &&
       value.role == sdk.ConversationItemRole.user;
 
-  GatewayMessageContent _content(sdk.ContentBlock value) {
+  GatewayMessageContent _content(sdk.ContentBlock value, {GatewayContentTruncation? itemTruncation}) {
     final truncation = switch (value) {
       sdk.TextContentBlock block => block.truncation,
       sdk.ReasoningSummaryContentBlock block => block.truncation,
@@ -327,31 +338,31 @@ final class GeneratedGatewayMapper {
           id: block.contentId,
           kind: block.kind.wireValue,
           text: block.text,
-          truncation: _truncation(truncation),
+          truncation: itemTruncation ?? _truncation(truncation),
         ),
       sdk.ReasoningSummaryContentBlock block => GatewayMessageContent(
           id: block.contentId,
           kind: block.kind.wireValue,
           text: block.text,
-          truncation: _truncation(truncation),
+          truncation: itemTruncation ?? _truncation(truncation),
         ),
       sdk.OutputContentBlock block => GatewayMessageContent(
           id: block.contentId,
           kind: block.kind.wireValue,
           text: block.text,
-          truncation: _truncation(truncation),
+          truncation: itemTruncation ?? _truncation(truncation),
         ),
       sdk.ActivitySummaryContentBlock block => GatewayMessageContent(
           id: block.contentId,
           kind: block.kind.wireValue,
           text: block.text,
-          truncation: _truncation(truncation),
+          truncation: itemTruncation ?? _truncation(truncation),
         ),
       sdk.StructuredJsonContentBlock block => GatewayMessageContent(
           id: block.contentId,
           kind: block.kind.wireValue,
           value: Map<String, dynamic>.from(block.value),
-          truncation: _truncation(truncation),
+          truncation: itemTruncation ?? _truncation(truncation),
         ),
       sdk.ImageContentBlock block => GatewayMessageContent(
           id: block.contentId,
@@ -359,7 +370,7 @@ final class GeneratedGatewayMapper {
           uri: block.uri,
           mimeType: block.mimeType,
           name: block.name,
-          truncation: _truncation(truncation),
+          truncation: itemTruncation ?? _truncation(truncation),
         ),
       sdk.AudioContentBlock block => GatewayMessageContent(
           id: block.contentId,
@@ -367,7 +378,7 @@ final class GeneratedGatewayMapper {
           uri: block.uri,
           mimeType: block.mimeType,
           name: block.name,
-          truncation: _truncation(truncation),
+          truncation: itemTruncation ?? _truncation(truncation),
         ),
       sdk.ResourceLinkContentBlock block => GatewayMessageContent(
           id: block.contentId,
@@ -375,7 +386,7 @@ final class GeneratedGatewayMapper {
           uri: block.uri,
           mimeType: block.mimeType,
           name: block.name,
-          truncation: _truncation(truncation),
+          truncation: itemTruncation ?? _truncation(truncation),
         ),
       sdk.EmbeddedResourceContentBlock block => GatewayMessageContent(
           id: block.contentId,
@@ -383,7 +394,7 @@ final class GeneratedGatewayMapper {
           text: block.text,
           mimeType: block.mimeType,
           name: block.name,
-          truncation: _truncation(truncation),
+          truncation: itemTruncation ?? _truncation(truncation),
         ),
     };
   }
@@ -397,7 +408,7 @@ final class GeneratedGatewayMapper {
               strategy: value.strategy.wireValue,
             );
 
-  GatewayToolInvocation tool(sdk.ToolInvocation value) =>
+  GatewayToolInvocation tool(sdk.ToolInvocation value, {sdk.JsonObject? itemMeta}) =>
       GatewayToolInvocation(
         callId: value.callId,
         name: value.name,
@@ -405,8 +416,8 @@ final class GeneratedGatewayMapper {
         category: value.category.wireValue,
         originKind: value.origin.kind.wireValue,
         originName: value.origin.name,
-        input: _toolInput(value.input),
-        outcome: value.outcome == null ? null : _toolOutcome(value.outcome!),
+        input: _toolInput(value.input, itemMeta),
+        outcome: value.outcome == null ? null : _toolOutcome(value.outcome!, itemMeta),
         startedAt: _time(value.timing?.startedAt),
         completedAt: _time(value.timing?.completedAt),
         durationMs: value.timing?.durationMs,
@@ -416,34 +427,36 @@ final class GeneratedGatewayMapper {
         openWorld: value.annotations?.openWorld,
       );
 
-  GatewayToolInput _toolInput(sdk.ToolInput value) => switch (value) {
+  GatewayToolInput _toolInput(sdk.ToolInput value, sdk.JsonObject? itemMeta) => switch (value) {
         sdk.CommandToolInput input => GatewayCommandToolInput(
             command: input.command,
             cwd: input.cwd,
             shell: input.shell,
-            truncation: _truncation(input.truncation),
+            truncation: _itemTruncation(itemMeta, "/tool/input") ?? _truncation(input.truncation),
             actions: input.actions?.map(_toolAction).toList(growable: false) ??
                 const [],
           ),
         sdk.StructuredToolInput input => GatewayStructuredToolInput(
             value: Map<String, dynamic>.from(input.value),
-            truncation: _truncation(input.truncation),
+            truncation: _itemTruncation(itemMeta, "/tool/input") ?? _truncation(input.truncation),
           ),
         sdk.OpaqueToolInput input => GatewayOpaqueToolInput(
             value: input.value,
             mimeType: input.mimeType,
-            truncation: _truncation(input.truncation),
+            truncation: _itemTruncation(itemMeta, "/tool/input") ?? _truncation(input.truncation),
           ),
       };
 
-  GatewayToolOutcome _toolOutcome(sdk.ToolOutcome value) => switch (value) {
+  GatewayToolOutcome _toolOutcome(sdk.ToolOutcome value, sdk.JsonObject? itemMeta) => switch (value) {
         sdk.ToolSuccessOutcome outcome => GatewayToolSuccess(
-            content: outcome.content.map(_content).toList(growable: false),
+            content: [for (var index = 0; index < outcome.content.length; index++)
+              _content(outcome.content[index], itemTruncation: _itemTruncation(itemMeta, '/tool/outcome/content/$index'))],
             exitCode: outcome.exitCode,
             processId: outcome.processId,
           ),
         sdk.ToolFailureOutcome outcome => GatewayToolFailure(
-            content: outcome.content.map(_content).toList(growable: false),
+            content: [for (var index = 0; index < outcome.content.length; index++)
+              _content(outcome.content[index], itemTruncation: _itemTruncation(itemMeta, '/tool/outcome/content/$index'))],
             error: GatewayToolError(
               code: outcome.error.code,
               message: outcome.error.message,
@@ -453,6 +466,32 @@ final class GeneratedGatewayMapper {
             processId: outcome.processId,
           ),
       };
+
+  GatewayContentTruncation? _itemTruncation(sdk.JsonObject? meta, String prefix) {
+    final records = meta?['truncations'];
+    if (records is! List) return null;
+    var original = 0;
+    var retained = 0;
+    String? strategy;
+    for (final record in records) {
+      if (record is! Map) continue;
+      final path = record['path'];
+      final originalBytes = record['originalBytes'];
+      final retainedBytes = record['retainedBytes'];
+      final recordStrategy = record['strategy'];
+      if (path is! String || !(path == prefix || path.startsWith('$prefix/')) ||
+          originalBytes is! int || retainedBytes is! int ||
+          originalBytes < retainedBytes || retainedBytes < 0 || recordStrategy is! String) {
+        continue;
+      }
+      original += originalBytes;
+      retained += retainedBytes;
+      strategy = strategy == null || strategy == recordStrategy ? recordStrategy : 'mixed';
+    }
+    return strategy == null ? null : GatewayContentTruncation(
+      originalBytes: original, retainedBytes: retained, strategy: strategy,
+    );
+  }
 
   GatewayToolCommandAction _toolAction(sdk.ToolCommandAction action) =>
       GatewayToolCommandAction(

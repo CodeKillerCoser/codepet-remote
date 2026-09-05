@@ -761,6 +761,80 @@ void main() {
     await client.close();
   });
 
+  for (final acquired in [false, true]) {
+    for (final hasHistory in [false, true]) {
+      testWidgets('uses resume history before get (acquired=$acquired history=$hasHistory)',
+          (tester) async {
+        final client = _ResumeDetailClient(onResume: (conversation) async => ConversationResumeResult(
+          interaction: acquired ? const ConversationInteraction(selection: TurnSendSelection()) : null,
+          interactionError: acquired ? null : const GatewayProtocolException(
+            code: 'conversation_write_conflict', message: 'writer held', retryable: true,
+          ),
+          loadHistory: hasHistory ? () async => ConversationSnapshot(
+            detail: ConversationDetail(summary: conversation), snapshotCursor: 'H',
+          ) : null,
+        ));
+        await _pumpDetail(tester, client, conversation: _idleConversation());
+        await tester.pump();
+        expect(client.resumeCalls, 1);
+        expect(client.acquireCalls, 0);
+        expect(client.getCalls, hasHistory ? 0 : 1);
+        expect(find.byKey(const Key('interaction-unavailable')),
+            acquired ? findsNothing : findsOneWidget);
+        expect(find.byKey(const Key('conversation-history-error')), findsNothing);
+        await tester.pumpWidget(const SizedBox());
+        await client.close();
+      });
+    }
+  }
+
+  testWidgets('buffers live output while the combined resume is in flight', (tester) async {
+    final pending = Completer<ConversationResumeResult>();
+    final client = _ResumeDetailClient(onResume: (_) => pending.future);
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    client.emit(const TurnOutputDeltaEvent(
+      eventCursor: 'during-resume', providerId: 'provider', conversationId: 'conversation',
+      turnId: 'resume-turn', itemId: 'resume-item', contentId: 'resume-item:text',
+      kind: 'text', delta: 'resume期间的输出',
+    ));
+    pending.complete(ConversationResumeResult(
+      interaction: const ConversationInteraction(selection: TurnSendSelection()),
+      loadHistory: () async => ConversationSnapshot(
+        detail: ConversationDetail(summary: _idleConversation()), snapshotCursor: 'H',
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    expect(client.getCalls, 0);
+    expect(find.text('resume期间的输出'), findsOneWidget);
+    expect(find.byKey(const Key('conversation-history-error')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('loads after full capabilities arrive with the summary revision', (tester) async {
+    final client = _DetailClient();
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pump();
+    final previousGets = client.getCalls;
+    client.provider = _providerWith(revision: 'hydrated-revision', turnSend: const TurnSendCapabilities());
+    client.emit(GatewayProviderChangedEvent(
+      eventCursor: 'summary-revision',
+      provider: GatewayProvider(
+        id: client.provider.id, displayName: client.provider.displayName,
+        status: client.provider.status, capabilitiesLoaded: false,
+        capabilities: const GatewayCapabilities(revision: 'hydrated-revision', methods: []),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump();
+    expect(client.getCalls, previousGets + 1);
+    expect(find.text('当前 Provider 不支持加载会话详情。'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('enables interaction only after acquire and uses resumed selection',
       (tester) async {
     final acquired = Completer<ConversationInteraction>();
@@ -808,6 +882,7 @@ void main() {
     await tester.pump();
 
     expect(client.acquireCalls, 1);
+    expect(client.getCalls, 0);
     expect(
       tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
       isFalse,
@@ -831,8 +906,25 @@ void main() {
     expect(find.text('访问 · Workspace write'), findsOneWidget);
     expect(find.text('推理 · High'), findsOneWidget);
     expect(find.text('模型 · Deep'), findsOneWidget);
+    expect(client.getCalls, 1);
 
     await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('does not fetch history after leaving during interaction acquisition',
+      (tester) async {
+    final acquired = Completer<ConversationInteraction>();
+    final client = _DetailClient(onAcquire: (_) => acquired.future);
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pump();
+    expect(client.acquireCalls, 1);
+    expect(client.getCalls, 0);
+
+    await tester.pumpWidget(const SizedBox());
+    acquired.complete(const ConversationInteraction(selection: TurnSendSelection()));
+    await tester.pump();
+    expect(client.getCalls, 0);
     await client.close();
   });
 
@@ -853,6 +945,7 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('interaction-error')), findsOneWidget);
+    expect(client.getCalls, 1);
     expect(
       tester.widget<Text>(find.byKey(const Key('interaction-error'))).data,
       '该会话正在被另一个客户端写入，暂时无法继续对话。',
@@ -1423,7 +1516,7 @@ void main() {
     await client.close();
   });
 
-  testWidgets('renews interaction from the server lease expiry', (tester) async {
+  testWidgets('ignores legacy interaction lease expiry', (tester) async {
     final client = _DetailClient(
       onAcquire: (conversation) async => ConversationInteraction(
         selection:
@@ -1439,13 +1532,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 750));
     await tester.pump();
 
-    expect(client.acquireCalls, greaterThanOrEqualTo(2));
+    expect(client.acquireCalls, 1);
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
 
   testWidgets(
-      'renews interaction every ten seconds until the detail screen leaves',
+      'does not renew interaction while viewing or after leaving',
       (tester) async {
     final client = _DetailClient(
       onAcquire: (conversation) async => ConversationInteraction(
@@ -1461,15 +1554,15 @@ void main() {
 
     await tester.pump(const Duration(seconds: 10));
     await tester.pump();
-    expect(client.acquireCalls, 2);
+    expect(client.acquireCalls, 1);
 
     await tester.pump(const Duration(seconds: 10));
     await tester.pump();
-    expect(client.acquireCalls, 3);
+    expect(client.acquireCalls, 1);
 
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 20));
-    expect(client.acquireCalls, 3);
+    expect(client.acquireCalls, 1);
     await client.close();
   });
 
@@ -1732,6 +1825,17 @@ ConversationSummary _idleConversation({
       turnSendSelection: selection,
       resource: _conversation.resource,
     );
+
+class _ResumeDetailClient extends _DetailClient implements ConversationResumeGatewayClient {
+  _ResumeDetailClient({required this.onResume});
+  final Future<ConversationResumeResult> Function(ConversationSummary) onResume;
+  int resumeCalls = 0;
+  @override
+  Future<ConversationResumeResult> resumeConversation(ConversationSummary conversation) {
+    resumeCalls++;
+    return onResume(conversation);
+  }
+}
 
 class _DetailClient implements GatewayClient, ConversationReadGatewayClient, ConversationControlGatewayClient {
   _DetailClient({

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:codepet_remote/core/domain/paired_device.dart';
 import 'package:codepet_remote/application/sessions/device_session.dart';
 import 'package:codepet_remote/features/home/remote_home_screen.dart';
+import 'package:codepet_remote/features/connection/device_detail_screen.dart';
 import 'package:codepet_remote/application/ports/gateway_client.dart';
 import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/core/domain/models.dart';
@@ -312,6 +313,33 @@ void main() {
     session.dispose();
   });
 
+  testWidgets('Provider health remains visible at phone width and connection actions work', (tester) async {
+    tester.view.physicalSize = const Size(320, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = _PagedClient(({required cursor, required limit}) async =>
+      const ConversationPage(conversations: [], snapshotCursor: 'handshake'));
+    final session = _sessionForClient('provider-health-ui', client);
+    await session.connect();
+    await tester.pumpWidget(MaterialApp(home: DeviceDetailScreen(session: session)));
+    client.controller.add(GatewayProviderChangedEvent(eventCursor: 'health-offline',
+      provider: GatewayProvider(id: _homeRoute, displayName: 'Codex Work',
+        status: ProviderStatus.ready, connectionStatus: 'offline',
+        capabilities: _homeListProvider.capabilities)));
+    await tester.pumpAndSettle();
+    expect(find.text('离线 · 可用'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    final disconnect = find.byKey(const Key('device-disconnect'));
+    await tester.ensureVisible(disconnect);
+    await tester.tap(disconnect);
+    await tester.pumpAndSettle();
+    expect(session.connectionState, DeviceConnectionState.offline);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
   testWidgets('shows Provider identity from the Host handshake', (tester) async {
     _useTallSurface(tester);
     final client = _PagedClient(
@@ -329,7 +357,7 @@ void main() {
     );
 
     expect(find.byKey(const Key('connected-providers')), findsOneWidget);
-    expect(find.text('Codex Work'), findsWidgets);
+    expect(find.text('Codex Work · 状态未知'), findsWidgets);
     expect(
       find.text(
         'Codex Work · v0.151.0 · /usr/local/bin/codex · Signed in · 72% remaining',

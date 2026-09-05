@@ -62,6 +62,26 @@ abstract interface class GatewayClient {
   Future<void> close();
 }
 
+/// Combined conversation entry; successful interaction does not require renewal.
+abstract interface class ConversationResumeGatewayClient {
+  Future<ConversationResumeResult> resumeConversation(
+    ConversationSummary conversation,
+  );
+}
+
+class ConversationResumeResult {
+  const ConversationResumeResult({
+    this.interaction,
+    this.interactionError,
+    this.loadHistory,
+  });
+
+  final ConversationInteraction? interaction;
+  final Object? interactionError;
+  // Uses the returned first page and fetches only its remaining cursors.
+  final Future<ConversationSnapshot> Function()? loadHistory;
+}
+
 /// Optional project surface implemented only by Providers backed by a Gateway
 /// SDK that exposes project methods.
 abstract interface class ProjectGatewayClient {
@@ -118,4 +138,9 @@ class ConversationSnapshot {
 
   final ConversationDetail detail;
   final String snapshotCursor;
+}
+
+/// Provider presence snapshots are control data, separate from replayable conversation events.
+abstract interface class ProviderSnapshotGatewayClient {
+  Stream<List<GatewayProvider>> get providerSnapshots;
 }
