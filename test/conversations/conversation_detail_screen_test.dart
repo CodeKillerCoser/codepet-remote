@@ -13,6 +13,101 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 void main() {
+  test('manual history paging preserves concurrent output, retries and rejects cursor loops', () async {
+    final client = _DetailClient(onGet: (conversation) async => ConversationSnapshot(
+      detail: ConversationDetail(summary: conversation, committedMessages: [
+        _history('recent', MessageRole.user, 'message', 'recent'),
+      ]), snapshotCursor: 'H', nextCursor: 'older'));
+    final session = DeviceSession(device: const PairedDevice(deviceId: 'host', displayName: 'Host',
+      connectionKind: DeviceConnectionKind.demo), clientFactory: () => client, autoReconnect: false);
+    await session.connect();
+    addTearDown(session.dispose);
+    final controller = ConversationDetailController(session: session, conversation: _idleConversation());
+    addTearDown(controller.dispose);
+    await controller.reload();
+    expect(client.pageCalls, isEmpty);
+    final pending = Completer<ConversationSnapshot>();
+    client.onPage = (_) => pending.future;
+    final pageLoad = controller.loadEarlier();
+    await controller.loadEarlier();
+    expect(client.pageCalls, ['older']);
+    client.emit(const TurnOutputDeltaEvent(eventCursor: 'while-paging', providerId: 'provider',
+      conversationId: 'conversation', turnId: 'live-turn', itemId: 'live', contentId: 'live:text', kind: 'text', delta: 'live'));
+    pending.complete(ConversationSnapshot(detail: ConversationDetail(summary: _idleConversation(), committedMessages: [
+      _history('old', MessageRole.user, 'message', 'old'),
+      _history('recent', MessageRole.user, 'message', 'stale duplicate'),
+    ]), snapshotCursor: 'unrelated-page-fence', nextCursor: 'oldest'));
+    await pageLoad;
+    expect(controller.detail!.messages.map((m) => m.content), ['old', 'recent', 'live']);
+    expect(controller.detail!.lastEventCursor, 'while-paging');
+    client.onPage = (_) => Future.error(StateError('temporary failure'));
+    await controller.loadEarlier();
+    expect(controller.historyError, contains('temporary failure'));
+    expect(controller.hasEarlier, isTrue);
+    client.onPage = (_) async => ConversationSnapshot(detail: ConversationDetail(summary: _idleConversation()),
+      snapshotCursor: 'H', nextCursor: 'older');
+    await controller.loadEarlier();
+    expect(controller.historyError, contains('repeated page cursor'));
+    client.onPage = (_) async => ConversationSnapshot(detail: ConversationDetail(summary: _idleConversation()), snapshotCursor: 'H');
+    await controller.loadEarlier();
+    expect(client.pageCalls, ['older', 'oldest', 'oldest', 'oldest']);
+    expect(controller.hasEarlier, isFalse);
+    expect(controller.historyError, isNull);
+  });
+
+  testWidgets('reopening cached history includes output received off screen without another get', (tester) async {
+    final client = _DetailClient();
+    final session = await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+    client.emit(const TurnOutputDeltaEvent(eventCursor: 'offscreen', providerId: 'provider',
+      conversationId: 'conversation', turnId: 'live-turn', itemId: 'live', contentId: 'live:text', kind: 'text', delta: 'offscreen answer'));
+    client.emit(TurnUpsertedEvent(eventCursor: 'offscreen-completed', turn: TurnTask(
+      id: 'live-turn', providerId: 'provider', conversationId: 'conversation', status: TurnStatus.completed, updatedAt: DateTime(2026))));
+    await tester.pumpWidget(MaterialApp(home: ConversationDetailScreen(session: session, conversation: _idleConversation())));
+    await tester.pumpAndSettle();
+    expect(find.text('offscreen answer'), findsOneWidget);
+    expect(client.getCalls, 1);
+    expect(client.acquireCalls, 2);
+    await tester.pumpWidget(const SizedBox());
+    session.messageCache.clear();
+    await tester.pumpWidget(MaterialApp(home: ConversationDetailScreen(session: session, conversation: _idleConversation())));
+    await tester.pumpAndSettle();
+    expect(client.getCalls, 2);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('manual older page prepends without moving the visible anchor', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = _DetailClient(onGet: (conversation) async => ConversationSnapshot(
+      detail: ConversationDetail(summary: conversation, committedMessages: [
+        for (var i = 0; i < 12; i++) _history('recent-$i', MessageRole.user, 'message', 'recent $i'),
+      ]), snapshotCursor: 'H', nextCursor: 'older'));
+    client.onPage = (_) async => ConversationSnapshot(detail: ConversationDetail(summary: _idleConversation(), committedMessages: [
+      for (var i = 0; i < 10; i++) _history('old-$i', MessageRole.user, 'message', 'old $i'),
+    ]), snapshotCursor: 'H');
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pumpAndSettle();
+    expect(client.pageCalls, isEmpty);
+    final scroll = tester.state<ScrollableState>(find.byType(Scrollable).first).position;
+    scroll.jumpTo(scroll.minScrollExtent);
+    await tester.pumpAndSettle();
+    final anchor = tester.getTopLeft(find.byKey(const Key('message-recent-0')));
+    await tester.tap(find.byKey(const Key('show-earlier-messages')));
+    await tester.pumpAndSettle();
+    expect(client.pageCalls, ['older']);
+    expect(tester.getTopLeft(find.byKey(const Key('message-recent-0'))).dy, closeTo(anchor.dy, 1));
+    scroll.jumpTo(scroll.minScrollExtent);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('message-old-0')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('shows Provider icon and keeps conversation details collapsed',
       (tester) async {
     final client = _DetailClient();
@@ -85,6 +180,8 @@ void main() {
     expect(find.text('默认隐藏的会话摘要'), findsOneWidget);
     expect(find.text('test-model · high'), findsOneWidget);
     expect(find.text('/workspace/project'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
   });
 
   testWidgets('shows the latest history page and reveals earlier messages', (tester) async {
@@ -343,7 +440,7 @@ void main() {
     await client.close();
   });
 
-  testWidgets('terminal turn refresh clears only its in-memory live output', (tester) async {
+  testWidgets('terminal turn preserves live output without fetching history', (tester) async {
     final client = _DetailClient();
     await _pumpDetail(tester, client);
     await tester.pump();
@@ -355,8 +452,8 @@ void main() {
     client.emit(TurnUpsertedEvent(eventCursor: 'terminal', turn: TurnTask(id: 'turn', providerId: 'provider', conversationId: 'conversation', status: TurnStatus.completed, updatedAt: DateTime.fromMillisecondsSinceEpoch(1, isUtc: true))));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    expect(client.getCalls, 2);
-    expect(find.text('live-only'), findsNothing);
+    expect(client.getCalls, 1);
+    expect(find.text('live-only'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
@@ -398,7 +495,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
 
-      expect(client.getCalls, 2);
+      expect(client.getCalls, 1);
       expect(
         tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
         isTrue,
@@ -788,6 +885,36 @@ void main() {
     }
   }
 
+  testWidgets('resume metadata keeps the known project while updating the title', (tester) async {
+    const project = RoutedResourceId(providerId: 'provider', nativeResourceId: 'project');
+    final initial = ConversationSummary(
+      id: 'conversation', providerId: 'provider', title: 'Before resume',
+      status: ConversationStatus.idle, permissionLevel: PermissionLevel.readOnly,
+      createdAt: DateTime.utc(2026), updatedAt: DateTime.utc(2026), project: project,
+      resource: const RoutedResourceId(providerId: 'provider', nativeResourceId: 'conversation'),
+    );
+    final client = _ResumeDetailClient(onResume: (_) async => ConversationResumeResult(
+      interaction: const ConversationInteraction(selection: TurnSendSelection()),
+      loadHistory: () async => ConversationSnapshot(
+        detail: ConversationDetail(summary: _idleConversation()), snapshotCursor: 'H',
+      ),
+    ));
+    final session = await _pumpDetail(tester, client, conversation: initial);
+    await tester.pump();
+    // The screen controller is tested separately to inspect metadata, while the
+    // mounted screen above exercises layout under the same resume response.
+    final controller = ConversationDetailController(session: session, conversation: initial);
+    addTearDown(controller.dispose);
+    await controller.reload();
+    expect(controller.detail!.summary.project, project);
+    expect(controller.detail!.summary.title, _idleConversation().title);
+    client.emit(ConversationUpsertedEvent(eventCursor: 'metadata', conversation: _idleConversation()));
+    await tester.pump();
+    expect(controller.detail!.summary.project, project);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('buffers live output while the combined resume is in flight', (tester) async {
     final pending = Completer<ConversationResumeResult>();
     final client = _ResumeDetailClient(onResume: (_) => pending.future);
@@ -1137,7 +1264,7 @@ void main() {
     await client.close();
   });
 
-  testWidgets('converges send through delta and terminal snapshot', (tester) async {
+  testWidgets('updates the live item from its canonical event without terminal history', (tester) async {
     final committed = <GatewayMessage>[];
     late TurnSendReceipt accepted;
     final client = _DetailClient(
@@ -1177,6 +1304,8 @@ void main() {
       createdAt: DateTime.fromMillisecondsSinceEpoch(6000, isUtc: true),
       isStreaming: false,
     ));
+    client.emit(ConversationItemUpsertedEvent(eventCursor: 'canonical-answer',
+      conversationId: 'conversation', item: committed.last));
     client.emit(TurnUpsertedEvent(
       eventCursor: 'sent-terminal',
       turn: TurnTask(
@@ -1192,7 +1321,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('streaming answer'), findsNothing);
     expect(find.text('committed answer'), findsOneWidget);
-    expect(client.getCalls, 2);
+    expect(client.getCalls, 1);
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
@@ -1711,6 +1840,7 @@ Future<DeviceSession> _pumpDetail(
   );
   await session.connect();
   addTearDown(session.dispose);
+  client.onClose = session.dispose;
   await tester.pumpWidget(MaterialApp(
     home: ConversationDetailScreen(
       session: session,
@@ -1837,7 +1967,15 @@ class _ResumeDetailClient extends _DetailClient implements ConversationResumeGat
   }
 }
 
-class _DetailClient implements GatewayClient, ConversationReadGatewayClient, ConversationControlGatewayClient {
+class _DetailClient implements ConversationHistoryGatewayClient, GatewayClient, ConversationReadGatewayClient, ConversationControlGatewayClient {
+  void Function()? onClose;
+  Future<ConversationSnapshot> Function(String cursor)? onPage;
+  final List<String> pageCalls = [];
+  @override
+  Future<ConversationSnapshot> getConversationPage(ConversationSummary conversation, {required String cursor}) {
+    pageCalls.add(cursor);
+    return onPage!(cursor);
+  }
   _DetailClient({
     this.committedMessages = const [],
     this.eventDuringFirstGet,
@@ -1935,7 +2073,11 @@ class _DetailClient implements GatewayClient, ConversationReadGatewayClient, Con
       approvalDecisions: approval.approvalDecisions,
       approvalDecision: decision, resource: approval.resource);
   }
-  @override Future<void> close() async {}
+  @override Future<void> close() async {
+    final callback = onClose;
+    onClose = null;
+    callback?.call();
+  }
 }
 
 class _SendCall {

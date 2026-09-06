@@ -1069,6 +1069,28 @@ class ConversationSummary {
   final RoutedResourceId? resource;
   final ConversationReadState readState;
 
+  /// Runtime metadata can lack project ownership even when a list established
+  /// it (for example a resumed native thread with a legacy project assignment).
+  /// Only that field uses a fallback; status, title and execution settings keep
+  /// the incoming values. Authoritative list replacement does not use this merge.
+  ConversationSummary mergeRuntimeMetadata(ConversationSummary incoming) {
+    if (id != incoming.id || providerId != incoming.providerId ||
+        (resource != null && incoming.resource != null && resource != incoming.resource) ||
+        incoming.project != null || project == null) {
+      return incoming;
+    }
+    return ConversationSummary(
+      id: incoming.id, providerId: incoming.providerId, title: incoming.title,
+      status: incoming.status, permissionLevel: incoming.permissionLevel,
+      createdAt: incoming.createdAt, updatedAt: incoming.updatedAt,
+      preview: incoming.preview, model: incoming.model,
+      reasoningEffort: incoming.reasoningEffort, workspaceRoot: incoming.workspaceRoot,
+      project: project, activeTurn: incoming.activeTurn,
+      turnSendSelection: incoming.turnSendSelection, resource: incoming.resource,
+      readState: incoming.readState,
+    );
+  }
+
   ConversationSummary withReadState(ConversationReadState value) =>
       ConversationSummary(
         id: id,
@@ -1256,20 +1278,33 @@ class ConversationDetail {
     this.liveOutputMessages = const [],
     this.turns = const [],
     this.lastEventCursor,
+    this.messageOrder = const [],
   });
 
   final ConversationSummary summary;
   final List<GatewayMessage> committedMessages;
   final List<GatewayMessage> liveOutputMessages;
-  List<GatewayMessage> get messages => [
-        ...committedMessages,
-        ...liveOutputMessages,
-      ];
+  final List<String> messageOrder;
+  List<GatewayMessage> get messages {
+    final remaining = <String, List<GatewayMessage>>{};
+    for (final message in [...committedMessages, ...liveOutputMessages]) {
+      remaining.putIfAbsent(_messageKey(message), () => []).add(message);
+    }
+    final ordered = <GatewayMessage>[];
+    for (final key in messageOrder) {
+      final message = remaining.remove(key);
+      if (message != null) ordered.addAll(message);
+    }
+    return [...ordered, ...remaining.values.expand((items) => items)];
+  }
+
+  List<String> get _orderedKeys => messages.map(_messageKey).toSet().toList(growable: false);
   final List<TurnTask> turns;
   final String? lastEventCursor;
 
   ConversationDetail withSummary(ConversationSummary value) =>
       ConversationDetail(
+        messageOrder: _orderedKeys,
         summary: value,
         committedMessages: committedMessages,
         liveOutputMessages: liveOutputMessages,
@@ -1309,51 +1344,27 @@ class ConversationDetail {
     };
   }
 
-  ConversationDetail installCommittedSnapshot(
-    ConversationDetail snapshot, {
-    String? completedTurnId,
-  }) {
-    final nextCommittedMessages = [...snapshot.committedMessages];
-    for (final pending in committedMessages.where(_isPendingUserMessage)) {
-      final hasCanonicalUserItem = nextCommittedMessages.any(
-        (message) =>
-            message.turnId == pending.turnId &&
-            message.role == MessageRole.user &&
-            !_isPendingUserMessage(message),
-      );
-      if (!hasCanonicalUserItem &&
-          !nextCommittedMessages.any((message) => message.id == pending.id)) {
-        nextCommittedMessages.add(pending);
-      }
-    }
-    var nextSummary = snapshot.summary;
-    var nextTurns = snapshot.turns;
-    final completedTurn = completedTurnId == null
-        ? null
-        : _turnById(completedTurnId);
-    if (completedTurn != null && completedTurn.status.isTerminal) {
-      nextTurns = _upsertTerminalTurn(nextTurns, completedTurn);
-      final snapshotActiveTurn = snapshot.summary.activeTurn;
-      if (snapshotActiveTurn == null ||
-          snapshotActiveTurn.id == completedTurn.id) {
-        nextSummary = snapshot.summary.withTurn(completedTurn);
-      }
-    }
-    final committedContentIds = snapshot.committedMessages
-        .expand((message) => message.contentIds)
-        .toSet();
+  /// Older pages only contribute unseen items. Already observed live state wins.
+  ConversationDetail prependHistory(ConversationDetail older) {
+    final seen = committedMessages.map((m) => (m.turnId, m.itemId ?? m.id)).toSet();
+    final liveItems = liveOutputMessages.map((m) => (m.turnId, m.itemId ?? m.id)).toSet();
     return ConversationDetail(
-      summary: nextSummary,
-      committedMessages: nextCommittedMessages,
-      liveOutputMessages: liveOutputMessages
-          .where((message) =>
-              message.contentId == null ||
-              !committedContentIds.contains(message.contentId))
-          .where((message) =>
-              completedTurnId == null || message.turnId != completedTurnId)
-          .toList(growable: false),
-      turns: nextTurns,
-      lastEventCursor: snapshot.lastEventCursor,
+      messageOrder: [
+        for (final message in older.messages)
+          if (!seen.contains((message.turnId, message.itemId ?? message.id)) &&
+              !liveItems.contains((message.turnId, message.itemId ?? message.id))) _messageKey(message),
+        ..._orderedKeys,
+      ],
+      summary: summary,
+      committedMessages: [
+        for (final message in older.committedMessages)
+          if (!liveItems.contains((message.turnId, message.itemId ?? message.id)) &&
+              seen.add((message.turnId, message.itemId ?? message.id))) message,
+        ...committedMessages,
+      ],
+      liveOutputMessages: liveOutputMessages,
+      turns: turns,
+      lastEventCursor: lastEventCursor,
     );
   }
 
@@ -1372,6 +1383,7 @@ class ConversationDetail {
       _turnById(turnId)?.clientRequestId;
 
   ConversationDetail withTurn(TurnTask turn) => ConversationDetail(
+        messageOrder: _orderedKeys,
         summary: summary.withTurn(turn),
         committedMessages: committedMessages,
         liveOutputMessages: liveOutputMessages,
@@ -1388,6 +1400,7 @@ class ConversationDetail {
       nextMessages[index] = approval;
     }
     return ConversationDetail(
+      messageOrder: _orderedKeys,
       summary: summary,
       committedMessages: nextMessages,
       liveOutputMessages: liveOutputMessages,
@@ -1400,9 +1413,10 @@ class ConversationDetail {
     if (event is ConversationUpsertedEvent &&
         event.conversation.id == summary.id) {
       return ConversationDetail(
+      messageOrder: _orderedKeys,
         // Read state belongs to this client. Broadcast Provider metadata must
         // not clear it while the Host sends a separate activity event.
-        summary: event.conversation.withReadState(summary.readState),
+        summary: summary.mergeRuntimeMetadata(event.conversation).withReadState(summary.readState),
         committedMessages: committedMessages,
         liveOutputMessages: liveOutputMessages,
         turns: turns,
@@ -1413,6 +1427,7 @@ class ConversationDetail {
     if (event is ConversationActivityChangedEvent &&
         event.conversationId == summary.id) {
       return ConversationDetail(
+      messageOrder: _orderedKeys,
         summary: summary.withReadState(ConversationReadState(
           unread: true,
           activityVersion: event.activityVersion,
@@ -1444,6 +1459,7 @@ class ConversationDetail {
           );
         }
       }
+      final replacedKey = index == -1 ? null : _messageKey(nextMessages[index]);
       if (index == -1) {
         nextMessages.add(event.item);
       } else {
@@ -1456,6 +1472,10 @@ class ConversationDetail {
                   (event.item.itemId ?? event.item.id))
           .toList(growable: false);
       return ConversationDetail(
+      messageOrder: [
+          for (final key in _orderedKeys)
+            key == replacedKey ? _messageKey(event.item) : key,
+        ],
         summary: summary,
         committedMessages: nextMessages,
         liveOutputMessages: nextLiveOutput,
@@ -1466,9 +1486,15 @@ class ConversationDetail {
 
     if (event is TurnUpsertedEvent && event.turn.conversationId == summary.id) {
       return ConversationDetail(
+      messageOrder: _orderedKeys,
         summary: summary.withTurn(event.turn),
         committedMessages: committedMessages,
-        liveOutputMessages: liveOutputMessages,
+        liveOutputMessages: [
+          for (final message in liveOutputMessages)
+            if (message.turnId == event.turn.id && event.turn.status.isTerminal)
+              message.copyWith(isStreaming: false)
+            else message,
+        ],
         turns: _upsertTurn(turns, event.turn),
         lastEventCursor: event.eventCursor,
       );
@@ -1480,6 +1506,7 @@ class ConversationDetail {
       );
       if (alreadyCommitted) {
         return ConversationDetail(
+      messageOrder: _orderedKeys,
           summary: summary,
           committedMessages: committedMessages,
           liveOutputMessages: liveOutputMessages,
@@ -1558,6 +1585,7 @@ class ConversationDetail {
         );
       }
       return ConversationDetail(
+      messageOrder: _orderedKeys,
         summary: summary,
         committedMessages: committedMessages,
         liveOutputMessages: nextMessages,
@@ -1578,6 +1606,7 @@ class ConversationDetail {
         nextMessages[index] = event.approval;
       }
       return ConversationDetail(
+      messageOrder: _orderedKeys,
         summary: summary,
         committedMessages: nextMessages,
         liveOutputMessages: liveOutputMessages,
@@ -1630,6 +1659,13 @@ class ConversationDetail {
       }
     }
     return ConversationDetail(
+      messageOrder: [
+        for (final message in messages)
+          if (message.id == pendingId)
+            if (inputItem != null) _messageKey(inputItem)
+            else _messageKey(message.copyWith(turnId: acceptedTurn.id))
+          else _messageKey(message),
+      ],
       summary: summary,
       committedMessages: nextMessages,
       liveOutputMessages: liveOutputMessages,
@@ -1646,6 +1682,7 @@ class ConversationDetail {
     final id = _pendingUserMessageId(clientRequestId);
     if (committedMessages.any((message) => message.id == id)) return this;
     return ConversationDetail(
+      messageOrder: _orderedKeys,
       summary: summary,
       committedMessages: [
         ...committedMessages,
@@ -1668,6 +1705,7 @@ class ConversationDetail {
 
   ConversationDetail rejectStagedUserInput(String clientRequestId) =>
       ConversationDetail(
+        messageOrder: _orderedKeys,
         summary: summary,
         committedMessages: committedMessages
             .where((message) =>
@@ -1737,25 +1775,6 @@ TurnTask _newerTurn(TurnTask current, TurnTask incoming) {
   return clientRequestId == null || newer.clientRequestId == clientRequestId
       ? newer
       : newer.withClientRequestId(clientRequestId);
-}
-
-List<TurnTask> _upsertTerminalTurn(
-  List<TurnTask> turns,
-  TurnTask terminal,
-) {
-  final next = [...turns];
-  final index = next.indexWhere((turn) => turn.id == terminal.id);
-  if (index == -1) {
-    next.add(terminal);
-  } else {
-    final clientRequestId =
-        terminal.clientRequestId ?? next[index].clientRequestId;
-    next[index] = clientRequestId == null ||
-            terminal.clientRequestId == clientRequestId
-        ? terminal
-        : terminal.withClientRequestId(clientRequestId);
-  }
-  return next;
 }
 
 int _turnStatusRank(TurnStatus status) => switch (status) {
@@ -1972,3 +1991,5 @@ void _requireUniqueIds(Iterable<String> values, String name) {
     }
   }
 }
+
+String _messageKey(GatewayMessage message) => '${message.turnId}\u0000${message.itemId ?? message.id}';

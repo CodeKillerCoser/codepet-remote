@@ -180,7 +180,21 @@ void main() {
       expect(detail.lastEventCursor, 'event-9');
     });
 
-    test('keeps live output separate until a terminal snapshot is installed', () {
+    test('retained output stays before the next request and canonical replacements keep their position', () {
+      var detail = ConversationDetail(summary: summary).apply(const TurnOutputDeltaEvent(
+        eventCursor: 'output', providerId: 'codex', conversationId: 'conversation-1',
+        turnId: 'turn-1', itemId: 'answer', contentId: 'answer:text', kind: 'text', delta: 'first answer'));
+      detail = detail.stageUserInput(clientRequestId: 'next', text: 'next question', createdAt: DateTime(2026));
+      expect(detail.messages.map((m) => m.content), ['first answer', 'next question']);
+      detail = detail.apply(ConversationItemUpsertedEvent(eventCursor: 'canonical', conversationId: summary.id,
+        item: GatewayMessage(id: 'canonical-answer', itemId: 'answer', turnId: 'turn-1', role: MessageRole.assistant,
+          kind: 'message', content: 'final answer', createdAt: DateTime(2026), isStreaming: false)));
+      expect(detail.messages.map((m) => m.content), ['final answer', 'next question']);
+      detail = detail.rejectStagedUserInput('next');
+      expect(detail.messages.map((m) => m.content), ['final answer']);
+    });
+
+    test('terminal retains output and canonical item replaces it in place', () {
       var detail = ConversationDetail(summary: summary).apply(
         const TurnOutputDeltaEvent(
           eventCursor: 'event-8',
@@ -211,11 +225,12 @@ void main() {
         ),
       );
 
-      expect(detail.liveOutputMessages.single.isStreaming, isTrue);
+      expect(detail.liveOutputMessages.single.isStreaming, isFalse);
       expect(detail.turns.single.status, TurnStatus.completed);
 
       final committed = GatewayMessage(
         id: 'history',
+        itemId: 'item-1',
         turnId: 'turn-1',
         role: MessageRole.assistant,
         kind: 'text',
@@ -223,10 +238,8 @@ void main() {
         createdAt: DateTime.fromMillisecondsSinceEpoch(3000, isUtc: true),
         isStreaming: false,
       );
-      detail = detail.installCommittedSnapshot(
-        ConversationDetail(summary: summary, committedMessages: [committed]),
-        completedTurnId: 'turn-1',
-      );
+      detail = detail.apply(ConversationItemUpsertedEvent(
+        eventCursor: 'canonical', conversationId: summary.id, item: committed));
       expect(detail.committedMessages, [committed]);
       expect(detail.liveOutputMessages, isEmpty);
     });
@@ -693,9 +706,8 @@ void main() {
           ),
         ));
 
-        detail = detail.installCommittedSnapshot(
+        detail = detail.prependHistory(
           ConversationDetail(summary: staleSummary, turns: [running]),
-          completedTurnId: running.id,
         );
 
         expect(detail.activeTurn, isNull);

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'conversation_message_cache.dart';
+
 import '../../core/domain/models.dart';
 import '../errors/application_failures.dart';
 import '../ports/gateway_client.dart';
@@ -29,15 +31,19 @@ class ConversationDetailController extends ApplicationNotifier {
   DeviceSession _session;
   late ConversationSummary _conversation;
   final DateTime Function() _now;
-  GatewayEventWindow? _eventWindow;
+  ConversationMessageSource? _source;
+  ConversationDetail? _localDetail;
+  ConversationDetail? get _detail => _source?.detail ?? _localDetail;
+  set _detail(ConversationDetail? value) {
+    _localDetail = value;
+    if (value != null && _source != null) _source!.detail = value;
+  }
   Timer? _interactionRetryTimer;
   final Set<String> _appliedCursors = {};
-  final Set<String> _refreshingTurns = {};
   final Set<String> _tracedFirstOutputTurns = {};
   DeviceSessionRuntimeLease? _observedLease;
   _CapabilityBinding? _binding;
   GatewayProvider? _provider;
-  ConversationDetail? _detail;
   PendingTurnSend? _pendingSend;
   String? _error;
   String? _sendError;
@@ -54,7 +60,6 @@ class ConversationDetailController extends ApplicationNotifier {
   bool _selectionInitializedFromInteraction = false;
   bool _outcomeUnknown = false;
   bool _staleCapabilities = false;
-  bool _refreshingTerminal = false;
   bool _interrupting = false;
   String? _resolvingApprovalId;
   bool _followOutputRequested = false;
@@ -77,7 +82,9 @@ class ConversationDetailController extends ApplicationNotifier {
   bool get interactionAcquired => _interactionAcquired;
   bool get outcomeUnknown => _outcomeUnknown;
   bool get staleCapabilities => _staleCapabilities;
-  bool get refreshingTerminal => _refreshingTerminal;
+  bool get loadingEarlier => _source?.loadingEarlier ?? false;
+  bool get hasEarlier => _source?.nextCursor != null;
+  String? get historyError => _source?.historyError;
   bool get interrupting => _interrupting;
   String? get resolvingApprovalId => _resolvingApprovalId;
 
@@ -118,6 +125,7 @@ class ConversationDetailController extends ApplicationNotifier {
     required ConversationSummary conversation,
   }) {
     _lastInteractionFailure = null;
+    _releaseSource();
     if (!identical(_session, session)) {
       _session.removeListener(_sessionChanged);
       _session = session;
@@ -137,7 +145,7 @@ class ConversationDetailController extends ApplicationNotifier {
         : _CapabilityBinding.from(lease, provider);
     if (_sameLease(_observedLease, lease) && _binding == nextBinding) {
       _provider = provider;
-      _detail = _detail?.withSummary(conversation);
+      _detail = _detail?.withSummary(_detail!.summary.mergeRuntimeMetadata(conversation));
       notifyApplicationListeners();
       return;
     }
@@ -150,16 +158,14 @@ class ConversationDetailController extends ApplicationNotifier {
     DeviceSessionRuntimeLease? right,
   ) => left?.sameRuntime(right) ?? right == null;
 
-  Future<void> reload() async {
+  Future<void> reload({bool forceRefresh = false}) async {
     final epoch = ++_runtimeEpoch;
     _markingReadToken = null;
     _interactionRetryTimer?.cancel();
     _interactionRetryTimer = null;
     final previousBinding = _binding;
-    final previousWindow = _eventWindow;
-    _eventWindow = null;
+    _releaseSource();
     _appliedCursors.clear();
-    _refreshingTurns.clear();
     final lease = _session.runtimeLease;
     final conversation = currentConversation;
     final provider = _session.providerForConversation(conversation);
@@ -195,55 +201,85 @@ class ConversationDetailController extends ApplicationNotifier {
       _pendingSend = null;
     }
     _staleCapabilities = false;
-    _refreshingTerminal = false;
     _interrupting = false;
     _resolvingApprovalId = null;
     notifyApplicationListeners();
-    if (previousWindow != null) unawaited(previousWindow.close());
     if (lease == null || provider == null || binding == null) return;
     if (!provider.capabilitiesLoaded) return;
-    ConversationResumeResult? resumed;
-    GatewayEventWindow? resumeWindow;
-    if (provider.methods.contains('turn.send')) {
-      if (lease.supportsConversationResume) {
-        resumeWindow = lease.openEventWindow();
+    final source = _session.messageCache.acquire(conversation, binding);
+    _source = source;
+    source.addListener(_sourceChanged);
+    if (source.initialLoad != null) {
+      await source.initialLoad!.future;
+      if (_acceptsRuntime(epoch, lease, binding)) await reload(forceRefresh: forceRefresh);
+      return;
+    }
+    if (forceRefresh || source.streamError != null) {
+      source.version++;
+      source.initialized = false;
+      unawaited(source.window?.close());
+      source.window = null;
+    }
+    if (source.initialized) {
+      _initializeSelection(source.detail.summary);
+      notifyApplicationListeners();
+      if (provider.methods.contains('turn.send')) {
+        await _acquireInteraction(lease: lease, binding: binding,
+          conversation: conversation, epoch: epoch);
       }
-      await _acquireInteraction(
+      _markReadIfVisible(source.detail.summary, epoch, lease, binding);
+      return;
+    }
+
+    final initialLoad = Completer<void>();
+    source.initialLoad = initialLoad;
+    try {
+      ConversationResumeResult? resumed;
+      GatewayEventWindow? resumeWindow;
+      if (provider.methods.contains('turn.send')) {
+        if (lease.supportsConversationResume) {
+          resumeWindow = lease.openEventWindow();
+        }
+        await _acquireInteraction(
+          lease: lease,
+          binding: binding,
+          conversation: conversation,
+          epoch: epoch,
+          acquire: resumeWindow == null ? null : () async {
+            final result = await lease.resumeConversation(conversation);
+            resumed = result;
+            if (result.interaction == null) {
+              throw result.interactionError ?? StateError('Conversation interaction was not acquired');
+            }
+            return result.interaction!;
+          },
+        );
+      }
+      if (!_acceptsRuntime(epoch, lease, binding)) {
+        if (resumeWindow != null) await resumeWindow.close();
+        return;
+      }
+      if (!provider.methods.contains('conversation.get')) {
+        if (_acceptsRuntime(epoch, lease, binding)) {
+          _error = '当前 Provider 不支持加载会话详情。';
+          notifyApplicationListeners();
+        }
+        if (resumeWindow != null) await resumeWindow.close();
+        return;
+      }
+      await _loadSnapshot(
         lease: lease,
         binding: binding,
         conversation: conversation,
         epoch: epoch,
-        acquire: resumeWindow == null ? null : () async {
-          final result = await lease.resumeConversation(conversation);
-          resumed = result;
-          if (result.interaction == null) {
-            throw result.interactionError ?? StateError('Conversation interaction was not acquired');
-          }
-          return result.interaction!;
-        },
+        initializeSelection: true,
+        loadHistory: resumed?.loadHistory,
+        eventWindow: resumeWindow,
       );
+    } finally {
+      source.initialLoad = null;
+      initialLoad.complete();
     }
-    if (!_acceptsRuntime(epoch, lease, binding)) {
-      if (resumeWindow != null) await resumeWindow.close();
-      return;
-    }
-    if (!provider.methods.contains('conversation.get')) {
-      if (_acceptsRuntime(epoch, lease, binding)) {
-        _error = '当前 Provider 不支持加载会话详情。';
-        notifyApplicationListeners();
-      }
-      if (resumeWindow != null) await resumeWindow.close();
-      return;
-    }
-    await _loadSnapshot(
-      lease: lease,
-      binding: binding,
-      conversation: conversation,
-      epoch: epoch,
-      initializeSelection: true,
-      loadHistory: resumed?.loadHistory,
-      eventWindow: resumeWindow,
-    );
   }
 
   Future<void> _acquireInteraction({
@@ -346,7 +382,6 @@ class ConversationDetailController extends ApplicationNotifier {
     required ConversationSummary conversation,
     required int epoch,
     bool initializeSelection = false,
-    String? completedTurnId,
     Future<ConversationSnapshot> Function()? loadHistory,
     GatewayEventWindow? eventWindow,
   }) async {
@@ -365,30 +400,27 @@ class ConversationDetailController extends ApplicationNotifier {
       // Provider history can omit client read state or lag behind the list.
       // Preserve the activity observed when opening this snapshot so that the
       // read acknowledgement does not get skipped or acknowledge an old version.
-      detail = detail.withSummary(detail.summary.withReadState(
+      detail = detail.withSummary(conversation.mergeRuntimeMetadata(detail.summary).withReadState(
         conversation.readState.merge(detail.summary.readState),
       ));
-      final previous = _detail;
-      if (completedTurnId != null && previous != null) {
-        detail = previous.installCommittedSnapshot(
-          detail,
-          completedTurnId: completedTurnId,
-        );
-      }
       final baseline = window.startCursor;
       if (baseline == null) {
         throw const GatewayCursorGapException(
           'Detail event window has no subscribed baseline cursor',
         );
       }
-      final previousWindow = _eventWindow;
-      _eventWindow = null;
-      if (previousWindow != null) unawaited(previousWindow.close());
+      final source = _source!;
+      unawaited(source.window?.close());
       if (!_acceptsRuntime(epoch, lease, binding)) {
         await window.close();
         return;
       }
-      _eventWindow = window;
+      source.window = window;
+      source.nextCursor = snapshot.nextCursor;
+      source.loadedCursors.clear();
+      source.historyError = null;
+      source.streamError = null;
+      source.initialized = true;
       _detail = detail;
       _provider = _session.providerForConversation(conversation);
       if (initializeSelection && !_selectionInitializedFromInteraction) {
@@ -403,33 +435,20 @@ class ConversationDetailController extends ApplicationNotifier {
         'installElapsedMs=${stopwatch.elapsedMilliseconds - fetchElapsedMs} '
         'elapsedMs=${stopwatch.elapsedMilliseconds}',
       );
+      final logger = _session.logger;
+      final deviceId = _session.device.deviceId;
       window.install(
         baselineCursor: baseline,
         snapshotCursor: snapshot.snapshotCursor,
-        onEvent: (incoming) {
-          final observed = incoming is ObservedGatewayEvent ? incoming : null;
-          _session.traceRecorder.runWithContext(
-            observed?.traceContext,
-            () => _applyEvent(
-              observed?.event ?? incoming,
-              epoch,
-              lease,
-              binding,
-            ),
-          );
-        },
+        onEvent: source.applyEvent,
         onError: (Object error, StackTrace stackTrace) {
-          _session.logger.warning(
-            'Conversation event window failed for device '
-            '${_session.device.deviceId} conversation=${conversation.id}',
-            error: error,
-            stackTrace: stackTrace,
-          );
-          if (_acceptsRuntime(epoch, lease, binding)) {
-            _error = '事件流异常：$error';
-            notifyApplicationListeners();
-          }
-          _eventWindow = null;
+          if (source.closed) return;
+          logger.warning('Conversation event window failed for device $deviceId conversation=${conversation.id}',
+            error: error, stackTrace: stackTrace);
+          source.streamError = '事件流异常：$error';
+          source.initialized = false;
+          source.notifyApplicationListeners();
+          source.window = null;
           unawaited(window.close());
         },
       );
@@ -443,8 +462,9 @@ class ConversationDetailController extends ApplicationNotifier {
         stackTrace: stackTrace,
       );
       if (_acceptsRuntime(epoch, lease, binding)) {
-        final previousWindow = _eventWindow;
-        _eventWindow = null;
+        final previousWindow = _source?.window;
+        _source?.window = null;
+        _source?.initialized = false;
         _error = error.toString();
         notifyApplicationListeners();
         if (previousWindow != null) unawaited(previousWindow.close());
@@ -527,11 +547,11 @@ class ConversationDetailController extends ApplicationNotifier {
         !_appliedCursors.add(event.eventCursor)) {
       return;
     }
+    if (_appliedCursors.length > 512) {
+      _appliedCursors.remove(_appliedCursors.first);
+    }
     final detail = _detail;
     if (detail == null) return;
-    final next = detail.apply(event);
-    if (identical(next, detail)) return;
-    _detail = next;
     _followOutputRequested |= event is TurnOutputDeltaEvent;
     if (event is TurnOutputDeltaEvent &&
         _tracedFirstOutputTurns.add(event.turnId)) {
@@ -541,20 +561,8 @@ class ConversationDetailController extends ApplicationNotifier {
         event.turnId,
       );
     }
-    notifyApplicationListeners();
     if (event is ConversationActivityChangedEvent) {
-      _markReadIfVisible(next.summary, epoch, lease, binding);
-    }
-    if (event is TurnUpsertedEvent &&
-        event.turn.conversationId == detail.summary.id &&
-        event.turn.status.isTerminal &&
-        _refreshingTurns.add(event.turn.id)) {
-      unawaited(_reloadCompletedTurn(
-        event.turn.id,
-        epoch: epoch,
-        lease: lease,
-        binding: binding,
-      ));
+      _markReadIfVisible(detail.summary, epoch, lease, binding);
     }
   }
 
@@ -615,30 +623,64 @@ class ConversationDetailController extends ApplicationNotifier {
     }
   }
 
-  Future<void> _reloadCompletedTurn(
-    String turnId, {
-    required int epoch,
-    required DeviceSessionRuntimeLease lease,
-    required _CapabilityBinding binding,
-  }) async {
-    if (_acceptsRuntime(epoch, lease, binding)) {
-      _refreshingTerminal = true;
-      notifyApplicationListeners();
+  void _sourceChanged() {
+    final source = _source;
+    final lease = _observedLease;
+    final binding = _binding;
+    if (source == null || source.closed || lease == null || binding == null) {
+      return;
     }
+    _error = source.streamError;
+    final incoming = source.lastEvent;
+    if (incoming != null) {
+      final observed = incoming is ObservedGatewayEvent ? incoming : null;
+      _session.traceRecorder.runWithContext(observed?.traceContext,
+        () => _applyEvent(observed?.event ?? incoming, _runtimeEpoch, lease, binding));
+    }
+    notifyApplicationListeners();
+  }
+
+  void _releaseSource() {
+    final source = _source;
+    if (source == null) return;
+    _localDetail = source.detail;
+    source.removeListener(_sourceChanged);
+    _session.messageCache.release(source);
+    _source = null;
+  }
+
+  Future<void> loadEarlier() async {
+    final source = _source;
+    final lease = _observedLease;
+    final binding = _binding;
+    final epoch = _runtimeEpoch;
+    final cursor = source?.nextCursor;
+    if (source == null || source.closed || source.loadingEarlier ||
+        cursor == null || lease == null || binding == null ||
+        !_acceptsRuntime(epoch, lease, binding)) {
+      return;
+    }
+    final version = source.version;
+    source.loadingEarlier = true;
+    source.historyError = null;
+    notifyApplicationListeners();
     try {
-      await _loadSnapshot(
-        lease: lease,
-        binding: binding,
-        conversation: currentConversation,
-        epoch: epoch,
-        completedTurnId: turnId,
-      );
-    } finally {
-      _refreshingTurns.remove(turnId);
-      if (_acceptsRuntime(epoch, lease, binding)) {
-        _refreshingTerminal = false;
-        notifyApplicationListeners();
+      final page = await lease.getConversationPage(source.detail.summary, cursor: cursor);
+      if (source.closed || source.version != version || !_session.ownsRuntimeLease(lease)) return;
+      if (page.nextCursor == cursor ||
+          (page.nextCursor != null && source.loadedCursors.contains(page.nextCursor))) {
+        throw const FormatException('History returned a repeated page cursor');
       }
+      source.detail = source.detail.prependHistory(page.detail);
+      source.loadedCursors.add(cursor);
+      source.nextCursor = page.nextCursor;
+    } catch (error) {
+      if (!source.closed && source.version == version) {
+        source.historyError = '加载更早消息失败：$error';
+      }
+    } finally {
+      source.loadingEarlier = false;
+      if (!source.closed) source.notifyApplicationListeners();
     }
   }
 
@@ -678,7 +720,6 @@ class ConversationDetailController extends ApplicationNotifier {
         !_staleCapabilities &&
         !_sending &&
         !_outcomeUnknown &&
-        !_refreshingTerminal &&
         !conversationBlocksSend &&
         selectionValid &&
         text.trim().isNotEmpty;
@@ -691,7 +732,6 @@ class ConversationDetailController extends ApplicationNotifier {
       _interactionAcquired &&
       !_staleCapabilities &&
       !_sending &&
-      !_refreshingTerminal &&
       !conversationBlocksSend &&
       !_outcomeUnknown;
 
@@ -891,7 +931,7 @@ class ConversationDetailController extends ApplicationNotifier {
         _outcomeUnknown = true;
         _sendError = unknownTurnOutcomeMessage;
         notifyApplicationListeners();
-        unawaited(reload());
+        unawaited(reload(forceRefresh: true));
       } else {
         _detail = _detail?.rejectStagedUserInput(attempt.clientRequestId);
         _pendingSend = null;
@@ -938,7 +978,6 @@ class ConversationDetailController extends ApplicationNotifier {
     if (_staleCapabilities) return 'Provider 能力已变化，正在刷新';
     if (_detail == null) return '正在加载会话';
     if (_outcomeUnknown) return '发送结果未知，请先刷新会话核对';
-    if (_refreshingTerminal) return '正在收敛本轮结果';
     final status = _detail!.summary.status;
     if (_detail!.activeTurn != null || status == ConversationStatus.running) {
       return '当前任务仍在运行';
@@ -966,7 +1005,7 @@ class ConversationDetailController extends ApplicationNotifier {
     _runtimeEpoch++;
     _interactionRetryTimer?.cancel();
     _session.removeListener(_sessionChanged);
-    unawaited(_eventWindow?.close());
+    _releaseSource();
     super.dispose();
   }
 }

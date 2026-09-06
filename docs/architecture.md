@@ -37,7 +37,9 @@ forbidden import fails CI.
 - `ConversationSearchController` owns query generation, pagination, stale
   response rejection, and view state.
 - `ConversationDetailController` owns snapshot/event fencing, capability
-  binding, interaction acquisition and retry, sending, and terminal reconciliation.
+  binding, interaction acquisition and retry, sending, and manual history pagination.
+- `ConversationMessageCache`, owned by `DeviceSession`, retains message sources and
+  their live event windows across screen navigation.
 - `PairDeviceUseCase` owns pairing orchestration and persistence; the LAN
   adapter owns QR/generated DTO validation and pinned HTTPS exchange.
 
@@ -50,15 +52,41 @@ cannot erase acquired interaction. Codex uses `thread/resume(excludeTurns=true)`
 its raw full-history response does not pass through get's pagination protection.
 
 The controller opens its event window before resume, uses the returned interaction
-to enable the composer, and passes the returned history into the existing get
-assembler. A present empty page is loaded history, not a reason to fetch again.
+to enable the composer, and installs only the returned history page. A present empty page is loaded history, not a reason to fetch again.
 When interaction is denied and history is absent, get loads read-only history.
-Remaining pages are still fetched automatically, initially 20 turns per request;
+Older pages are fetched only when the user asks to see earlier messages,
+initially 20 turns per request;
 `provider_response_too_large` retries the same cursor at 10, 5, then 1. A first-page
 error returned by resume uses this same retry path without repeating acquisition.
 Successful acquisition has no renewal timer. Only failed acquisition is retried. Generation checks reject a resumed result
 after navigation or reconnection; capability binding includes capabilitiesLoaded
 so a complete description with the same revision can restart a pending load.
+
+## Incremental message sources and eviction
+
+Initial load installs one page with its event-window fence. Older-page requests
+prepend unseen `(turnId, itemId)` identities, preserve observed messages and turn
+state, and never replace the live event fence. One older-page request runs per
+source; failures retain the cursor for retry. Repeated cursors fail visibly.
+Deltas append or update the same item; canonical item events replace it in place.
+Message order preserves first observation, including output retained across turns.
+Terminal turn events stop streaming and update status without fetching history.
+
+The session cache keys sources by routed conversation identity and validates the
+runtime/capability binding. Visits and leaving the page update LRU access order;
+background events do not. The default capacity is 8 sources, with visible sources
+pinned. Idle sources expire after 15 minutes, checked each minute and on access.
+Eviction closes the event window and drops the source. A cached source continues
+receiving events off screen; returning reuses it while reacquiring interaction.
+Opening an evicted source loads a fresh first page. Runtime disconnect/reconnect
+clears all sources; Provider generation, revision or availability changes invalidate
+that Provider's sources. This avoids treating missed events as a valid cache.
+
+The count and idle timeout limit retained conversations, not the bytes of a single
+large, actively viewed conversation. Paging never walks all cursors automatically.
+Explicit refresh and recovery after an unknown send outcome fetch the latest page;
+normal terminal events do not. Native Codex history projection failures remain an
+upstream issue and can still affect a fresh load after cache eviction.
 
 ## Connection heartbeat and Provider presence
 

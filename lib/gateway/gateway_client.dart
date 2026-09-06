@@ -20,6 +20,7 @@ final class ProtocolGatewayClient
     implements
         GatewayClient,
         ConversationResumeGatewayClient,
+        ConversationHistoryGatewayClient,
         ProviderSnapshotGatewayClient,
         ConversationReadGatewayClient,
         ConversationControlGatewayClient,
@@ -588,8 +589,15 @@ final class ProtocolGatewayClient
     ConversationSummary conversation,
   ) => _readConversationHistory(conversation);
 
+  @override
+  Future<ConversationSnapshot> getConversationPage(
+    ConversationSummary conversation, {
+    required String cursor,
+  }) => _readConversationHistory(conversation, cursor: cursor);
+
   Future<ConversationSnapshot> _readConversationHistory(
     ConversationSummary conversation, {
+    String? cursor,
     sdk.ConversationGetResponse? firstPage,
     GatewayProtocolException? firstPageError,
   }) async {
@@ -600,152 +608,126 @@ final class ProtocolGatewayClient
     }
     final requested = _mapper.sdkResourceId(resourceId);
     var pageLimitIndex = 0;
-    String? cursor;
-    final seenCursors = <String>{};
-    final pages = <List<sdk.ConversationItem>>[];
-    ConversationSummary? summary;
-    TurnTask? activeTurn;
-    String? snapshotCursor;
-    var pageCount = 0;
+    const pageCount = 1;
     var requestCount = 0;
     var oversizedRetryCount = 0;
-    var fetchedItemCount = 0;
-
+    sdk.ConversationGetResponse response;
+    var pageAttempt = 0;
     while (true) {
-      pageCount++;
-      if (pageCount > 10000) {
-        throw const FormatException(
-          'conversation.get exceeded the 10000-page safety limit',
-        );
-      }
-      sdk.ConversationGetResponse response;
-      var pageAttempt = 0;
-      while (true) {
-        pageAttempt++;
-        final fromResume = firstPage != null || firstPageError != null;
-        if (!fromResume) requestCount++;
-        final limit = _conversationHistoryPageLimits[pageLimitIndex];
-        final requestStopwatch = Stopwatch()..start();
-        _log.fine(
-          'Conversation history page ${fromResume ? 'reused from resume' : 'requested'} '
-          'conversation=${conversation.id} page=$pageCount attempt=$pageAttempt '
-          'cursor=${cursor == null ? 'initial' : 'present'} '
-          'cursorChars=${cursor == null ? 0 : cursor.length} limit=$limit',
-        );
-        try {
-          if (firstPageError != null) {
-            final error = firstPageError;
-            firstPageError = null;
-            throw error;
-          }
-          if (firstPage != null) {
-            response = firstPage;
-            firstPage = null;
-          } else {
-            response = await _call(
-              () => _protocol.conversationGet(
-                sdk.ConversationGetRequest(
-                  conversation: requested,
-                  cursor: cursor,
-                  limit: limit,
-                ),
+      pageAttempt++;
+      final fromResume = firstPage != null || firstPageError != null;
+      if (!fromResume) requestCount++;
+      final limit = _conversationHistoryPageLimits[pageLimitIndex];
+      final requestStopwatch = Stopwatch()..start();
+      _log.fine(
+        'Conversation history page ${fromResume ? 'reused from resume' : 'requested'} '
+        'conversation=${conversation.id} page=$pageCount attempt=$pageAttempt '
+        'cursor=${cursor == null ? 'initial' : 'present'} '
+        'cursorChars=${cursor == null ? 0 : cursor.length} limit=$limit',
+      );
+      try {
+        if (firstPageError != null) {
+          final error = firstPageError;
+          firstPageError = null;
+          throw error;
+        }
+        if (firstPage != null) {
+          response = firstPage;
+          firstPage = null;
+        } else {
+          response = await _call(
+            () => _protocol.conversationGet(
+              sdk.ConversationGetRequest(
+                conversation: requested,
+                cursor: cursor,
+                limit: limit,
               ),
-            );
-          }
-          _log.fine(
-            'Conversation history page received '
-            'conversation=${conversation.id} page=$pageCount attempt=$pageAttempt '
-            'cursor=${cursor == null ? 'initial' : 'present'} limit=$limit '
-            'items=${response.items.length} '
-            'hasNextCursor=${response.pageInfo?.nextCursor != null} '
-            'elapsedMs=${requestStopwatch.elapsedMilliseconds}',
+            ),
           );
-          break;
-        } on GatewayProtocolException catch (error) {
-          if (error.code != 'provider_response_too_large' ||
-              pageLimitIndex == _conversationHistoryPageLimits.length - 1) {
-            _log.warning(
-              'Conversation history page failed '
-              'conversation=${conversation.id} page=$pageCount '
-              'attempt=$pageAttempt cursor=${cursor == null ? 'initial' : 'present'} '
-              'limit=$limit elapsedMs=${requestStopwatch.elapsedMilliseconds} '
-              'code=${error.code}',
-              error: error,
-            );
-            rethrow;
-          }
-          oversizedRetryCount++;
-          pageLimitIndex++;
-          _log.fine(
-            'Conversation history page exceeded transport limit; retrying '
+        }
+        _log.fine(
+          'Conversation history page received '
+          'conversation=${conversation.id} page=$pageCount attempt=$pageAttempt '
+          'cursor=${cursor == null ? 'initial' : 'present'} limit=$limit '
+          'items=${response.items.length} '
+          'hasNextCursor=${response.pageInfo?.nextCursor != null} '
+          'elapsedMs=${requestStopwatch.elapsedMilliseconds}',
+        );
+        break;
+      } on GatewayProtocolException catch (error) {
+        if (error.code != 'provider_response_too_large' ||
+            pageLimitIndex == _conversationHistoryPageLimits.length - 1) {
+          _log.warning(
+            'Conversation history page failed '
             'conversation=${conversation.id} page=$pageCount '
             'attempt=$pageAttempt cursor=${cursor == null ? 'initial' : 'present'} '
-            'previousLimit=$limit '
-            'nextLimit=${_conversationHistoryPageLimits[pageLimitIndex]} '
-            'elapsedMs=${requestStopwatch.elapsedMilliseconds} '
-            'retryCount=$oversizedRetryCount',
+            'limit=$limit elapsedMs=${requestStopwatch.elapsedMilliseconds} '
+            'code=${error.code}',
+            error: error,
           );
+          rethrow;
         }
-      }
-
-      final returned = response.conversation.resource;
-      if (_mapper.resourceKey(returned) != _mapper.resourceKey(requested) ||
-          returned.providerId != requested.providerId) {
-        throw const FormatException(
-          'conversation.get returned a different routed conversation',
+        oversizedRetryCount++;
+        pageLimitIndex++;
+        _log.fine(
+          'Conversation history page exceeded transport limit; retrying '
+          'conversation=${conversation.id} page=$pageCount '
+          'attempt=$pageAttempt cursor=${cursor == null ? 'initial' : 'present'} '
+          'previousLimit=$limit '
+          'nextLimit=${_conversationHistoryPageLimits[pageLimitIndex]} '
+          'elapsedMs=${requestStopwatch.elapsedMilliseconds} '
+          'retryCount=$oversizedRetryCount',
         );
       }
-      final responseActiveTurn = response.conversation.activeTurn;
-      if (responseActiveTurn != null &&
-          (_mapper.resourceKey(responseActiveTurn.conversation) !=
-                  _mapper.resourceKey(requested) ||
-              !_mapper.hasSameRoute(responseActiveTurn.resource, requested))) {
-        throw const FormatException('Conversation active turn providerId mismatch');
-      }
-      for (final item in response.items) {
-        final approval = _mapper.itemApproval(item);
-        final itemConversation = _mapper.itemConversation(item);
-        final itemResource = _mapper.itemResource(item);
-        final itemTurn = _mapper.itemTurn(item);
-        final relatedItem = _mapper.itemRelatedItem(item);
-        if (_mapper.resourceKey(itemConversation) !=
-                _mapper.resourceKey(requested) ||
-            !_mapper.hasSameRoute(itemResource, requested) ||
-            !_mapper.hasSameRoute(itemTurn, requested) ||
-            (relatedItem != null &&
-                !_mapper.hasSameRoute(relatedItem, requested)) ||
-            (approval != null &&
-                (_mapper.resourceKey(approval.conversation) !=
-                        _mapper.resourceKey(requested) ||
-                    _mapper.resourceKey(approval.turn) !=
-                        _mapper.resourceKey(itemTurn) ||
-                    !_mapper.hasSameRoute(approval.resource, requested)))) {
-          throw const FormatException('Conversation history providerId mismatch');
-        }
-      }
-
-      summary ??= _mapper.conversation(response.conversation);
-      activeTurn ??=
-          responseActiveTurn == null ? null : _mapper.turn(responseActiveTurn);
-      snapshotCursor ??= response.snapshotCursor;
-      pages.add(response.items);
-      fetchedItemCount += response.items.length;
-
-      final nextCursor = response.pageInfo?.nextCursor;
-      if (nextCursor == null) break;
-      if (!seenCursors.add(nextCursor)) {
-        throw const FormatException(
-          'conversation.get returned a repeated page cursor',
-        );
-      }
-      cursor = nextCursor;
     }
 
+    final returned = response.conversation.resource;
+    if (_mapper.resourceKey(returned) != _mapper.resourceKey(requested) ||
+        returned.providerId != requested.providerId) {
+      throw const FormatException(
+        'conversation.get returned a different routed conversation',
+      );
+    }
+    final responseActiveTurn = response.conversation.activeTurn;
+    if (responseActiveTurn != null &&
+        (_mapper.resourceKey(responseActiveTurn.conversation) !=
+                _mapper.resourceKey(requested) ||
+            !_mapper.hasSameRoute(responseActiveTurn.resource, requested))) {
+      throw const FormatException('Conversation active turn providerId mismatch');
+    }
+    for (final item in response.items) {
+      final approval = _mapper.itemApproval(item);
+      final itemConversation = _mapper.itemConversation(item);
+      final itemResource = _mapper.itemResource(item);
+      final itemTurn = _mapper.itemTurn(item);
+      final relatedItem = _mapper.itemRelatedItem(item);
+      if (_mapper.resourceKey(itemConversation) !=
+              _mapper.resourceKey(requested) ||
+          !_mapper.hasSameRoute(itemResource, requested) ||
+          !_mapper.hasSameRoute(itemTurn, requested) ||
+          (relatedItem != null &&
+              !_mapper.hasSameRoute(relatedItem, requested)) ||
+          (approval != null &&
+              (_mapper.resourceKey(approval.conversation) !=
+                      _mapper.resourceKey(requested) ||
+                  _mapper.resourceKey(approval.turn) !=
+                      _mapper.resourceKey(itemTurn) ||
+                  !_mapper.hasSameRoute(approval.resource, requested)))) {
+        throw const FormatException('Conversation history providerId mismatch');
+      }
+    }
+
+    final summary = _mapper.conversation(response.conversation);
+    final activeTurn = responseActiveTurn == null ? null : _mapper.turn(responseActiveTurn);
+    final snapshotCursor = response.snapshotCursor;
+    final nextCursor = response.pageInfo?.nextCursor;
+    if (nextCursor != null && nextCursor == cursor) {
+      throw const FormatException('conversation.get returned a repeated page cursor');
+    }
     final mappingStopwatch = Stopwatch()..start();
-    final orderedItems = pages.reversed.expand((page) => page).toList();
     final committedMessages = [
-      for (var index = 0; index < orderedItems.length; index++)
-        _mapper.message(orderedItems[index], index),
+      for (var index = 0; index < response.items.length; index++)
+        _mapper.message(response.items[index], index),
     ];
     final snapshot = ConversationSnapshot(
       detail: ConversationDetail(
@@ -755,11 +737,12 @@ final class ProtocolGatewayClient
         lastEventCursor: snapshotCursor,
       ),
       snapshotCursor: snapshotCursor,
+      nextCursor: nextCursor,
     );
     _log.fine(
       'Conversation history assembled conversation=${conversation.id} '
       'pages=$pageCount requests=$requestCount '
-      'oversizedRetries=$oversizedRetryCount items=$fetchedItemCount '
+      'oversizedRetries=$oversizedRetryCount items=${response.items.length} '
       'messages=${committedMessages.length} '
       'mappingUs=${mappingStopwatch.elapsedMicroseconds} '
       'elapsedMs=${totalStopwatch.elapsedMilliseconds}',

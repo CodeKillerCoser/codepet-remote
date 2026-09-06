@@ -62,6 +62,13 @@ abstract interface class GatewayClient {
   Future<void> close();
 }
 
+abstract interface class ConversationHistoryGatewayClient {
+  Future<ConversationSnapshot> getConversationPage(
+    ConversationSummary conversation, {
+    required String cursor,
+  });
+}
+
 /// Combined conversation entry; successful interaction does not require renewal.
 abstract interface class ConversationResumeGatewayClient {
   Future<ConversationResumeResult> resumeConversation(
@@ -78,7 +85,7 @@ class ConversationResumeResult {
 
   final ConversationInteraction? interaction;
   final Object? interactionError;
-  // Uses the returned first page and fetches only its remaining cursors.
+  // Uses only the returned first page; older pages require explicit navigation.
   final Future<ConversationSnapshot> Function()? loadHistory;
 }
 
@@ -134,10 +141,12 @@ class ConversationSnapshot {
   const ConversationSnapshot({
     required this.detail,
     required this.snapshotCursor,
+    this.nextCursor,
   });
 
   final ConversationDetail detail;
   final String snapshotCursor;
+  final String? nextCursor;
 }
 
 /// Provider presence snapshots are control data, separate from replayable conversation events.

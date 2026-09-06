@@ -703,12 +703,9 @@ void main() {
       final requests = transport.requests.where((request) =>
           request.method == 'conversation.resume' || request.method == 'conversation.get').toList();
       expect(requests.map((request) => request.method),
-          ['conversation.resume', if (hasOlderPage) 'conversation.get']);
+          ['conversation.resume']);
       expect(requests.first.params['limit'], 20);
-      if (hasOlderPage) {
-        expect(requests.last.params['cursor'], 'older-page');
-        expect(requests.last.params['limit'], 20);
-      }
+      expect(snapshot.nextCursor, hasOlderPage ? 'older-page' : null);
       await client.close();
     });
   }
@@ -801,20 +798,20 @@ void main() {
         .toList(growable: false);
     expect(
       requests.map((request) => request.params['limit']),
-      [20, 10, 5, 5],
+      [20, 10, 5],
     );
     expect(
       requests.map((request) => request.params['cursor']),
-      [null, null, null, 'older-page'],
+      [null, null, null],
     );
     expect(
       snapshot.detail.committedMessages.map((message) => message.content),
-      ['older', 'newer'],
+      ['newer'],
     );
     await client.close();
   });
 
-  test('retries the same cursor and keeps the successful page limit',
+  test('retries the requested older cursor without following its next page',
       () async {
     var oversizedOlderPage = true;
     final transport = _FakeTransport(
@@ -857,18 +854,20 @@ void main() {
     );
     await client.connect();
 
-    await client.getConversation(_domainConversation());
+    final first = await client.getConversation(_domainConversation());
+    final older = await client.getConversationPage(_domainConversation(), cursor: first.nextCursor!);
+    expect(older.nextCursor, 'oldest-page');
 
     final requests = transport.requests
         .where((request) => request.method == 'conversation.get')
         .toList(growable: false);
     expect(
       requests.map((request) => request.params['limit']),
-      [20, 20, 10, 10],
+      [20, 20, 10],
     );
     expect(
       requests.map((request) => request.params['cursor']),
-      [null, 'older-page', 'older-page', 'oldest-page'],
+      [null, 'older-page', 'older-page'],
     );
     await client.close();
   });
@@ -1002,8 +1001,11 @@ void main() {
 
     final snapshot = await client.getConversation(_domainConversation());
 
+    expect(snapshot.detail.committedMessages.map((m) => m.content), ['newer-a', 'newer-b']);
+    final older = await client.getConversationPage(_domainConversation(), cursor: snapshot.nextCursor!);
+    expect(older.nextCursor, isNull);
     expect(
-      snapshot.detail.committedMessages.map((message) => message.content),
+      snapshot.detail.prependHistory(older.detail).committedMessages.map((message) => message.content),
       ['older-a', 'older-b', 'newer-a', 'newer-b'],
     );
     final requests = transport.requests

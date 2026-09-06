@@ -38,6 +38,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   List<ConversationTimelineBlock> _timeline = const [];
   bool _metadataExpanded = false;
   int _hiddenMessageCount = 0;
+  String? _centerBlockId;
   bool _showScrollToBottom = false;
   int _scrollRequest = 0;
 
@@ -73,6 +74,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             conversationRoutingKey(widget.conversation)) {
       return;
     }
+    _timeline = const [];
+    _centerBlockId = null;
+    _hiddenMessageCount = 0;
     _controller
       ..removeListener(_controllerChanged)
       ..dispose();
@@ -159,7 +163,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     }
   }
 
-  Future<void> _bindRuntime() => _controller.reload();
+  Future<void> _bindRuntime() => _controller.reload(forceRefresh: true);
 
   bool get _canSend => _controller.canSend(_draftController.text);
 
@@ -251,7 +255,10 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   }
 
   void _showEarlierMessages() {
-    if (_hiddenMessageCount == 0) return;
+    if (_hiddenMessageCount == 0) {
+      unawaited(_controller.loadEarlier());
+      return;
+    }
     _scrollRequest++;
     setState(() {
       _hiddenMessageCount = _hiddenMessageCount > _messagePageSize
@@ -426,13 +433,16 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     }
 
     final timeline = _timeline;
-    final centerBlockIndex = timeline.length > _messagePageSize
-        ? timeline.length - _messagePageSize
-        : 0;
+    var centerBlockIndex = _centerBlockId == null
+        ? -1 : timeline.indexWhere((block) => block.id == _centerBlockId);
+    if (centerBlockIndex < 0) {
+      centerBlockIndex = timeline.length > _messagePageSize
+          ? timeline.length - _messagePageSize : 0;
+      if (timeline.isNotEmpty) _centerBlockId = timeline[centerBlockIndex].id;
+    }
     final centerBlockCount = timeline.length - centerBlockIndex;
     final earlierVisibleBlockCount =
         centerBlockIndex - _hiddenMessageCount;
-    final growsUpward = timeline.length > _messagePageSize;
     return NotificationListener<ScrollStartNotification>(
       onNotification: (notification) {
         if (notification.dragDetails != null) {
@@ -443,21 +453,23 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       child: CustomScrollView(
         key: const Key('conversation-detail'),
         controller: _scrollController,
-        center: growsUpward ? _messagesCenterKey : null,
+        center: _messagesCenterKey,
         slivers: [
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             sliver: SliverList(
               delegate: SliverChildListDelegate.fixed([
-                if (_hiddenMessageCount > 0) ...[
+                if (_hiddenMessageCount > 0 || _controller.hasEarlier) ...[
                   Center(
                     child: TextButton.icon(
                       key: const Key('show-earlier-messages'),
-                      onPressed: _showEarlierMessages,
+                      onPressed: _controller.loadingEarlier ? null : _showEarlierMessages,
                       icon: const Icon(Icons.expand_less),
-                      label: const Text('显示更早消息'),
+                      label: Text(_controller.loadingEarlier ? '正在加载更早消息…' : '显示更早消息'),
                     ),
                   ),
+                  if (_controller.historyError != null)
+                    Text(_controller.historyError!, textAlign: TextAlign.center),
                   const SizedBox(height: 12),
                 ],
               ]),

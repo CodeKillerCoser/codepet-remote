@@ -201,6 +201,39 @@ void main() {
     session.dispose();
   });
 
+  test('runtime metadata preserves project membership when it has no project', () async {
+    final project = _gatewayProject();
+    ConversationSummary metadata(int timestamp, RoutedResourceId? membership) =>
+        _routedConversation(
+          nativeId: 'resumed', providerPluginId: 'dev.codepet.codex',
+          providerInstanceId: _primaryRoute, workspaceRoot: '/worktree',
+          updatedAt: timestamp, title: 'title-$timestamp', project: membership,
+        );
+    final client = _ProjectFakeClient(
+      projects: [project], conversations: [metadata(3000, project.resource)],
+    );
+    final session = DeviceSession(device: _device('resume-project'), clientFactory: () => client);
+    addTearDown(session.dispose);
+    await session.connect();
+    await session.ensureProjectConversations(project);
+    for (final timestamp in [2000, 4000]) {
+      client.emit(ConversationUpsertedEvent(
+        eventCursor: 'metadata-$timestamp', conversation: metadata(timestamp, null),
+      ));
+      await pumpEventQueue();
+      await session.ensureProjectConversations(project);
+      expect(session.conversationsForProject(project).single.project, project.resource);
+      expect(session.conversations.single.title, 'title-$timestamp');
+    }
+    const moved = RoutedResourceId(providerId: _primaryRoute, nativeResourceId: 'project-2');
+    client.emit(ConversationUpsertedEvent(
+      eventCursor: 'moved', conversation: metadata(5000, moved),
+    ));
+    await pumpEventQueue();
+    expect(session.conversationsForProject(project), isEmpty);
+    expect(session.conversations.single.project, moved);
+  });
+
   test('project changed refreshes created and updated values and removes deletes',
       () async {
     final initial = _gatewayProject();

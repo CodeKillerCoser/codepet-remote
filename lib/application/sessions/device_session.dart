@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../conversations/conversation_message_cache.dart';
+
 import '../../core/domain/models.dart';
 import '../errors/application_failures.dart';
 import '../ports/application_log.dart';
@@ -35,6 +37,12 @@ class DeviceSessionRuntimeLease {
   Future<ConversationSnapshot> getConversation(
     ConversationSummary conversation,
   ) => _client.getConversation(conversation);
+
+  Future<ConversationSnapshot> getConversationPage(
+    ConversationSummary conversation, {
+    required String cursor,
+  }) => (_client as ConversationHistoryGatewayClient)
+      .getConversationPage(conversation, cursor: cursor);
 
   Future<ConversationInteraction> acquireInteraction(
     ConversationSummary conversation,
@@ -111,6 +119,8 @@ class DeviceSession extends ApplicationNotifier {
       (_) => _handleReconnectSignal(),
     );
   }
+
+  final messageCache = ConversationMessageCache();
 
   static const int conversationPageSize = 20;
 
@@ -369,6 +379,7 @@ class DeviceSession extends ApplicationNotifier {
     final generation = ++_runtimeGeneration;
     _eventWindow = null;
     _client = null;
+    messageCache.clear();
     handshake = null;
     _resetConversationPagination();
     connectionState = DeviceConnectionState.connecting;
@@ -501,6 +512,7 @@ class DeviceSession extends ApplicationNotifier {
       final failureGeneration = ++_runtimeGeneration;
       _eventWindow = null;
       _client = null;
+    messageCache.clear();
       handshake = null;
       _resetConversationPagination();
       error = connectionError;
@@ -1046,6 +1058,7 @@ class DeviceSession extends ApplicationNotifier {
     final failureGeneration = ++_runtimeGeneration;
     _eventWindow = null;
     _client = null;
+    messageCache.clear();
     handshake = null;
     _resetConversationPagination();
     error = message;
@@ -1088,6 +1101,9 @@ class DeviceSession extends ApplicationNotifier {
       if (previous.generation != null && provider.generation != null && provider.generation! < previous.generation!) return;
       final revisionChanged = previous.generation != provider.generation || previous.capabilities.revision !=
           provider.capabilities.revision;
+      if (revisionChanged || previous.isAvailable != provider.isAvailable) {
+        messageCache.invalidateProvider(provider.id);
+      }
       providers[index] = !revisionChanged && previous.capabilitiesLoaded
           ? provider.withCapabilities(previous.capabilities)
           : provider;
@@ -1214,7 +1230,7 @@ class DeviceSession extends ApplicationNotifier {
     }
     final eventConversation = current == null
         ? incoming
-        : incoming.withReadState(current.readState);
+        : current.mergeRuntimeMetadata(incoming).withReadState(current.readState);
     // Event cursors define stream order. Provider timestamps can lag metadata
     // notifications, so accept the event while keeping list order monotonic.
     final next = current != null && current.updatedAt.isAfter(incoming.updatedAt)
@@ -1512,6 +1528,7 @@ class DeviceSession extends ApplicationNotifier {
     _runtimeGeneration++;
     _eventWindow = null;
     _client = null;
+    messageCache.clear();
     handshake = null;
     error = null;
     _resetConversationPagination();
@@ -1582,6 +1599,7 @@ class DeviceSession extends ApplicationNotifier {
     final client = _client;
     _eventWindow = null;
     _client = null;
+    messageCache.clear();
     unawaited(window?.close());
     if (client != null) unawaited(client.close());
     super.dispose();
