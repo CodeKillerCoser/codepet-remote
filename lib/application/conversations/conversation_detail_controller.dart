@@ -452,6 +452,7 @@ class ConversationDetailController extends ApplicationNotifier {
           unawaited(window.close());
         },
       );
+      _session.mergeDiscoveredConversations([_detail!.summary], lease: lease);
       _markReadIfVisible(_detail!.summary, epoch, lease, binding);
     } catch (error, stackTrace) {
       _session.logger.warning(

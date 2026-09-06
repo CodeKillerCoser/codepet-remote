@@ -49,6 +49,12 @@ void main() {
 
     expect(find.text('项目结果'), findsOneWidget);
     expect(find.text('独立结果'), findsNothing);
+    expect(session.conversations.single.title, '独立结果');
+    await tester.pumpWidget(MaterialApp(home: _HomeHarness(session: session)));
+    await _pumpAsync(tester);
+    expect(find.text('独立结果'), findsOneWidget);
+    expect(find.byIcon(Icons.playlist_add), findsOneWidget);
+    expect(find.byTooltip('补充发现的无项目对话'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
@@ -106,16 +112,21 @@ void main() {
     expect(find.text('旧结果'), findsNothing);
     expect(find.text('去重后的结果'), findsNothing);
     expect(find.text('Beta'), findsOneWidget);
-    expect(session.conversations, homeProjection);
+    expect(session.conversations, containsAll(homeProjection));
+    expect(session.conversations, hasLength(homeProjection.length + 1));
+    expect(session.selectedProviderRecentConversations.map((item) => item.title),
+      ['首页 B', 'Beta']);
 
     Navigator.of(tester.element(find.byType(ConversationSearchScreen))).pop();
-    await _pumpAsync(tester);
-    expect(session.conversations, homeProjection);
+    await tester.pumpAndSettle();
+    expect(session.conversations, containsAll(homeProjection));
+    expect(find.text('Beta'), findsOneWidget);
+    expect(find.byIcon(Icons.playlist_add), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
 
-  testWidgets('search pages from 20+ to an exact count and stays isolated', (tester) async {
+  testWidgets('search pages supplement standalone home conversations', (tester) async {
     _useTallSurface(tester);
     final client = _SearchClient(
       providers: const [_primaryProvider],
@@ -160,7 +171,9 @@ void main() {
 
     expect(find.text('20+ 个结果'), findsOneWidget);
     expect(find.text('结果 20'), findsNothing);
-    expect(session.conversations.single.title, '首页会话');
+    expect(session.conversations.first.title, '首页会话');
+    expect(session.conversations, hasLength(21));
+    expect(session.isSupplementalStandalone(session.conversations.last), isTrue);
 
     await tester.tap(find.byKey(const Key('search-show-more')));
     await _pumpAsync(tester);
@@ -168,7 +181,9 @@ void main() {
     expect(client.searchRequests.last.cursor, 'search-next');
     expect(find.text('21 个结果'), findsOneWidget);
     expect(find.text('结果 20'), findsOneWidget);
-    expect(session.conversations.single.title, '首页会话');
+    expect(session.conversations.first.title, '首页会话');
+    expect(session.conversations, hasLength(22));
+    expect(session.isSupplementalStandalone(session.conversations.last), isTrue);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
