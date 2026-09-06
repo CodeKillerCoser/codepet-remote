@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
 import '../common/identity_icons.dart';
+import '../common/floating_detail_panel.dart';
 import '../connection/device_connection_notice.dart';
+import '../connection/device_detail_screen.dart';
 import '../conversations/conversation_detail_screen.dart';
 import '../conversations/conversation_search_screen.dart';
 
@@ -172,7 +174,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
               key: const Key('remote-home'),
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                   child: _DeviceActions(
                     session: session!,
                     selectedProvider: selectedProvider,
@@ -184,17 +186,16 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                   child: ListView(
                     key: const Key('home-content-scroll'),
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
                     children: [
                   if (DeviceConnectionNotice.shouldShow(
                     session,
                     includeConnecting: true,
                   )) ...[
-                    const SizedBox(height: 20),
                     DeviceConnectionNotice(session: session),
+                    const SizedBox(height: 12),
                   ],
                   if (session.selectedProviderSupportsProjects) ...[
-                    const SizedBox(height: 28),
                     _SectionTitle(
                       key: Key('projects-section-${session.device.deviceId}'),
                       title: '项目',
@@ -226,7 +227,8 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                       ..._projectWidgets(context, session, projects, viewState),
                     ],
                   ],
-                  const SizedBox(height: 28),
+                  if (session.selectedProviderSupportsProjects)
+                    const SizedBox(height: 28),
                   _SectionTitle(
                     key: Key('recent-section-${session.device.deviceId}'),
                     title: '会话',
@@ -658,6 +660,7 @@ class _DeviceActions extends StatelessWidget {
                 final provider = providers[index];
                 return _ProviderIdentity(
                   provider: provider,
+                  connectionState: session.connectionState,
                   selected: provider.id == selectedProvider?.id,
                   onSelected: onSelectProvider,
                 );
@@ -666,27 +669,107 @@ class _DeviceActions extends StatelessWidget {
           ),
           const SizedBox(height: 4),
         ],
-        Text(
-          handshake == null
-              ? '会话数据仅保留在本次连接中'
-              : _providerRuntimeLabel(selectedProvider),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+        if (selectedProvider != null)
+          _ProviderDisclosure(
+            key: ValueKey('provider-details-${session.device.deviceId}-${selectedProvider!.id}'),
+            provider: selectedProvider!,
+            connectionState: session.connectionState,
+          )
+        else
+          Text(handshake == null ? '会话数据仅保留在本次连接中' : '未发现 Provider'),
       ],
     );
+  }
+}
+
+class _ProviderDisclosure extends StatefulWidget {
+  const _ProviderDisclosure({super.key, required this.provider, required this.connectionState});
+
+  final GatewayProvider provider;
+  final DeviceConnectionState connectionState;
+
+  @override
+  State<_ProviderDisclosure> createState() => _ProviderDisclosureState();
+}
+
+class _ProviderDisclosureState extends State<_ProviderDisclosure> {
+  final _controller = OverlayPortalController();
+  final _link = LayerLink();
+
+  void _toggle() => setState(_controller.toggle);
+  void _close() => setState(_controller.hide);
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = widget.provider;
+    return LayoutBuilder(builder: (context, constraints) {
+      return CompositedTransformTarget(
+        link: _link,
+        child: OverlayPortal(
+          controller: _controller,
+          overlayChildBuilder: (context) => Stack(
+            children: [
+              Positioned.fill(child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _close,
+                child: const SizedBox.expand(),
+              )),
+              CompositedTransformFollower(
+                link: _link,
+                showWhenUnlinked: false,
+                targetAnchor: Alignment.bottomLeft,
+                followerAnchor: Alignment.topLeft,
+                offset: const Offset(0, 8),
+                child: SizedBox(
+                  width: constraints.maxWidth,
+                  child: FloatingDetailPanel(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.45),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                        child: ProviderDetails(provider: provider),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          child: InkWell(
+            onTap: _toggle,
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(children: [
+                Expanded(child: Text(
+                  '${provider.displayName} · ${provider.runtimeVersion == null ? '版本未提供' : 'v${provider.runtimeVersion}'} · ${_providerStateLabel(provider, widget.connectionState)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                )),
+                AnimatedRotation(
+                  turns: _controller.isShowing ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Icon(Icons.expand_more, size: 20,
+                    semanticLabel: _controller.isShowing ? '收起 Provider 信息' : '展开 Provider 信息'),
+                ),
+              ]),
+            ),
+          ),
+        ),
+      );
+    });
   }
 }
 
 class _ProviderIdentity extends StatelessWidget {
   const _ProviderIdentity({
     required this.provider,
+    required this.connectionState,
     required this.selected,
     required this.onSelected,
   });
 
   final GatewayProvider provider;
+  final DeviceConnectionState connectionState;
   final bool selected;
   final ValueChanged<GatewayProvider> onSelected;
 
@@ -708,7 +791,29 @@ class _ProviderIdentity extends StatelessWidget {
             : Theme.of(context).colorScheme.outline,
         semanticLabel: '${provider.displayName} Provider',
       ),
-      label: Text('${provider.displayName} · ${provider.connectionLabel}'),
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(provider.displayName),
+          const SizedBox(width: 8),
+          Semantics(
+            label: _providerStateLabel(provider, connectionState),
+            child: Container(
+              key: Key('provider-status-${provider.id}'),
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: switch (_providerStateLabel(provider, connectionState)) {
+                  '在线' => Colors.green.shade600,
+                  '连接中' => Colors.amber.shade600,
+                  _ => Colors.red.shade600,
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
       side: BorderSide(
         color: ready
             ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.35)
@@ -784,6 +889,7 @@ class _ProjectCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final roots = project.roots.map((root) => root.path).join(' · ');
     final conversationCount = session.projectConversationCountLabel(project);
+    final conversations = session.conversationsForProject(project);
     final canUpdate = provider.isAvailable &&
         provider.methods.contains('project.update');
     final canDelete = provider.isAvailable &&
@@ -792,72 +898,75 @@ class _ProjectCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       elevation: 0,
       clipBehavior: Clip.antiAlias,
-      child: ListTile(
+      child: InkWell(
         key: Key('project-${project.key}'),
-        leading: const Icon(Icons.folder_outlined),
-        title: Text(
-          project.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text(
-          roots.isEmpty ? '未关联目录' : roots,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (conversationCount == null)
-              Text(
-                '…',
-                key: Key('project-conversation-count-${project.key}'),
-                style: Theme.of(context).textTheme.bodySmall,
-              )
-            else
-              Text(
-                '$conversationCount 个对话',
-                key: Key('project-conversation-count-${project.key}'),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            const SizedBox(width: 4),
-            if (canUpdate || canDelete)
-              PopupMenuButton<String>(
-                key: Key('project-menu-${project.key}'),
-                onSelected: (value) {
-                  if (value == 'edit') {
-                    unawaited(_showProjectEditor(
-                      context,
-                      session: session,
-                      provider: provider,
-                      project: project,
-                    ));
-                  }
-                  if (value == 'delete') {
-                    unawaited(_confirmDeleteProject(
-                      context,
-                      session: session,
-                      provider: provider,
-                      project: project,
-                    ));
-                  }
-                },
-                itemBuilder: (_) => [
-                  if (canUpdate)
-                    const PopupMenuItem(value: 'edit', child: Text('编辑项目')),
-                  if (canDelete)
-                    const PopupMenuItem(value: 'delete', child: Text('删除项目')),
-                ],
-              )
-            else
-              const Icon(Icons.chevron_right),
-          ],
-        ),
         onTap: onOpenProject,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      const Icon(Icons.folder_outlined, size: 20),
+                      const SizedBox(width: 8),
+                      Flexible(child: Text(project.name, maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium)),
+                      const SizedBox(width: 8),
+                      Text(conversationCount ?? '…',
+                        key: Key('project-conversation-count-${project.key}'),
+                        style: Theme.of(context).textTheme.bodySmall),
+                      _ConversationIndicators(
+                        running: conversations.any(
+                          (item) => item.status == ConversationStatus.running),
+                        unread: conversations.any(
+                          (item) => item.readState.unread),
+                      ),
+                    ]),
+                    const SizedBox(height: 4),
+                    _HeadTailPath(roots.isEmpty ? '未关联目录' : roots),
+                  ],
+                ),
+              ),
+              if (canUpdate || canDelete)
+                PopupMenuButton<String>(
+                  key: Key('project-menu-${project.key}'),
+                  onSelected: (value) {
+                    if (value == 'edit') {
+                      unawaited(_showProjectEditor(
+                        context,
+                        session: session,
+                        provider: provider,
+                        project: project,
+                      ));
+                    }
+                    if (value == 'delete') {
+                      unawaited(_confirmDeleteProject(
+                        context,
+                        session: session,
+                        provider: provider,
+                        project: project,
+                      ));
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    if (canUpdate)
+                      const PopupMenuItem(value: 'edit', child: Text('编辑项目')),
+                    if (canDelete)
+                      const PopupMenuItem(value: 'delete', child: Text('删除项目')),
+                  ],
+                )
+            ],
+          ),
+        ),
       ),
     );
   }
 }
+
 
 class _PaginationControl extends StatelessWidget {
   const _PaginationControl({
@@ -961,47 +1070,111 @@ class _ConversationTile extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-        leading: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Icon(
-              conversation.status == ConversationStatus.running
-                  ? Icons.motion_photos_on_outlined
-                  : Icons.chat_bubble_outline,
-            ),
-            if (conversation.readState.unread)
-              Positioned(
-                right: -3,
-                top: -3,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.error,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const SizedBox(width: 8, height: 8),
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(12),
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Flexible(child: Text(conversation.title, maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: conversation.readState.unread ? FontWeight.w700 : FontWeight.w400))),
+                _ConversationIndicators(
+                  running: conversation.status == ConversationStatus.running,
+                  unread: conversation.readState.unread,
                 ),
-              ),
-          ],
+              ]),
+              const SizedBox(height: 4),
+              if (conversation.preview != null)
+                Text(conversation.preview!, maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant))
+              else
+                _HeadTailPath(conversation.workspaceRoot ?? '无 workspaceRoot'),
+            ],
+          )),
+          const SizedBox(width: 12),
+          // Match the title line height to keep the timestamp centered with it.
+          Text(relativeConversationTime(conversation.updatedAt),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w400,
+              color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ],
+      ),
+    ),
+  );
+}
+
+class _ConversationIndicators extends StatelessWidget {
+  const _ConversationIndicators({required this.running, required this.unread});
+  final bool running;
+  final bool unread;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (running)
+        const Padding(
+          padding: EdgeInsets.only(left: 6),
+          child: Tooltip(message: '运行中',
+            child: Icon(Icons.motion_photos_on_outlined, size: 16, semanticLabel: '运行中')),
         ),
-        title: Text(
-          conversation.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: conversation.readState.unread
-              ? const TextStyle(fontWeight: FontWeight.w700)
-              : null,
+      if (unread)
+        Padding(
+          padding: const EdgeInsets.only(left: 6),
+          child: Semantics(label: '未读', child: Container(
+            width: 7, height: 7,
+            decoration: const BoxDecoration(shape: BoxShape.circle,
+              color: Colors.blue),
+          )),
         ),
-        subtitle: Text(
-          conversation.preview ??
-              conversation.workspaceRoot ??
-              '无 workspaceRoot',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Text(relativeConversationTime(conversation.updatedAt)),
-        onTap: onTap,
-      );
+    ],
+  );
+}
+
+class _HeadTailPath extends StatelessWidget {
+  const _HeadTailPath(this.path);
+  final String path;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.bodyMedium?.copyWith(
+      color: Theme.of(context).colorScheme.onSurfaceVariant);
+    return LayoutBuilder(builder: (context, constraints) {
+      final characters = path.characters;
+      String shortened(int length) {
+        if (length >= characters.length) return path;
+        final head = (length / 2).ceil();
+        return '${characters.take(head)}…${characters.skip(characters.length - (length - head))}';
+      }
+      final painter = TextPainter(textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context), maxLines: 1);
+      var low = 0;
+      var high = characters.length;
+      while (low < high) {
+        final mid = (low + high + 1) ~/ 2;
+        painter.text = TextSpan(text: shortened(mid), style: style);
+        painter.layout();
+        if (painter.width <= constraints.maxWidth) {
+          low = mid;
+        } else {
+          high = mid - 1;
+        }
+      }
+      painter.dispose();
+      return Tooltip(message: path, child: Text(shortened(low),
+        semanticsLabel: path, maxLines: 1, style: style));
+    });
+  }
 }
 
 class _EmptyDevices extends StatelessWidget {
@@ -1811,19 +1984,15 @@ String _deviceStateLabel(DeviceConnectionState state) => switch (state) {
   DeviceConnectionState.failed => '连接失败',
 };
 
-String _providerRuntimeLabel(GatewayProvider? provider) {
-  if (provider == null) return '未发现 Provider';
-  final values = <String>[provider.displayName];
-  final runtimeVersion = provider.runtimeVersion;
-  if (runtimeVersion != null) values.add('v$runtimeVersion');
-  final executablePath = provider.executablePath;
-  if (executablePath != null) values.add(executablePath);
-  final authentication =
-      provider.authenticationDisplayText ?? provider.authenticationStatus;
-  if (authentication != null) values.add(authentication);
-  final usage = provider.usageDisplayText;
-  if (usage != null) values.add(usage);
-  return values.join(' · ');
+String _providerStateLabel(GatewayProvider provider, DeviceConnectionState state) {
+  if (state == DeviceConnectionState.connecting) return '连接中';
+  if (state != DeviceConnectionState.online || provider.connectionStatus == 'offline') {
+    return '不可用';
+  }
+  if (provider.connectionStatus == 'connecting' || provider.status == ProviderStatus.connecting) {
+    return '连接中';
+  }
+  return provider.isAvailable ? '在线' : '不可用';
 }
 
 String relativeConversationTime(DateTime value, {DateTime? now}) {

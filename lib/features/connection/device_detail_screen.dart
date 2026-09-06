@@ -151,34 +151,49 @@ class _ProviderDetailCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text('${provider.connectionLabel} · ${_providerStatusLabel(provider.status)}'),
               const Divider(height: 24),
-              _DetailRow(label: '版本', value: provider.runtimeVersion ?? '未提供'),
-              _DetailRow(label: '路径', value: provider.executablePath ?? '未提供'),
-              _DetailRow(
-                label: '登录状态',
-                value: provider.authenticationDisplayText ??
-                    provider.authenticationStatus ??
-                    '未提供',
-              ),
-              _DetailRow(label: '用量', value: provider.usageDisplayText ?? '未提供'),
-              if (provider.usageDetails.isNotEmpty)
-                ExpansionTile(
-                  key: Key('provider-usage-details-${provider.id}'),
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: EdgeInsets.zero,
-                  title: const Text('原始用量数据'),
-                  subtitle: const Text('协议透传，Remote 不解析其含义'),
-                  children: [
-                    for (final detail in provider.usageDetails)
-                      SelectableText(
-                        const JsonEncoder.withIndent('  ').convert(detail),
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                  ],
-                ),
+              ProviderDetails(provider: provider),
             ],
           ),
         ),
       );
+}
+
+/// Shared provider fields for device settings and the home disclosure.
+class ProviderDetails extends StatelessWidget {
+  const ProviderDetails({super.key, required this.provider});
+
+  final GatewayProvider provider;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      _DetailRow(label: '版本', value: provider.runtimeVersion ?? '未提供'),
+      _DetailRow(label: '路径', value: provider.executablePath ?? '未提供'),
+      _DetailRow(
+        label: '登录状态',
+        value: provider.authenticationDisplayText ??
+            provider.authenticationStatus ??
+            '未提供',
+      ),
+      _DetailRow(label: '用量', value: provider.usageDisplayText ?? '未提供'),
+      if (provider.usageDetails.isNotEmpty)
+        ExpansionTile(
+          key: Key('provider-usage-details-${provider.id}'),
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: EdgeInsets.zero,
+          title: const Text('原始用量数据'),
+          subtitle: const Text('协议透传，Remote 不解析其含义'),
+          children: [
+            for (final detail in provider.usageDetails)
+              SelectableText(
+                const JsonEncoder.withIndent('  ').convert(detail),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+          ],
+        ),
+    ],
+  );
 }
 
 class _DetailCard extends StatelessWidget {

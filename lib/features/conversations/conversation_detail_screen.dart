@@ -7,6 +7,7 @@ import '../../application/conversations/conversation_timeline.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
 import '../common/identity_icons.dart';
+import '../common/floating_detail_panel.dart';
 import '../connection/device_connection_notice.dart';
 import 'widgets/conversation_timeline_view.dart';
 
@@ -118,7 +119,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     final firstDetail = previousWasEmpty && detail != null;
     final nextTimeline = detail == null
         ? const <ConversationTimelineBlock>[]
-        : _timelineProjector.project(detail);
+        : _timelineProjector.projectForDisplay(detail);
     if (renderTrace case (final context, final eventCursor, final turnId)) {
       widget.session.traceRecorder.instant(
         'mobile.timeline.projected',
@@ -512,6 +513,8 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                         child: ConversationTimelineBlockView(
                           key: ValueKey(block.id),
                           block: block,
+                          allowCopy: _detail?.activeTurn?.id != block.turnId &&
+                            _detail?.effectiveStatus != ConversationStatus.running,
                         ),
                       );
                     }),
@@ -543,6 +546,8 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                                 child: ConversationTimelineBlockView(
                                   key: ValueKey(block.id),
                                   block: block,
+                          allowCopy: _detail?.activeTurn?.id != block.turnId &&
+                            _detail?.effectiveStatus != ConversationStatus.running,
                                 ),
                               );
                             }),
@@ -603,6 +608,8 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (_detail != null && _timelineProjector.fileChanges(_detail!).count > 0)
+                FileChangeSummaryView(summary: _timelineProjector.fileChanges(_detail!)),
               if (_pendingApproval != null) ...[
                 _ApprovalActions(
                   approval: _pendingApproval!,
@@ -931,40 +938,29 @@ class _ConversationMetadataPanel extends StatelessWidget {
       summary.model != null || summary.reasoningEffort != null;
   bool get _hasWorkspace => summary.workspaceRoot != null;
 
-  double get _height =>
-        42 +
-            (_hasPreview ? 40 : 0) +
-            (_hasModel ? 24 : 0) +
-            (_hasWorkspace ? 24 : 0);
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final secondaryStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
           color: colorScheme.onSurfaceVariant,
         );
-    return Material(
-      elevation: 6,
-      shadowColor: colorScheme.shadow.withValues(alpha: 0.24),
-      color: colorScheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(14),
-      clipBehavior: Clip.antiAlias,
-      child: SizedBox(
-        width: double.infinity,
-        height: _height,
-        child: Padding(
+    return FloatingDetailPanel(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.45),
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Row(
                 children: [
                   const Icon(Icons.shield_outlined, size: 16),
                   const SizedBox(width: 6),
-                  Text(
+                  Expanded(child: Text(
                     '权限 · ${summary.permissionLevel}',
                     style: secondaryStyle,
-                  ),
+                  )),
                 ],
               ),
               if (_hasPreview) ...[
@@ -990,14 +986,13 @@ class _ConversationMetadataPanel extends StatelessWidget {
               if (_hasWorkspace) ...[
                 const SizedBox(height: 6),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Icon(Icons.folder_outlined, size: 16),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: Text(
+                      child: SelectableText(
                         summary.workspaceRoot!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: secondaryStyle,
                       ),
                     ),

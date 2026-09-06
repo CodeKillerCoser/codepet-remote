@@ -5,6 +5,40 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const projector = ConversationTimelineProjector();
 
+  test('groups completed process separately from the final message and hides empty reasoning', () {
+    final detail = ConversationDetail(summary: _summary,
+      turns: [TurnTask(id: 'turn', providerId: 'provider', conversationId: 'conversation',
+        status: TurnStatus.completed, updatedAt: _epoch.add(const Duration(seconds: 89)),
+        startedAt: _epoch, completedAt: _epoch.add(const Duration(seconds: 89)))],
+      committedMessages: [
+        _message(id: 'user', role: MessageRole.user, content: 'request'),
+        _message(id: 'empty', kind: 'reasoning', content: 'completed'),
+        _message(id: 'commentary', content: 'working'),
+        _message(id: 'reason', kind: 'reasoning', content: 'real summary'),
+        _message(id: 'command', kind: 'command'),
+        _message(id: 'files', kind: 'file-change', content: '1 file change(s)'),
+        _message(id: 'final', content: 'done'),
+      ]);
+    final blocks = projector.projectForDisplay(detail);
+    expect(blocks, hasLength(3));
+    expect(blocks.first, isA<UserMessageBlock>());
+    final process = blocks[1] as TurnProcessBlock;
+    expect(process.completed, isTrue);
+    expect(process.duration, const Duration(seconds: 89));
+    expect(process.children.map((block) => block.id), ['commentary', 'reason', 'command']);
+    expect((blocks.last as AssistantMessageBlock).text, 'done');
+  });
+
+  test('merges file change counts without inventing details or duplicate item counts', () {
+    final first = _message(id: 'files', kind: 'file-change', content: '2 file change(s)');
+    final detail = ConversationDetail(summary: _summary, committedMessages: [first, first,
+      _message(id: 'more-files', kind: 'file-change', content: '1 file change(s)')]);
+    final summary = projector.fileChanges(detail);
+    expect(summary.count, 3);
+    expect(summary.details, isEmpty);
+    expect(projector.projectForDisplay(detail), isEmpty);
+  });
+
   test('keeps command and output contents in one semantic block', () {
     final detail = ConversationDetail(
       summary: _summary,

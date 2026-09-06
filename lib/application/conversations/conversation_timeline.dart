@@ -168,10 +168,25 @@ final class UnknownActivityBlock extends ConversationTimelineBlock {
   final String detail;
 }
 
+final class TurnProcessBlock extends ConversationTimelineBlock {
+  const TurnProcessBlock({required super.id, required super.turnId,
+    required this.children, this.duration, required this.completed})
+      : super(sourceItemIds: const [], isStreaming: !completed);
+  final List<ConversationTimelineBlock> children;
+  final Duration? duration;
+  final bool completed;
+}
+
+class FileChangeSummary {
+  const FileChangeSummary({required this.count, required this.details});
+  final int count;
+  final List<String> details;
+}
+
 final class ConversationTimelineProjector {
   const ConversationTimelineProjector();
 
-  List<ConversationTimelineBlock> project(ConversationDetail detail) {
+  List<ConversationTimelineBlock> project(ConversationDetail detail, {bool mergeAssistantMessages = true}) {
     final items = _mergeItems(detail.messages);
     final attachedApprovals = <String, TimelineApproval>{};
     final attachableIds = <String>{
@@ -200,7 +215,7 @@ final class ConversationTimelineProjector {
       final approval = attachedApprovals[item.id] ??
           (item.itemId == null ? null : attachedApprovals[item.itemId!]);
       final block = _blockFor(item, approval);
-      if (block is AssistantMessageBlock &&
+      if (mergeAssistantMessages && block is AssistantMessageBlock &&
           blocks.isNotEmpty &&
           blocks.last is AssistantMessageBlock) {
         final previous = blocks.last as AssistantMessageBlock;
@@ -212,6 +227,61 @@ final class ConversationTimelineProjector {
       blocks.add(block);
     }
     return List.unmodifiable(blocks);
+  }
+
+  /// Display grouping is separate from the lossless semantic projection.
+  List<ConversationTimelineBlock> projectForDisplay(ConversationDetail detail) {
+    final blocks = project(detail, mergeAssistantMessages: false).where((block) => block is! FileChangesBlock &&
+      !(block is ReasoningBlock && (block.summary.trim().isEmpty ||
+        const {'completed', 'running', 'pending'}.contains(block.summary.trim().toLowerCase())))).toList();
+    final turns = {for (final turn in detail.turns) turn.id: turn};
+    final active = detail.summary.activeTurn;
+    if (active != null && !turns.containsKey(active.id)) turns[active.id] = active;
+    final result = <ConversationTimelineBlock>[];
+    var start = 0;
+    while (start < blocks.length) {
+      var end = start + 1;
+      while (end < blocks.length && blocks[end].turnId == blocks[start].turnId &&
+          blocks[end] is! UserMessageBlock) { end++; }
+      final group = blocks.sublist(start, end);
+      final turn = turns[group.first.turnId];
+      final completed = turn?.status.isTerminal ??
+        (!group.any((block) => block.isRunning) && detail.activeTurn?.id != group.first.turnId &&
+          detail.effectiveStatus != ConversationStatus.running);
+      final last = group.last is AssistantMessageBlock
+        ? group.last as AssistantMessageBlock : null;
+      final process = group.where((block) => block is! UserMessageBlock &&
+        block is! ApprovalBlock && block != last).toList();
+      result.addAll(group.whereType<UserMessageBlock>());
+      if (process.isNotEmpty) {
+        final duration = turn?.startedAt != null && turn?.completedAt != null
+          ? turn!.completedAt!.difference(turn.startedAt!) : null;
+        result.add(TurnProcessBlock(id: 'process-${group.first.id}',
+          turnId: group.first.turnId, children: process,
+          duration: duration != null && !duration.isNegative ? duration : null,
+          completed: completed));
+      }
+      result.addAll(group.whereType<ApprovalBlock>());
+      if (last != null) result.add(last);
+      start = end;
+    }
+    return result;
+  }
+
+  FileChangeSummary fileChanges(ConversationDetail detail) {
+    var count = 0;
+    final details = <String>{};
+    for (final item in _mergeItems(detail.messages).where((item) => item.kind == 'file-change')) {
+      final text = _contentsOf(item).map((content) => content.displayText)
+        .where((text) => text.trim().isNotEmpty).join('\n');
+      final match = RegExp(r'^\s*(\d+) file change\(s\)\s*$', caseSensitive: false).firstMatch(text);
+      count += match == null ? 1 : int.parse(match.group(1)!);
+      if (text.trim().isNotEmpty && match == null &&
+          !const {'completed', 'running', 'pending'}.contains(text.trim().toLowerCase())) {
+        details.add(text);
+      }
+    }
+    return FileChangeSummary(count: count, details: details.toList());
   }
 
   List<GatewayMessage> _mergeItems(List<GatewayMessage> messages) {
@@ -256,6 +326,7 @@ final class ConversationTimelineProjector {
         relatedItemId: current.relatedItemId ?? message.relatedItemId,
         sequence: current.sequence ?? message.sequence,
         tool: message.tool ?? current.tool,
+        meta: message.meta ?? current.meta,
       );
     }
     return [for (final key in order) byKey[key]!];

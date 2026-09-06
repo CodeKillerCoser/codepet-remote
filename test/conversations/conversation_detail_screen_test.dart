@@ -110,6 +110,10 @@ void main() {
 
   testWidgets('shows Provider icon and keeps conversation details collapsed',
       (tester) async {
+    tester.view.physicalSize = const Size(360, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final client = _DetailClient();
     final conversation = ConversationSummary(
       id: _conversation.id,
@@ -120,7 +124,7 @@ void main() {
       permissionLevel: PermissionLevel.workspaceWrite,
       model: 'test-model',
       reasoningEffort: 'high',
-      workspaceRoot: '/workspace/project',
+      workspaceRoot: '/Users/wangxin/Documents/Codex/2026-09-05/very-long-workspace-directory/project',
       createdAt: _conversation.createdAt,
       updatedAt: _conversation.updatedAt,
       resource: _conversation.resource,
@@ -168,7 +172,7 @@ void main() {
     );
     expect(find.text('默认隐藏的会话摘要'), findsNothing);
     expect(find.text('test-model · high'), findsNothing);
-    expect(find.text('/workspace/project'), findsNothing);
+    expect(find.text('/Users/wangxin/Documents/Codex/2026-09-05/very-long-workspace-directory/project'), findsNothing);
 
     await tester.tap(
       find.byKey(const Key('conversation-title-metadata-toggle')),
@@ -179,7 +183,13 @@ void main() {
     expect(find.text('权限 · workspace-write'), findsOneWidget);
     expect(find.text('默认隐藏的会话摘要'), findsOneWidget);
     expect(find.text('test-model · high'), findsOneWidget);
-    expect(find.text('/workspace/project'), findsOneWidget);
+    expect(find.text('/Users/wangxin/Documents/Codex/2026-09-05/very-long-workspace-directory/project'), findsOneWidget);
+    await tester.pumpAndSettle();
+    final path = tester.widget<SelectableText>(find.byWidgetPredicate(
+      (widget) => widget is SelectableText && widget.data == conversation.workspaceRoot));
+    expect(path.maxLines, isNull);
+    expect(tester.getSize(find.text(conversation.workspaceRoot!)).height, greaterThan(24));
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });
@@ -611,6 +621,32 @@ void main() {
     await client.close();
   });
 
+  testWidgets('collapses process, copies only final output and moves file changes above input', (tester) async {
+    final client = _DetailClient(committedMessages: [
+      _history('user', MessageRole.user, 'message', 'request'),
+      _history('reason', MessageRole.assistant, 'reasoning', 'completed'),
+      _history('commentary', MessageRole.assistant, 'message', 'progress note'),
+      _history('tool', MessageRole.system, 'command', 'pwd', status: 'completed'),
+      _history('files', MessageRole.system, 'file-change', '2 file change(s)'),
+      _history('final', MessageRole.assistant, 'message', 'final output'),
+    ]);
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pumpAndSettle();
+    expect(find.text('progress note'), findsNothing);
+    expect(find.text('completed'), findsNothing);
+    expect(find.byTooltip('复制'), findsOneWidget);
+    expect(find.text('文件变更 · 2 次'), findsOneWidget);
+    expect(tester.getBottomLeft(find.text('文件变更 · 2 次')).dy,
+      lessThan(tester.getTopLeft(find.byKey(const Key('turn-input'))).dy));
+    await tester.tap(find.text('执行过程'));
+    await tester.pumpAndSettle();
+    expect(find.text('progress note'), findsOneWidget);
+    expect(find.byTooltip('复制'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('renders committed messages, tool activity and approval status', (tester) async {
     final client = _DetailClient(
       committedMessages: [
@@ -711,11 +747,14 @@ void main() {
       find.descendant(of: command, matching: find.byType(AnimatedCrossFade)),
       findsNothing,
     );
-    expect(find.text('find lib -type f'), findsNothing);
+    expect(find.text('find lib -type f'), findsOneWidget);
+    final commandText = tester.widget<Text>(find.text('find lib -type f'));
+    expect(commandText.maxLines, 1);
+    expect(commandText.overflow, TextOverflow.ellipsis);
     final timelineHeight = tester.getSize(command).height;
 
     await tester.tap(
-      find.descendant(of: command, matching: find.text('命令执行')),
+      find.descendant(of: command, matching: find.text('shell')),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -723,7 +762,8 @@ void main() {
     expect(find.byKey(const Key('tool-detail-sheet')), findsOneWidget);
     expect(find.byKey(const Key('tool-detail-command')), findsOneWidget);
     expect(find.text('工具详情'), findsOneWidget);
-    expect(find.textContaining('find lib -type f'), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('tool-detail-sheet')),
+      matching: find.textContaining('find lib -type f')), findsOneWidget);
     expect(find.textContaining('调用：shell'), findsOneWidget);
     expect(find.textContaining('目录：/workspace'), findsOneWidget);
     expect(find.textContaining('lib/main.dart'), findsOneWidget);

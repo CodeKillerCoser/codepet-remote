@@ -8,19 +8,23 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../application/conversations/conversation_timeline.dart';
 import '../../../core/domain/models.dart';
 import '../../common/app_toast.dart';
+import '../../common/sticky_detail_header.dart';
 
 class ConversationTimelineBlockView extends StatelessWidget {
   const ConversationTimelineBlockView({
     super.key,
     required this.block,
+    this.allowCopy = true,
   });
 
   final ConversationTimelineBlock block;
+  final bool allowCopy;
 
   @override
   Widget build(BuildContext context) => switch (block) {
         UserMessageBlock value => _UserMessage(block: value),
-        AssistantMessageBlock value => _AssistantMessage(block: value),
+        AssistantMessageBlock value => _AssistantMessage(block: value, allowCopy: allowCopy),
+        TurnProcessBlock value => _TurnProcess(block: value),
         ReasoningBlock value => _ReasoningActivity(block: value),
         CommandBlock value => _CommandActivity(block: value),
         ToolBlock value => _ToolActivity(block: value),
@@ -68,7 +72,7 @@ class _UserMessage extends StatelessWidget {
                 ),
               ),
             ),
-            _CopyAction(text: block.text),
+
           ],
         ),
       ),
@@ -77,9 +81,10 @@ class _UserMessage extends StatelessWidget {
 }
 
 class _AssistantMessage extends StatelessWidget {
-  const _AssistantMessage({required this.block});
+  const _AssistantMessage({required this.block, required this.allowCopy});
 
   final AssistantMessageBlock block;
+  final bool allowCopy;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -95,7 +100,7 @@ class _AssistantMessage extends StatelessWidget {
             ),
             Row(
               children: [
-                _CopyAction(text: block.text),
+                if (allowCopy && !block.isRunning) _CopyAction(text: block.text),
                 if (block.isRunning) ...[
                   const SizedBox(width: 4),
                   const SizedBox.square(
@@ -108,6 +113,87 @@ class _AssistantMessage extends StatelessWidget {
           ],
         ),
       );
+}
+
+class _TurnProcess extends StatefulWidget {
+  const _TurnProcess({required this.block});
+  final TurnProcessBlock block;
+  @override
+  State<_TurnProcess> createState() => _TurnProcessState();
+}
+
+class _TurnProcessState extends State<_TurnProcess> {
+  bool _expanded = false;
+  final _headerKey = GlobalKey();
+
+  void _toggle() {
+    setState(() => _expanded = !_expanded);
+    if (!_expanded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final headerContext = _headerKey.currentContext;
+        if (mounted && headerContext != null) {
+          Scrollable.ensureVisible(headerContext,
+            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart);
+        }
+      });
+    }
+  }
+  @override
+  void didUpdateWidget(_TurnProcess oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.block.completed && widget.block.completed) _expanded = false;
+  }
+  @override
+  Widget build(BuildContext context) {
+    final block = widget.block;
+    final duration = block.duration;
+    final seconds = duration?.inSeconds;
+    final label = seconds == null ? '执行过程' :
+      '用时 ${seconds ~/ 60 > 0 ? '${seconds ~/ 60}分 ' : ''}${seconds % 60}秒';
+    final expanded = !block.completed || _expanded;
+    final content = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (expanded)
+        for (final child in block.children)
+          Padding(padding: const EdgeInsets.only(bottom: 4),
+            child: ConversationTimelineBlockView(key: ValueKey(child.id), block: child, allowCopy: false)),
+    ]);
+    if (!block.completed) return content;
+    final header = Material(
+      key: _headerKey,
+      color: Theme.of(context).scaffoldBackgroundColor,
+      surfaceTintColor: Colors.transparent,
+      child: InkWell(
+        key: Key('process-toggle-${block.id}'),
+        onTap: _toggle,
+        child: Padding(padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(children: [
+            Text(label, style: TextStyle(color: Theme.of(context).colorScheme.outline)),
+            const SizedBox(width: 4),
+            Icon(expanded ? Icons.expand_more : Icons.chevron_right, size: 18,
+              color: Theme.of(context).colorScheme.outline),
+          ]))),
+    );
+    return expanded ? StickyDetailHeader(header: header, content: content) : header;
+  }
+}
+
+class FileChangeSummaryView extends StatelessWidget {
+  const FileChangeSummaryView({super.key, required this.summary});
+  final FileChangeSummary summary;
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerLeft,
+    child: ActionChip(
+      avatar: const Icon(Icons.difference_outlined, size: 16),
+      label: Text('文件变更 · ${summary.count} 次'),
+      onPressed: summary.details.isEmpty ? null : () => showModalBottomSheet<void>(
+        context: context, showDragHandle: true, useSafeArea: true,
+        builder: (context) => SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: SelectableText(summary.details.join('\n\n')),
+        )),
+    ),
+  );
 }
 
 class _ReasoningActivity extends StatefulWidget {
@@ -144,7 +230,9 @@ class _CommandActivity extends StatelessWidget {
     return _ToolActivityLauncher(
       key: Key('timeline-command-${block.id}'),
       icon: Icons.terminal_outlined,
-      title: block.title,
+      title: block.tool?.name ?? block.title,
+      command: block.tool?.input is GatewayCommandToolInput
+        ? (block.tool!.input as GatewayCommandToolInput).command : block.command,
       status: block.status,
       running: block.isRunning,
       onOpen: () => _showToolDetails(
@@ -169,7 +257,13 @@ class _ToolActivity extends StatelessWidget {
   Widget build(BuildContext context) {
     return _ToolActivityLauncher(
       icon: Icons.build_outlined,
-      title: block.title,
+      title: block.tool?.name ?? block.title,
+      command: switch (block.tool?.input) {
+        GatewayCommandToolInput input => input.command,
+        GatewayStructuredToolInput input => jsonEncode(input.value),
+        GatewayOpaqueToolInput input => input.value,
+        _ => block.summary,
+      },
       status: block.status,
       running: block.isRunning,
       onOpen: () => _showToolDetails(
@@ -195,6 +289,7 @@ class _ToolActivityLauncher extends StatelessWidget {
     super.key,
     required this.icon,
     required this.title,
+    required this.command,
     required this.status,
     required this.running,
     required this.onOpen,
@@ -203,6 +298,7 @@ class _ToolActivityLauncher extends StatelessWidget {
 
   final IconData icon;
   final String title;
+  final String command;
   final String? status;
   final bool running;
   final VoidCallback onOpen;
@@ -213,13 +309,33 @@ class _ToolActivityLauncher extends StatelessWidget {
     return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _ActivityHeader(
-            icon: icon,
-            title: title,
-            status: status,
-            running: running,
+          InkWell(
             onTap: onOpen,
-            expanded: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              child: Row(children: [
+                Icon(icon, size: 16, color: Theme.of(context).colorScheme.outline),
+                const SizedBox(width: 8),
+                Flexible(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Theme.of(context).colorScheme.outline))),
+                if (command.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Expanded(flex: 2, child: Text(command.replaceAll('\n', ' '),
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Theme.of(context).colorScheme.outline))),
+                ] else const Spacer(),
+                const SizedBox(width: 8),
+                if (running)
+                  SizedBox.square(dimension: 13, child: CircularProgressIndicator(
+                    strokeWidth: 1.5, color: Theme.of(context).colorScheme.outline))
+                else
+                  Icon(status == 'failed' ? Icons.warning_amber_rounded :
+                    status == 'completed' ? Icons.check : Icons.remove,
+                    size: 16, semanticLabel: status == null ? null : _statusLabel(status!),
+                    color: status == 'failed' ? Theme.of(context).colorScheme.error :
+                      Theme.of(context).colorScheme.outline),
+              ]),
+            ),
           ),
           if (approval != null)
             Padding(
@@ -935,7 +1051,7 @@ class _CodePanel extends StatelessWidget {
                 ),
               ),
             ),
-            _CopyAction(text: text),
+
           ],
         ),
       ),

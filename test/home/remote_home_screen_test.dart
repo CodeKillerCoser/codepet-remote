@@ -14,14 +14,17 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   testWidgets('hides projects when project.list is absent even with cwd values',
       (tester) async {
-    _useTallSurface(tester);
+    tester.view.physicalSize = const Size(320, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final client = _PagedClient(
       ({required cursor, required limit}) async => ConversationPage(
         conversations: [
           _conversation(
             'cwd-only',
             '只有 cwd 的会话',
-            workspaceRoot: '/looks/like/a/project',
+            workspaceRoot: '/Users/wangxin/Documents/very-long-workspace-directory/remote-project',
           ),
         ],
         snapshotCursor: 'handshake',
@@ -40,6 +43,18 @@ void main() {
       findsNothing,
     );
     expect(find.text('只有 cwd 的会话'), findsOneWidget);
+    expect(find.byIcon(Icons.chat_bubble_outline), findsNothing);
+    final path = tester.widgetList<Text>(find.byType(Text)).firstWhere(
+      (text) => text.semanticsLabel == '/Users/wangxin/Documents/very-long-workspace-directory/remote-project');
+    final pathParts = path.data!.split('…');
+    expect(pathParts, hasLength(2));
+    expect(pathParts.every((part) => part.isNotEmpty), isTrue);
+    expect(path.semanticsLabel, startsWith(pathParts.first));
+    expect(path.semanticsLabel, endsWith(pathParts.last));
+    final title = find.text('只有 cwd 的会话');
+    final time = find.text(relativeConversationTime(session.selectedProviderConversations.single.updatedAt));
+    expect(tester.getCenter(time).dy, closeTo(tester.getCenter(title).dy, 1));
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
@@ -72,7 +87,7 @@ void main() {
             find.byKey(Key('project-conversation-count-${project.key}')),
           )
           .data,
-      '${session.conversationsForProject(project).length} 个对话',
+      '${session.conversationsForProject(project).length}',
     );
     expect(find.text('Gateway 协议契约核对'), findsOneWidget);
     expect(find.text('实现 Remote 会话流'), findsNothing);
@@ -363,13 +378,22 @@ void main() {
     );
 
     expect(find.byKey(const Key('connected-providers')), findsOneWidget);
-    expect(find.text('Codex Work · 状态未知'), findsWidgets);
+    expect(find.text('Codex Work'), findsOneWidget);
     expect(
       find.text(
-        'Codex Work · v0.151.0 · /usr/local/bin/codex · Signed in · 72% remaining',
+        'Codex Work · v0.151.0 · 在线',
       ),
       findsOneWidget,
     );
+    expect(find.text('/usr/local/bin/codex'), findsNothing);
+    final sectionTop = tester.getTopLeft(find.text('会话'));
+    await tester.tap(find.text('Codex Work · v0.151.0 · 在线'));
+    await tester.pumpAndSettle();
+    expect(find.text('/usr/local/bin/codex'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('会话')), sectionTop);
+    expect(find.text('Signed in'), findsOneWidget);
+    expect(find.text('72% remaining'), findsOneWidget);
+    expect(tester.takeException(), isNull);
     expect(find.byIcon(Icons.terminal), findsOneWidget);
     expect(find.byKey(const Key('device-selector')), findsNothing);
     expect(
