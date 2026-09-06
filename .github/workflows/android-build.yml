@@ -1,0 +1,56 @@
+name: Android APK
+
+run-name: Android APK · ${{ github.ref_name }} · ${{ inputs.build_mode }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: APK build mode
+        type: choice
+        required: true
+        default: release
+        options:
+          - release
+          - debug
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # workflow_dispatch checks out the branch chosen in "Use workflow from".
+      - name: Checkout selected branch
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.2
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        env:
+          BUILD_MODE: ${{ inputs.build_mode }}
+        run: flutter build apk --"$BUILD_MODE"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: codepet-remote-${{ inputs.build_mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/app/outputs/flutter-apk/app-${{ inputs.build_mode }}.apk
+          if-no-files-found: error
+          retention-days: 14

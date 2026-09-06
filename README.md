@@ -51,6 +51,20 @@ flutter run
 CI 会在 `main` push 和 Pull Request 上执行 analyze、全量测试和 Android
 debug 构建。
 
+## GitHub Actions 打包 Android APK
+
+将 `.github/workflows/android-build.yml` 合入仓库默认分支后，在 GitHub 仓库中：
+
+1. 打开 **Actions → Android APK → Run workflow**。
+2. 在 **Use workflow from** 下拉框选择要打包的分支；目标分支也需要包含该工作流文件。
+3. 选择 `build_mode`：默认 `release`，也可选择 `debug`，然后点击 **Run workflow**。
+4. 构建成功后，在本次运行页面的 **Artifacts** 下载 `codepet-remote-…`，解压获得可安装的 APK。产物保留 14 天。
+
+流水线使用所选分支的代码和 `pubspec.yaml` 版本号，生成包含各支持架构的通用 APK。
+当前手动流水线不注入正式签名密钥，`release` 沿用项目的 debug keystore 回退，
+适合安装测试；不同运行生成的 debug 签名可能不同，覆盖安装失败时需要卸载旧版（会清除本地数据）。
+应用商店发布应先接入下述正式签名配置。
+
 ## Android 发布签名
 
 当前开发阶段，Release 缺少正式签名配置时会回退使用 debug keystore，保证 APK
