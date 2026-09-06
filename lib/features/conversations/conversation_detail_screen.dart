@@ -41,6 +41,8 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   String? _centerBlockId;
   bool _showScrollToBottom = false;
   int _scrollRequest = 0;
+  bool _followOutput = true;
+  bool _userScrolling = false;
 
   GatewayProvider? get _provider => _controller.provider;
   ConversationDetail? get _detail => _controller.detail;
@@ -74,6 +76,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             conversationRoutingKey(widget.conversation)) {
       return;
     }
+    _followOutput = true;
+    _userScrolling = false;
+    _scrollRequest++;
     _timeline = const [];
     _centerBlockId = null;
     _hiddenMessageCount = 0;
@@ -156,7 +161,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     }
     if (firstDetail) {
       _scrollToBottom();
-    } else if (followOutput && wasNearBottom) {
+    } else if (followOutput && wasNearBottom && _followOutput && !_userScrolling) {
       _followStreamingOutput();
     } else {
       _scheduleScrollStateUpdate();
@@ -195,7 +200,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   void _handleScroll() {
     if (!mounted) return;
     final shouldShow = _scrollController.hasClients &&
-        !_isNearBottom();
+        (!_isNearBottom() || !_followOutput);
     if (shouldShow == _showScrollToBottom) return;
     setState(() {
       _showScrollToBottom = shouldShow;
@@ -213,6 +218,8 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           request != _scrollRequest ||
+          !_followOutput ||
+          _userScrolling ||
           !_scrollController.hasClients) {
         return;
       }
@@ -224,10 +231,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   }
 
   void _scrollToBottom() {
+    _followOutput = true;
+    _userScrolling = false;
     final request = ++_scrollRequest;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           request != _scrollRequest ||
+          !_followOutput ||
+          _userScrolling ||
           !_scrollController.hasClients) {
         return;
       }
@@ -443,10 +454,20 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     final centerBlockCount = timeline.length - centerBlockIndex;
     final earlierVisibleBlockCount =
         centerBlockIndex - _hiddenMessageCount;
-    return NotificationListener<ScrollStartNotification>(
+    return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
-        if (notification.dragDetails != null) {
+        if (notification.depth != 0) return false;
+        if (notification is ScrollStartNotification &&
+            notification.dragDetails != null) {
+          _userScrolling = true;
+          _followOutput = false;
           _scrollRequest++;
+          _handleScroll();
+        } else if (notification is ScrollEndNotification && _userScrolling) {
+          _userScrolling = false;
+          // Resume only when the user actually returns to the bottom.
+          _followOutput = notification.metrics.extentAfter <= 1;
+          _handleScroll();
         }
         return false;
       },

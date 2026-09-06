@@ -672,7 +672,7 @@ void main() {
       );
     });
 
-    for (final terminalStatus in [TurnStatus.interrupted, TurnStatus.failed]) {
+    for (final terminalStatus in [TurnStatus.completed, TurnStatus.interrupted, TurnStatus.failed]) {
       test('terminal $terminalStatus survives a stale running snapshot', () {
         final running = TurnTask(
           id: 'turn-terminal',
@@ -710,6 +710,13 @@ void main() {
           ConversationDetail(summary: staleSummary, turns: [running]),
         );
 
+        detail = detail.apply(ConversationUpsertedEvent(
+          eventCursor: 'stale-summary', conversation: staleSummary,
+        ));
+        detail = detail.withSummary(staleSummary);
+        detail = detail.apply(TurnUpsertedEvent(
+          eventCursor: 'stale-running', turn: running,
+        ));
         expect(detail.activeTurn, isNull);
         expect(detail.turns.single.status, terminalStatus);
         expect(

@@ -748,6 +748,33 @@ void main() {
     session.dispose();
   });
 
+  test('accepts current turn completion behind metadata timestamp', () async {
+    final conversation = _routedConversation(
+      nativeId: 'terminal-thread', providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: _primaryRoute, workspaceRoot: '/repo', updatedAt: 1000,
+    );
+    final running = _turnFor(conversation, TurnStatus.running, 2000);
+    final client = _FakeClient([conversation.withTurn(running)]);
+    final session = DeviceSession(
+      device: _device('terminal-metadata'), clientFactory: () => client,
+    );
+    await session.connect();
+    client.emit(ConversationUpsertedEvent(
+      eventCursor: 'newer-metadata',
+      conversation: conversation.withTurn(_turnFor(conversation, TurnStatus.running, 4000)),
+    ));
+    client.emit(TurnUpsertedEvent(
+      eventCursor: 'completed',
+      turn: _turnFor(conversation, TurnStatus.completed, 3000),
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(session.conversations.single.status, ConversationStatus.idle);
+    expect(session.conversations.single.activeTurn, isNull);
+    expect(session.conversations.single.updatedAt,
+        DateTime.fromMillisecondsSinceEpoch(4000, isUtc: true));
+    session.dispose();
+  });
+
   test('turn events keep the conversation list running state live', () async {
     final conversation = _routedConversation(
       nativeId: 'live-thread',

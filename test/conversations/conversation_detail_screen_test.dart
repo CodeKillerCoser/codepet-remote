@@ -440,6 +440,53 @@ void main() {
     await client.close();
   });
 
+  testWidgets('stream updates do not interrupt a drag near the bottom', (tester) async {
+    final client = _DetailClient(committedMessages: _longHistory());
+    await _pumpDetail(tester, client);
+    await tester.pumpAndSettle();
+    final position = _detailScrollPosition(tester);
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('conversation-detail'))),
+    );
+    await gesture.moveBy(const Offset(0, 20));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, 60));
+    await tester.pump();
+    final offset = position.pixels;
+    expect(position.extentAfter, greaterThan(0));
+    expect(position.extentAfter, lessThan(160));
+    for (var index = 0; index < 3; index++) {
+      client.emit(TurnOutputDeltaEvent(
+        eventCursor: 'drag-$index', providerId: 'provider',
+        conversationId: 'conversation', turnId: 'drag-turn', itemId: 'drag-item',
+        contentId: 'drag-text', kind: 'text', delta: 'more output ',
+      ));
+      await tester.pump();
+      await tester.pump();
+      expect(position.pixels, closeTo(offset, 1));
+    }
+    await gesture.up();
+    await tester.pump(const Duration(seconds: 1));
+    expect(position.pixels, lessThanOrEqualTo(offset));
+    final releasedOffset = position.pixels;
+    client.emit(const TurnOutputDeltaEvent(
+      eventCursor: 'after-drag', providerId: 'provider',
+      conversationId: 'conversation', turnId: 'drag-turn', itemId: 'drag-item',
+      contentId: 'drag-text', kind: 'text', delta: 'after release',
+    ));
+    await tester.pump();
+    await tester.pump();
+    expect(position.pixels, closeTo(releasedOffset, 1));
+    expect(find.byKey(const Key('scroll-to-bottom')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('scroll-to-bottom')));
+    for (var frame = 0; frame < 5; frame++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('terminal turn preserves live output without fetching history', (tester) async {
     final client = _DetailClient();
     await _pumpDetail(tester, client);
@@ -458,7 +505,7 @@ void main() {
     await client.close();
   });
 
-  for (final terminalStatus in [TurnStatus.interrupted, TurnStatus.failed]) {
+  for (final terminalStatus in [TurnStatus.completed, TurnStatus.interrupted, TurnStatus.failed]) {
     testWidgets(
         '$terminalStatus clears a stale running turn and re-enables the composer',
         (tester) async {

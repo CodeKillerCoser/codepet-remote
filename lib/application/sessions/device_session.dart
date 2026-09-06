@@ -1271,30 +1271,14 @@ class DeviceSession extends ApplicationNotifier {
     );
     if (index == -1) return false;
     final current = conversations[index];
-    if (current.updatedAt.isAfter(turn.updatedAt)) return true;
-    final next = ConversationSummary(
-      id: current.id,
-      providerId: current.providerId,
-      title: current.title,
-      preview: current.preview,
-      status: switch (turn.status) {
-        TurnStatus.queued || TurnStatus.running => ConversationStatus.running,
-        TurnStatus.waitingApproval => ConversationStatus.waitingApproval,
-        TurnStatus.failed => ConversationStatus.error,
-        TurnStatus.completed || TurnStatus.interrupted => ConversationStatus.idle,
-      },
-      permissionLevel: current.permissionLevel,
-      model: current.model,
-      reasoningEffort: current.reasoningEffort,
-      workspaceRoot: current.workspaceRoot,
-      project: current.project,
-      createdAt: current.createdAt,
-      updatedAt: turn.updatedAt,
-      activeTurn: turn.status.isTerminal ? null : turn,
-      turnSendSelection: current.turnSendSelection,
-      resource: current.resource,
-      readState: current.readState,
-    );
+    // Conversation metadata and turn lifecycle timestamps are independent.
+    // A terminal update for the active turn must win even if metadata is newer.
+    final completesActiveTurn = turn.status.isTerminal &&
+        current.activeTurn?.id == turn.id;
+    if (current.updatedAt.isAfter(turn.updatedAt) && !completesActiveTurn) {
+      return true;
+    }
+    final next = current.withTurn(turn);
     conversations = sortRecentConversations([
       for (var itemIndex = 0; itemIndex < conversations.length; itemIndex++)
         if (itemIndex == index) next else conversations[itemIndex],

@@ -1305,12 +1305,23 @@ class ConversationDetail {
   ConversationDetail withSummary(ConversationSummary value) =>
       ConversationDetail(
         messageOrder: _orderedKeys,
-        summary: value,
+        summary: _reconcileSummary(value),
         committedMessages: committedMessages,
         liveOutputMessages: liveOutputMessages,
         turns: turns,
         lastEventCursor: lastEventCursor,
       );
+
+  ConversationSummary _reconcileSummary(ConversationSummary value) {
+    final active = value.activeTurn;
+    if (active == null) return value;
+    final known = _turnById(active.id);
+    if (known == null || !known.status.isTerminal ||
+        value.status == ConversationStatus.archived) {
+      return value;
+    }
+    return value.withTurn(_newerTurn(known, active));
+  }
 
   TurnTask? get activeTurn {
     final byId = <String, TurnTask>{};
@@ -1416,7 +1427,8 @@ class ConversationDetail {
       messageOrder: _orderedKeys,
         // Read state belongs to this client. Broadcast Provider metadata must
         // not clear it while the Host sends a separate activity event.
-        summary: summary.mergeRuntimeMetadata(event.conversation).withReadState(summary.readState),
+        summary: _reconcileSummary(summary.mergeRuntimeMetadata(event.conversation))
+            .withReadState(summary.readState),
         committedMessages: committedMessages,
         liveOutputMessages: liveOutputMessages,
         turns: turns,
@@ -1485,13 +1497,18 @@ class ConversationDetail {
     }
 
     if (event is TurnUpsertedEvent && event.turn.conversationId == summary.id) {
+      final known = _turnById(event.turn.id);
+      final turn = known == null ? event.turn : _newerTurn(known, event.turn);
+      final active = activeTurn;
+      final updatesSummary = active == null || active.id == turn.id ||
+          !active.updatedAt.isAfter(turn.updatedAt);
       return ConversationDetail(
       messageOrder: _orderedKeys,
-        summary: summary.withTurn(event.turn),
+        summary: updatesSummary ? summary.withTurn(turn) : summary,
         committedMessages: committedMessages,
         liveOutputMessages: [
           for (final message in liveOutputMessages)
-            if (message.turnId == event.turn.id && event.turn.status.isTerminal)
+            if (message.turnId == turn.id && turn.status.isTerminal)
               message.copyWith(isStreaming: false)
             else message,
         ],
