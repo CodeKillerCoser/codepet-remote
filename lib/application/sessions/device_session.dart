@@ -164,6 +164,41 @@ class DeviceSession extends ApplicationNotifier {
   GatewayHandshake? handshake;
   String? error;
   List<ConversationSummary> conversations = const [];
+  final Set<String> _supplementalStandaloneKeys = {};
+
+  bool isSupplementalStandalone(ConversationSummary conversation) =>
+      conversation.project == null &&
+      _supplementalStandaloneKeys.contains(conversationRoutingKey(conversation));
+
+  /// Merge discoveries without changing any list's pagination position.
+  /// The lease prevents late searches/queries from populating a new runtime.
+  void mergeDiscoveredConversations(
+    Iterable<ConversationSummary> incoming, {
+    required DeviceSessionRuntimeLease lease,
+  }) {
+    if (!ownsRuntimeLease(lease)) return;
+    final assignedKeys = conversations
+        .where((item) => item.project != null)
+        .map(conversationRoutingKey)
+        .toSet();
+    final standalone = incoming.where((item) =>
+        item.project == null &&
+        !assignedKeys.contains(conversationRoutingKey(item))).toList();
+    if (standalone.isEmpty) return;
+    _markStandaloneDiscoveries(standalone);
+    conversations = mergeRoutedConversations(conversations, standalone);
+    _notifyListenersImmediately();
+  }
+
+  void _markStandaloneDiscoveries(Iterable<ConversationSummary> incoming) {
+    final existing = conversations.map(conversationRoutingKey).toSet();
+    for (final item in incoming) {
+      final key = conversationRoutingKey(item);
+      if (item.project == null && !existing.contains(key)) {
+        _supplementalStandaloneKeys.add(key);
+      }
+    }
+  }
   List<GatewayProject> projects = const [];
 
   bool get isReconnecting =>
@@ -686,6 +721,7 @@ class DeviceSession extends ApplicationNotifier {
         limit: conversationPageSize,
       );
       if (!_ownsRuntime(generation, client)) return;
+      _markStandaloneDiscoveries(page.conversations);
       conversations = mergeRoutedConversations(
         conversations,
         page.conversations,
@@ -1031,6 +1067,7 @@ class DeviceSession extends ApplicationNotifier {
   void _resetConversationPagination() {
     _initialConversationLoads.clear();
     conversations = const [];
+    _supplementalStandaloneKeys.clear();
     projects = const [];
     _conversationCursors.clear();
     _loadedConversationScopes.clear();
@@ -1137,6 +1174,7 @@ class DeviceSession extends ApplicationNotifier {
       return;
     }
     if (event is ConversationUpsertedEvent) {
+      _markStandaloneDiscoveries([event.conversation]);
       _upsertEventConversation(event.conversation);
       _notifyListenersImmediately();
       return;
@@ -1377,11 +1415,13 @@ class DeviceSession extends ApplicationNotifier {
               limit: conversationPageSize,
             );
             if (!_ownsRuntime(generation, client)) return;
+            _markStandaloneDiscoveries(page.conversations);
             conversations = mergeRoutedConversations(
               conversations,
               page.conversations,
             );
-            _conversationCursors[scope] = page.nextCursor;
+            // A refresh is supplemental; only pagination advances this cursor.
+            _conversationCursors.putIfAbsent(scope, () => page.nextCursor);
             _loadedConversationScopes.add(scope);
           }
           for (final pendingTurn in batch.values) {

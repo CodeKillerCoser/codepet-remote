@@ -231,7 +231,9 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     const SizedBox(height: 28),
                   _SectionTitle(
                     key: Key('recent-section-${session.device.deviceId}'),
-                    title: '会话',
+                    title: session.selectedProviderSupportsProjects
+                        ? '无项目对话'
+                        : '会话',
                     countLabel: session.selectedProviderConversationCountLabel,
                     expanded: viewState.recentExpanded,
                     onTap: () => setState(() {
@@ -1054,6 +1056,7 @@ class _ConversationRow extends StatelessWidget {
         child: _ConversationTile(
           key: Key('conversation-${conversation.id}'),
           conversation: conversation,
+          supplementalStandalone: session.isSupplementalStandalone(conversation),
           onTap: () => onTap(conversation),
         ),
       );
@@ -1064,10 +1067,12 @@ class _ConversationTile extends StatelessWidget {
     super.key,
     required this.conversation,
     required this.onTap,
+    this.supplementalStandalone = false,
   });
 
   final ConversationSummary conversation;
   final VoidCallback onTap;
+  final bool supplementalStandalone;
 
   @override
   Widget build(BuildContext context) => InkWell(
@@ -1090,6 +1095,15 @@ class _ConversationTile extends StatelessWidget {
                   running: conversation.status == ConversationStatus.running,
                   unread: conversation.readState.unread,
                 ),
+                if (supplementalStandalone)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 6),
+                    child: Tooltip(
+                      message: '补充发现的无项目对话',
+                      child: Icon(Icons.playlist_add, size: 16,
+                        semanticLabel: '补充发现的无项目对话'),
+                    ),
+                  ),
               ]),
               const SizedBox(height: 4),
               if (conversation.preview != null)
