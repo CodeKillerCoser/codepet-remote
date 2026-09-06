@@ -51,6 +51,7 @@ dependencies:
   share_plus: ^13.3.0
   shared_preferences: ^2.5.5
   sonner_toast: ^2.0.2
+  url_launcher: ^6.3.2
 
 dependency_overrides:
   codepet_agent_sdk:

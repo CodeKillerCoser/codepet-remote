@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../application/conversations/conversation_timeline.dart';
 import '../../../core/domain/models.dart';
@@ -684,6 +685,30 @@ class _MarkdownContentState extends State<_MarkdownContent> {
     return SelectionArea(child: _cachedMarkdown!);
   }
 
+  Future<void> _openLink(String? href) async {
+    if (href == null || href.trim().isEmpty) return;
+    final uri = Uri.tryParse(href.trim());
+    if (uri == null ||
+        !const {'http', 'https', 'mailto', 'tel', 'sms'}.contains(uri.scheme) ||
+        ((uri.scheme == 'http' || uri.scheme == 'https') && uri.host.isEmpty)) {
+      AppToast.show(
+        type: AppToastType.warning,
+        content: const TextSpan(text: '此链接无法在当前设备打开'),
+      );
+      return;
+    }
+    try {
+      if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
+    } on PlatformException {
+      // The platform may throw instead of returning false when no app handles it.
+    }
+    if (!mounted) return;
+    AppToast.show(
+      type: AppToastType.error,
+      content: const TextSpan(text: '无法打开链接，请复制链接后重试'),
+    );
+  }
+
   void _cacheMarkdown() {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
@@ -692,6 +717,7 @@ class _MarkdownContentState extends State<_MarkdownContent> {
       data: widget.data,
       fitContent: false,
       softLineBreak: true,
+      onTapLink: (text, href, title) => _openLink(href),
       imageBuilder: (uri, title, alt) => Tooltip(
         message: uri.toString(),
         child: Text(
