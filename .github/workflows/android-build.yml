@@ -45,7 +45,27 @@ jobs:
       - name: Build APK
         env:
           BUILD_MODE: ${{ inputs.build_mode }}
-        run: flutter build apk --"$BUILD_MODE"
+          CODEPET_RELEASE_KEYSTORE_BASE64: ${{ inputs.build_mode == 'release' && secrets.CODEPET_RELEASE_KEYSTORE_BASE64 || '' }}
+          CODEPET_RELEASE_STORE_PASSWORD: ${{ inputs.build_mode == 'release' && secrets.CODEPET_RELEASE_STORE_PASSWORD || '' }}
+          CODEPET_RELEASE_KEY_ALIAS: ${{ inputs.build_mode == 'release' && secrets.CODEPET_RELEASE_KEY_ALIAS || '' }}
+          CODEPET_RELEASE_KEY_PASSWORD: ${{ inputs.build_mode == 'release' && secrets.CODEPET_RELEASE_KEY_PASSWORD || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$BUILD_MODE" == release ]]; then
+            for name in CODEPET_RELEASE_KEYSTORE_BASE64 CODEPET_RELEASE_STORE_PASSWORD CODEPET_RELEASE_KEY_ALIAS CODEPET_RELEASE_KEY_PASSWORD; do
+              if [[ -z "${!name}" ]]; then
+                echo "::error::Missing repository secret: $name"
+                exit 1
+              fi
+            done
+            umask 077
+            export CODEPET_RELEASE_STORE_FILE="$RUNNER_TEMP/codepet-release.jks"
+            trap 'rm -f "$CODEPET_RELEASE_STORE_FILE"' EXIT
+            printf '%s' "$CODEPET_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$CODEPET_RELEASE_STORE_FILE"
+            unset CODEPET_RELEASE_KEYSTORE_BASE64
+          fi
+          flutter build apk --"$BUILD_MODE"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

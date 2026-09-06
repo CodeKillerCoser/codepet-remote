@@ -61,9 +61,19 @@ debug 构建。
 4. 构建成功后，在本次运行页面的 **Artifacts** 下载 `codepet-remote-…`，解压获得可安装的 APK。产物保留 14 天。
 
 流水线使用所选分支的代码和 `pubspec.yaml` 版本号，生成包含各支持架构的通用 APK。
-当前手动流水线不注入正式签名密钥，`release` 沿用项目的 debug keystore 回退，
-适合安装测试；不同运行生成的 debug 签名可能不同，覆盖安装失败时需要卸载旧版（会清除本地数据）。
-应用商店发布应先接入下述正式签名配置。
+手动流水线的 `release` 使用仓库 Actions Secrets 中的固定签名；缺少配置时直接失败，
+不会回退到临时 debug 签名。与本地使用同一密钥签名的旧版可覆盖安装（版本号不得降低）。
+`debug` 仍使用临时 debug 签名，不用于覆盖正式签名版本。
+
+在 **Settings → Secrets and variables → Actions** 配置以下 Repository secrets：
+
+- `CODEPET_RELEASE_KEYSTORE_BASE64`：正式 `.jks` 文件的 Base64 内容。
+- `CODEPET_RELEASE_STORE_PASSWORD`：keystore 密码。
+- `CODEPET_RELEASE_KEY_ALIAS`：签名密钥别名。
+- `CODEPET_RELEASE_KEY_PASSWORD`：签名密钥密码。
+
+流水线仅在 release 构建步骤注入密钥，将 keystore 还原至 runner 临时目录，构建结束后删除。
+密钥和密码不得提交到仓库。
 
 ## Android 发布签名
 
