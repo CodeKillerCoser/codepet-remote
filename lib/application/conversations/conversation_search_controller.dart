@@ -185,10 +185,6 @@ class ConversationSearchController extends ApplicationNotifier {
       _cursors
         ..clear()
         ..addAll(cursors);
-      _session.mergeDiscoveredConversations(
-        pages.expand((page) => page.conversations),
-        lease: lease,
-      );
       _session.logger.fine(
         'Conversation search completed for device '
         '${_session.device.deviceId} results=${conversations.length} '
@@ -268,10 +264,6 @@ class ConversationSearchController extends ApplicationNotifier {
       _cursors
         ..clear()
         ..addAll(cursors);
-      _session.mergeDiscoveredConversations(
-        pages.expand((page) => page.conversations),
-        lease: lease,
-      );
       _visibleCount += pageSize;
       _session.logger.fine(
         'Conversation search page loaded for device '

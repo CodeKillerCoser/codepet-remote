@@ -91,7 +91,7 @@ void main() {
     );
     expect(find.text('Gateway 协议契约核对'), findsOneWidget);
     expect(find.text('实现 Remote 会话流'), findsNothing);
-    expect(find.text('无项目对话'), findsOneWidget);
+    expect(find.text('会话'), findsOneWidget);
     expect(find.text('最近'), findsNothing);
 
     await tester.tap(find.byKey(Key('project-${project.key}')));

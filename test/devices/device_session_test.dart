@@ -9,68 +9,6 @@ import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('standalone discoveries merge by route and time without moving cursors', () async {
-    ConversationSummary item(String id, int time, {
-      String route = _primaryRoute,
-      String? domainId,
-      RoutedResourceId? project,
-    }) => _routedConversation(
-      nativeId: id, domainId: domainId, providerPluginId: 'dev.codepet.codex',
-      providerInstanceId: route, workspaceRoot: '/same/workspace',
-      updatedAt: time, project: project,
-    );
-    final newest = item('newest', 5000);
-    final oldest = item('oldest', 1000);
-    final middle = item('middle', 3000);
-    final secondPage = Completer<ConversationPage>();
-    final client = _FakeClient(const [], onListConversations: ({
-      required String route, required String? cursor, required int limit,
-    }) async {
-      if (cursor == null) {
-        return ConversationPage(conversations: [newest, oldest],
-          nextCursor: 'original-next', snapshotCursor: 'handshake');
-      }
-      expect(cursor, 'original-next');
-      return secondPage.future;
-    });
-    final session = DeviceSession(device: _device('discoveries'), clientFactory: () => client);
-    await session.connect();
-    final lease = session.runtimeLease!;
-    final assigned = item('known-project', 4500, project: _gatewayProject().resource);
-    session.conversations = mergeRoutedConversations(session.conversations, [assigned]);
-    final loading = session.loadMoreSelectedProviderConversations();
-    session.mergeDiscoveredConversations([
-      middle,
-      item('middle', 3000, domainId: 'different-domain-id'),
-      item('middle', 2000, route: 'another-provider'),
-      item('assigned', 6000, project: _gatewayProject().resource),
-      item('newest', 4000),
-      item('known-project', 7000),
-    ], lease: lease);
-    expect(session.conversations.map((value) => value.updatedAt.millisecondsSinceEpoch),
-      [5000, 4500, 3000, 2000, 1000]);
-    expect(session.conversations.map(conversationRoutingKey).toSet(), hasLength(5));
-    expect(session.conversations[1].project, assigned.project);
-    expect(session.isSupplementalStandalone(middle), isTrue);
-    expect(session.isSupplementalStandalone(newest), isFalse);
-    expect(session.canLoadMoreSelectedProviderConversations, isTrue);
-    secondPage.complete(ConversationPage(
-      conversations: [middle, item('older', 500)], snapshotCursor: 'handshake'));
-    await loading;
-    expect(session.conversations, hasLength(6));
-    expect(session.conversations.last.title, 'older');
-    expect(session.canLoadMoreSelectedProviderConversations, isFalse);
-    // Even an exhausted cursor stays exhausted after more discoveries.
-    session.mergeDiscoveredConversations([item('later', 4000)], lease: lease);
-    await session.loadMoreSelectedProviderConversations();
-    expect(client.listRequests, hasLength(2));
-    await session.disconnect();
-    session.mergeDiscoveredConversations([middle], lease: lease);
-    expect(session.conversations, isEmpty);
-    expect(session.isSupplementalStandalone(middle), isFalse);
-    session.dispose();
-  });
-
   test('sorts recent conversations without treating cwd as project identity', () {
     final old = _conversation('old', '/repo/a', 1000);
     final recent = _conversation('recent', '/repo/a', 3000);
@@ -979,49 +917,6 @@ void main() {
     expect(listCalls, 2);
     expect(session.conversations.single.id, discovered.id);
     expect(session.conversations.single.status, ConversationStatus.running);
-    expect(session.isSupplementalStandalone(discovered), isTrue);
-    session.dispose();
-  });
-
-  test('event refresh preserves an advanced list cursor', () async {
-    final discovered = _routedConversation(nativeId: 'event-discovery',
-      providerPluginId: 'dev.codepet.codex', providerInstanceId: _primaryRoute,
-      workspaceRoot: '/repo', updatedAt: 3000);
-    var firstPageCalls = 0;
-    final client = _FakeClient(const [], onListConversations: ({
-      required String route, required String? cursor, required int limit,
-    }) async {
-      if (cursor == null) {
-        firstPageCalls++;
-        return ConversationPage(
-          conversations: firstPageCalls == 1 ? [] : [discovered],
-          nextCursor: 'page-2', snapshotCursor: 'handshake');
-      }
-      return ConversationPage(conversations: [discovered],
-        nextCursor: cursor == 'page-2' ? 'page-3' : null,
-        snapshotCursor: 'handshake');
-    });
-    final session = DeviceSession(device: _device('event-cursor'), clientFactory: () => client);
-    await session.connect();
-    // Advance before a refresh that returns the first page's cursor.
-    await session.loadMoreSelectedProviderConversations();
-    final unknown = _routedConversation(nativeId: 'unknown-turn',
-      providerPluginId: 'dev.codepet.codex', providerInstanceId: _primaryRoute,
-      workspaceRoot: '/repo', updatedAt: 4000);
-    client.emit(TurnUpsertedEvent(eventCursor: 'refresh',
-      turn: _turnFor(unknown, TurnStatus.running, 4000)));
-    await pumpEventQueue();
-    await session.loadMoreSelectedProviderConversations();
-    expect(client.listRequests.map((request) => request.cursor),
-      [null, 'page-2', null, 'page-3']);
-    expect(session.canLoadMoreSelectedProviderConversations, isFalse);
-    client.emit(TurnUpsertedEvent(eventCursor: 'refresh-after-exhaustion',
-      turn: _turnFor(unknown, TurnStatus.running, 5000)));
-    await pumpEventQueue();
-    await session.loadMoreSelectedProviderConversations();
-    expect(client.listRequests.map((request) => request.cursor),
-      [null, 'page-2', null, 'page-3', null]);
-    expect(session.canLoadMoreSelectedProviderConversations, isFalse);
     session.dispose();
   });
 

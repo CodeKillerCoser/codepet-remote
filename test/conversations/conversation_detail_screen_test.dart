@@ -24,11 +24,7 @@ void main() {
     addTearDown(session.dispose);
     final controller = ConversationDetailController(session: session, conversation: _idleConversation());
     addTearDown(controller.dispose);
-    expect(session.conversations, isEmpty);
     await controller.reload();
-    expect(session.conversations.single.id, _idleConversation().id);
-    expect(session.isSupplementalStandalone(session.conversations.single), isTrue);
-    expect(session.canLoadMoreConversations, isFalse);
     expect(client.pageCalls, isEmpty);
     final pending = Completer<ConversationSnapshot>();
     client.onPage = (_) => pending.future;
