@@ -139,6 +139,7 @@ class DeviceSession extends ApplicationNotifier {
   final Set<_ConversationListScope> _loadingProjectConversationScopes = {};
   final Map<String, String?> _projectCursors = {};
   final Set<String> _projectRefreshes = {};
+  final Set<(int, String, int?, String)> _providerDescriptionLoads = {};
   final Set<String> _pendingProjectRefreshes = {};
   final Set<String> _conversationRefreshes = {};
   final Map<String, Map<String, TurnTask>>
@@ -402,7 +403,7 @@ class DeviceSession extends ApplicationNotifier {
       if (!_ownsRuntime(generation, client)) return;
       final providers = await Future.wait([
         for (final provider in connectedHandshake.providers)
-          provider.capabilitiesLoaded
+          !provider.isAvailable || provider.capabilitiesLoaded
               ? Future.value(provider)
               : client.describeProvider(provider.id),
       ]);
@@ -1037,6 +1038,7 @@ class DeviceSession extends ApplicationNotifier {
     _loadingProjectConversationScopes.clear();
     _projectCursors.clear();
     _projectRefreshes.clear();
+    _providerDescriptionLoads.clear();
     _pendingProjectRefreshes.clear();
     _conversationRefreshes.clear();
     _pendingConversationRefreshTurns.clear();
@@ -1093,7 +1095,7 @@ class DeviceSession extends ApplicationNotifier {
         handshake = currentHandshake.withProviders(providers);
         _ensureProviderLists(provider);
         final client = _client;
-        if (client != null) unawaited(_refreshProviderDescription(providerId: provider.id, revision: provider.capabilities.revision, generation: _runtimeGeneration, client: client));
+        if (client != null && provider.isAvailable && !provider.capabilitiesLoaded) unawaited(_refreshProviderDescription(providerId: provider.id, revision: provider.capabilities.revision, generation: _runtimeGeneration, client: client));
         _notifyListenersImmediately();
         return;
       }
@@ -1104,13 +1106,15 @@ class DeviceSession extends ApplicationNotifier {
       if (revisionChanged || previous.isAvailable != provider.isAvailable) {
         messageCache.invalidateProvider(provider.id);
       }
-      providers[index] = !revisionChanged && previous.capabilitiesLoaded
+      // Starting snapshots are provisional even when their revision matches Ready.
+      providers[index] = !revisionChanged && previous.status == ProviderStatus.ready
+          && provider.status == ProviderStatus.ready && previous.capabilitiesLoaded
           ? provider.withCapabilities(previous.capabilities)
           : provider;
       handshake = currentHandshake.withProviders(providers);
       _notifyListenersImmediately();
       _ensureProviderLists(providers[index]);
-      if (revisionChanged || !providers[index].capabilitiesLoaded) {
+      if (providers[index].isAvailable && !providers[index].capabilitiesLoaded) {
         final client = _client;
         if (client != null) {
           unawaited(_refreshProviderDescription(
@@ -1187,6 +1191,8 @@ class DeviceSession extends ApplicationNotifier {
     required int generation,
     required GatewayClient client,
   }) async {
+    final key = (generation, providerId, _providerForId(providerId)?.generation, revision);
+    if (!_providerDescriptionLoads.add(key)) return;
     try {
       final described = await client.describeProvider(providerId);
       if (!_ownsRuntime(generation, client) ||
@@ -1201,7 +1207,10 @@ class DeviceSession extends ApplicationNotifier {
           provider.id == providerId &&
           provider.capabilities.revision == revision);
       if (index == -1) return;
-      if (providers[index].generation != described.generation) return;
+      if (!providers[index].isAvailable || !described.isAvailable ||
+          providers[index].generation != described.generation) {
+        return;
+      }
       providers[index] = described;
       handshake = currentHandshake.withProviders(providers);
       _notifyListenersImmediately();
@@ -1216,6 +1225,8 @@ class DeviceSession extends ApplicationNotifier {
         error,
         stackTrace,
       );
+    } finally {
+      _providerDescriptionLoads.remove(key);
     }
   }
 

@@ -73,7 +73,7 @@ void main() {
       provider: GatewayProvider(
         id: _primaryRoute,
         displayName: 'Codex Updated',
-        status: ProviderStatus.connecting,
+        status: ProviderStatus.ready,
         runtimeVersion: '0.152.0',
         capabilities: GatewayCapabilities(
           revision: 'test-2',
@@ -150,6 +150,47 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(client.projectListCalls, 1);
     expect(session.projects.single.name, 'Project One');
+    session.dispose();
+  });
+
+  test('Starting defers description and lists until one Ready snapshot with the same revision', () async {
+    final description = Completer<GatewayProvider>();
+    const starting = GatewayProvider(id: _primaryRoute, displayName: 'Codex',
+      status: ProviderStatus.connecting, connectionStatus: 'online',
+      capabilitiesLoaded: false,
+      capabilities: GatewayCapabilities(revision: 'projects-1', methods: []));
+    const ready = GatewayProvider(id: _primaryRoute, displayName: 'Codex',
+      status: ProviderStatus.ready, connectionStatus: 'online',
+      capabilitiesLoaded: false,
+      capabilities: GatewayCapabilities(revision: 'projects-1', methods: []));
+    final client = _ProjectFakeClient(projects: [_gatewayProject()], conversations: [],
+      providers: [starting], onDescribeProvider: (_) => description.future);
+    final session = DeviceSession(device: _device('startup-barrier'), clientFactory: () => client);
+    await session.connect();
+    expect(client.describeProviderIds, isEmpty);
+    expect(client.projectListCalls, 0);
+    expect(client.listRequests, isEmpty);
+    client.snapshots.add([starting]);
+    await Future<void>.delayed(Duration.zero);
+    expect(client.describeProviderIds, isEmpty);
+    client.snapshots.add([ready]);
+    await Future<void>.delayed(Duration.zero);
+    expect(client.describeProviderIds, [_primaryRoute]);
+    expect(client.projectListCalls, 0);
+    expect(client.listRequests, isEmpty);
+    client.snapshots.add([ready]);
+    await Future<void>.delayed(Duration.zero);
+    expect(client.describeProviderIds, [_primaryRoute]);
+    description.complete(_projectProvider);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(client.projectListCalls, 1);
+    expect(client.listRequests, hasLength(1));
+    expect(session.projects.single.name, 'Project One');
+    client.snapshots.add([ready]);
+    await Future<void>.delayed(Duration.zero);
+    expect(client.describeProviderIds, [_primaryRoute]);
+    expect(client.projectListCalls, 1);
+    expect(client.listRequests, hasLength(1));
     session.dispose();
   });
 
@@ -1597,8 +1638,9 @@ class _ProjectFakeClient extends _FakeClient implements ProjectGatewayClient {
     required List<GatewayProject> projects,
     required List<ConversationSummary> conversations,
     List<GatewayProvider> providers = const [_projectProvider],
+    Future<GatewayProvider> Function(String providerId)? onDescribeProvider,
   })  : projects = List.of(projects),
-        super(conversations, providers: providers);
+        super(conversations, providers: providers, onDescribeProvider: onDescribeProvider);
 
   final List<GatewayProject> projects;
   int projectListCalls = 0;
