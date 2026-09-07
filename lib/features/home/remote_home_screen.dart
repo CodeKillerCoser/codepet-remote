@@ -1,7 +1,5 @@
 import 'dart:async';
 
-import 'recent_conversation_feed.dart';
-
 import 'package:flutter/material.dart';
 
 import '../../application/sessions/device_session.dart';
@@ -13,6 +11,7 @@ import '../connection/device_detail_screen.dart';
 import '../conversations/conversation_detail_screen.dart';
 import '../conversations/conversation_search_screen.dart';
 import '../conversations/widgets/conversation_list_item.dart';
+import 'recent_conversation_feed.dart';
 export '../conversations/widgets/conversation_list_item.dart' show relativeConversationTime;
 
 const int _projectPageSize = 6;
@@ -43,6 +42,7 @@ class RemoteHomeScreen extends StatefulWidget {
 class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
   final Set<DeviceSession> _listenedSessions = {};
   final Map<String, _DeviceHomeViewState> _deviceViewStates = {};
+  final _emptyViewState = _DeviceHomeViewState();
   final Set<String> _scheduledProjectConversationCounts = {};
 
   @override
@@ -102,6 +102,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     for (final state in _deviceViewStates.values) {
       state.scrollController.dispose();
     }
+    _emptyViewState.scrollController.dispose();
     super.dispose();
   }
 
@@ -121,7 +122,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
         ? const <GatewayProject>[]
         : session.selectedProviderProjects;
     final viewState = session == null
-        ? _DeviceHomeViewState()
+        ? _emptyViewState
         : _deviceViewStates.putIfAbsent(
             '${session.device.deviceId}\u0000${session.selectedProviderId ?? 'no-provider'}',
             _DeviceHomeViewState.new,
@@ -235,7 +236,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                       ),
                       if (viewState.recentExpanded) ...[
                         const SizedBox(height: 10),
-                                                RecentConversationFeed(
+                        RecentConversationFeed(
                           key: ValueKey(viewState),
                           controller: session.selectedProviderRecent,
                           scrollController: viewState.scrollController,

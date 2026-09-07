@@ -1,10 +1,26 @@
 import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
+import 'package:codepet_remote/application/ports/recent_conversation_gateway.dart';
 import 'package:codepet_remote/core/domain/models.dart';
 import 'package:codepet_remote/gateway/generated_gateway_mapper.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   const mapper = GeneratedGatewayMapper();
+
+  test('recent invalidation keeps its independent revision and event cursor', () {
+    final envelope = sdk.ProtocolEventEnvelope.fromJson({
+      'jsonrpc': '2.0', 'method': 'conversation.recentChanged',
+      'params': {'eventCursor': 'stream-fence-9',
+        'payload': {'providerId': 'test', 'revision': 'recent-revision-2'}},
+    });
+    final event = mapper.event(envelope, expectedDeviceId: 'device',
+      expectedProviderRouteKeys: {'test'}) as RecentConversationsChangedEvent;
+    expect(event.providerId, 'test');
+    expect(event.revision, 'recent-revision-2');
+    expect(event.eventCursor, 'stream-fence-9');
+    expect(() => mapper.event(envelope, expectedDeviceId: 'device',
+      expectedProviderRouteKeys: {'other'}), throwsFormatException);
+  });
 
   test('maps every canonical conversation item variant', () {
     final items = <Map<String, Object?>>[

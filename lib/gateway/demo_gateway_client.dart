@@ -134,6 +134,16 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient, RecentCo
           ),
         ]
       : [
+    if (profileId == 'recent')
+      for (var index = 0; index < 125; index++)
+        ConversationSummary(
+          id: 'demo-old-active-$index', providerId: _providerId,
+          title: '旧活动会话 $index', status: ConversationStatus.waitingUserInput,
+          permissionLevel: PermissionLevel.readOnly,
+          createdAt: _now.subtract(const Duration(days: 90)),
+          updatedAt: _now.subtract(Duration(days: 60, minutes: index)),
+          resource: _conversationResource('demo-old-active-$index'),
+        ),
     ConversationSummary(
       id: 'demo-running',
       providerId: 'codex-demo',
@@ -208,18 +218,22 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient, RecentCo
       throw const FormatException('Unknown demo Provider providerId');
     }
     await Future<void>.delayed(const Duration(milliseconds: 180));
-    final conversations = _conversations
+    final matching = _conversations
         .where((conversation) => switch (projectFilter) {
               AllConversationFilter() => true,
               StandaloneConversationFilter() => conversation.project == null,
               ProjectConversationFilter(:final project) =>
                 conversation.project == project,
             })
-        .take(limit)
         .toList(growable: false);
+    final offset = cursor == null ? 0 : int.tryParse(cursor) ?? -1;
+    if (offset < 0 || offset > matching.length) throw const FormatException('Invalid demo list cursor');
+    final conversations = matching.skip(offset).take(limit).toList(growable: false);
+    final end = offset + conversations.length;
     return ConversationPage(
       conversations: conversations,
       snapshotCursor: _cursor,
+      nextCursor: end < matching.length ? '$end' : null,
     );
   }
 

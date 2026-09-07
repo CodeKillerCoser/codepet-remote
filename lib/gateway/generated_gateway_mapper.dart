@@ -1,5 +1,7 @@
 import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 
+import '../application/ports/recent_conversation_gateway.dart';
+
 import '../core/domain/models.dart';
 
 typedef _ItemParts = ({
@@ -535,6 +537,16 @@ final class GeneratedGatewayMapper {
   }) {
     final cursor = envelope.eventCursor;
     switch (envelope.event) {
+      case sdk.ProtocolEventName.conversationRecentChanged:
+        final payload = envelope.payload as sdk.ConversationRecentChangedEvent;
+        if (!expectedProviderRouteKeys.contains(payload.providerId)) {
+          throw const FormatException('Recent event providerId does not belong to the connected Host');
+        }
+        return RecentConversationsChangedEvent(
+          eventCursor: cursor,
+          providerId: payload.providerId,
+          revision: payload.revision,
+        );
       case sdk.ProtocolEventName.projectChanged:
         final payload = envelope.payload as sdk.ProjectChangedEvent;
         _requireResourceRoute(

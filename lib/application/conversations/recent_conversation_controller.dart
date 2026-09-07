@@ -80,6 +80,7 @@ class RecentConversationController extends ApplicationNotifier {
     final generation = ++_requestGeneration;
     final restoreCount = conversations.length;
     _nextCursor = null;
+    loaded = false;
     loading = true;
     refreshing = true;
     error = null;
@@ -89,12 +90,16 @@ class RecentConversationController extends ApplicationNotifier {
     if (previousWindow != null) unawaited(previousWindow.close());
     notifyApplicationListeners();
     try {
+      final baselineCursor = window.startCursor;
+      if (baselineCursor == null) {
+        throw const GatewayCursorGapException('最近列表缺少事件订阅起点');
+      }
       final gateway = client as RecentConversationGateway;
       var page = await gateway.recentConversations(providerId: providerId, limit: pageSize);
       if (!_owns(generation, client)) return;
       final snapshotRevision = page.revision;
       window.install(
-        baselineCursor: window.startCursor ?? page.snapshotCursor,
+        baselineCursor: baselineCursor,
         snapshotCursor: page.snapshotCursor,
         onEvent: (incoming) {
           if (!_owns(generation, client)) return;

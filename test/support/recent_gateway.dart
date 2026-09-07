@@ -26,10 +26,13 @@ RecentConversationPage recentPage(List<String> ids, {
   nextCursor: nextCursor, snapshotCursor: snapshotCursor,
 );
 
-class RecentGatewayFake implements GatewayClient, RecentConversationGateway {
+class RecentGatewayFake implements GatewayClient, RecentConversationGateway, ProjectGatewayClient {
+  RecentGatewayFake({this.withProjects = false});
+  final bool withProjects;
   final stream = StreamController<GatewayEvent>.broadcast(sync: true);
   final requests = <(String?, Completer<RecentConversationPage>)>[];
   final listFilters = <ConversationProjectFilter>[];
+  final listCursors = <String?>[];
   String cursor = 'e0';
 
   @override Stream<GatewayEvent> get events => stream.stream;
@@ -50,18 +53,37 @@ class RecentGatewayFake implements GatewayClient, RecentConversationGateway {
     ));
   }
 
-  @override Future<GatewayHandshake> connect() async => const GatewayHandshake(
-    protocolVersion: 1, providers: [recentProvider], eventCursor: 'e0',
-    deviceDescriptor: DeviceDescriptor(deviceName: 'Test', operatingSystem: 'Test', systemVersion: '1'),
+  @override Future<GatewayHandshake> connect() async => GatewayHandshake(
+    protocolVersion: 1, providers: [withProjects ? const GatewayProvider(
+      id: 'test', displayName: 'Test', status: ProviderStatus.ready,
+      capabilities: GatewayCapabilities(revision: 'project-capabilities',
+        methods: ['conversation.list', 'conversation.recent', 'project.list']),
+    ) : recentProvider], eventCursor: 'e0',
+    deviceDescriptor: const DeviceDescriptor(deviceName: 'Test', operatingSystem: 'Test', systemVersion: '1'),
   );
   @override Future<ConversationPage> listConversations({
     required String providerId, required ConversationProjectFilter projectFilter,
     String? cursor, int limit = 50,
   }) async {
     listFilters.add(projectFilter);
+    listCursors.add(cursor);
+    if (projectFilter case ProjectConversationFilter(:final project)) {
+      return ConversationPage(conversations: [ConversationSummary(
+        id: 'old-project', providerId: 'test', title: 'old-project',
+        status: ConversationStatus.idle, permissionLevel: PermissionLevel.readOnly,
+        createdAt: DateTime.utc(2020), updatedAt: DateTime.utc(2020), project: project,
+      )], snapshotCursor: this.cursor, nextCursor: cursor == null ? 'project-next' : null);
+    }
     return ConversationPage(conversations: [recentItem('old-chat')],
       snapshotCursor: this.cursor, nextCursor: cursor == null ? 'chat-next' : null);
   }
+  @override Future<ProjectPage> listProjects({required String providerId, String? cursor, int limit = 50}) async => ProjectPage(
+    projects: [GatewayProject(
+      resource: const RoutedResourceId(providerId: 'test', nativeResourceId: 'project'),
+      name: 'Project', roots: const [], metadata: const {}, position: 0,
+      createdAt: DateTime.utc(2020), updatedAt: DateTime.utc(2020),
+    )], snapshotCursor: this.cursor,
+  );
   @override Future<void> close() => stream.close();
   @override dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

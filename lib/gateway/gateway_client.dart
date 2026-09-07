@@ -6,6 +6,7 @@ import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 import '../core/domain/models.dart';
 import '../application/errors/application_failures.dart';
 import '../application/ports/gateway_client.dart';
+import '../application/ports/recent_conversation_gateway.dart';
 import '../application/ports/trace_recorder.dart';
 import '../application/sync/gateway_event_window.dart';
 import '../diagnostics/app_log.dart';
@@ -24,6 +25,7 @@ final class ProtocolGatewayClient
         ProviderSnapshotGatewayClient,
         ConversationReadGatewayClient,
         ConversationControlGatewayClient,
+        RecentConversationGateway,
         ProjectGatewayClient {
   ProtocolGatewayClient({
     required this.transport,
@@ -306,6 +308,36 @@ final class ProtocolGatewayClient
     );
     _providersById[providerId] = provider;
     return provider;
+  }
+
+  @override
+  Future<RecentConversationPage> recentConversations({
+    required String providerId,
+    String? cursor,
+    int limit = 20,
+  }) async {
+    await _requireProviderCapability(
+      providerId, method: 'conversation.recent', cursor: cursor, limit: limit,
+    );
+    final response = await _call(() => _protocol.conversationRecent(
+      sdk.ConversationRecentRequest(providerId: providerId, cursor: cursor, limit: limit),
+    ));
+    if (response.conversations.any((conversation) => conversation.readState == null)) {
+      throw const FormatException('conversation.recent omitted authoritative readState');
+    }
+    final page = _conversationPage(
+      conversations: response.conversations,
+      nextCursor: response.pageInfo.nextCursor,
+      snapshotCursor: response.snapshotCursor,
+      providerId: providerId,
+      method: 'conversation.recent',
+    );
+    return RecentConversationPage(
+      conversations: page.conversations,
+      nextCursor: page.nextCursor,
+      revision: response.revision,
+      snapshotCursor: page.snapshotCursor,
+    );
   }
 
   @override

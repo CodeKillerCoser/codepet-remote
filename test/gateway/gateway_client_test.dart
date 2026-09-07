@@ -15,6 +15,79 @@ import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('recent uses generated v1 request and preserves Host order and read state', () async {
+    final description = _providerDescriptionJson();
+    (description['capabilities']['methods'] as List).add('conversation.recent');
+    final first = {..._conversationJson(), 'title': 'Host first',
+      'readState': {'unread': true, 'activityVersion': 'observed-old'}};
+    final second = {..._conversationJson(),
+      'resource': {..._providerResourceFields, 'nativeResourceId': 'second'},
+      'updatedAt': 999999, 'title': 'Newer but Host second',
+      'readState': {'unread': false, 'activityVersion': 'observed-current'}};
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'provider.describe': description,
+      'conversation.recent': {
+        'conversations': [first, second], 'pageInfo': {'nextCursor': 'recent-next'},
+        'revision': 'recent-revision', 'snapshotCursor': 'opaque-fence',
+      },
+    });
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test',
+      clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect();
+    final page = await client.recentConversations(providerId: _providerId);
+    final request = transport.requests.last;
+    expect(request.method, 'conversation.recent');
+    expect(request.params, {'providerId': _providerId, 'limit': 20});
+    expect(page.conversations.map((item) => item.title), ['Host first', 'Newer but Host second']);
+    expect(page.conversations.first.readState.unread, isTrue);
+    expect(page.conversations.first.readState.activityVersion, 'observed-old');
+    expect(page.nextCursor, 'recent-next');
+    expect(page.revision, 'recent-revision');
+    expect(page.snapshotCursor, 'opaque-fence');
+    await client.recentConversations(providerId: _providerId, cursor: page.nextCursor);
+    expect(transport.requests.last.params['cursor'], 'recent-next');
+    second.remove('readState');
+    await expectLater(client.recentConversations(providerId: _providerId), throwsFormatException);
+    await client.close();
+  });
+
+  test('recent fails before sending a request when the capability is absent', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    });
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test',
+      clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect();
+    await expectLater(client.recentConversations(providerId: _providerId), throwsFormatException);
+    expect(transport.requests.where((request) => request.method == 'conversation.recent'), isEmpty);
+    await client.close();
+  });
+
+  test('recent preserves cursor error codes from canonical v1 error envelopes', () async {
+    for (final code in ['recent_cursor_expired', 'invalid_cursor']) {
+      final description = _providerDescriptionJson();
+      (description['capabilities']['methods'] as List).add('conversation.recent');
+      final transport = _FakeTransport({
+        'protocol.handshake': _handshakeJson(),
+        'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+        'provider.describe': description,
+      }, responseBuilder: (method, params, id) => method == 'conversation.recent' ? {
+        'jsonrpc': '2.0', 'id': id,
+        'error': {'code': -32000, 'message': code,
+          'data': {'code': code, 'message': code, 'retryable': false}},
+      } : null);
+      final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test',
+        clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+      await client.connect();
+      await expectLater(client.recentConversations(providerId: _providerId, cursor: 'old'),
+        throwsA(isA<GatewayProtocolException>().having((error) => error.code, 'code', code)));
+      await client.close();
+    }
+  });
+
   test('negotiates automatic trace propagation after an untraced handshake',
       () async {
     final transport = _FakeTransport({

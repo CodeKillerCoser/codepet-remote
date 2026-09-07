@@ -134,6 +134,38 @@ void main() {
     expect(client.listFilters, isEmpty);
   });
 
+  test('a Provider generation change rejects an old tail while retaining display until replacement', () async {
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(['old'], nextCursor: 'tail'));
+    await pumpEventQueue();
+    final tail = controller.loadMore();
+    controller.attach(client, const GatewayProvider(
+      id: 'test', displayName: 'Test', status: ProviderStatus.ready, generation: 2,
+      capabilities: GatewayCapabilities(revision: 'capability-2', methods: ['conversation.recent']),
+    ));
+    client.requests[1].$2.complete(recentPage(['stale']));
+    await tail;
+    expect(controller.conversations.single.id, 'old');
+    client.requests.last.$2.complete(recentPage(['new'], revision: 'generation-2'));
+    await pumpEventQueue();
+    expect(controller.conversations.single.id, 'new');
+  });
+
+  test('a repeated invalid cursor error is visible without automatic retries', () async {
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(['first'], nextCursor: 'bad'));
+    await pumpEventQueue();
+    final tail = controller.loadMore();
+    client.requests.last.$2.completeError(const GatewayProtocolException(
+      code: 'invalid_cursor', message: 'bad cursor', retryable: false,
+    ));
+    await tail;
+    await pumpEventQueue();
+    expect(client.requests, hasLength(2));
+    expect(controller.canAutoLoadMore, isFalse);
+    expect(controller.conversations.single.id, 'first');
+  });
+
   test('100 plus ordered attention rows remain paged without client truncation', () async {
     controller.attach(client, recentProvider);
     client.requests.single.$2.complete(recentPage(

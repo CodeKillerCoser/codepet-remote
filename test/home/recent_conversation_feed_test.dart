@@ -55,6 +55,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('offline page'), findsOneWidget);
     expect(client.requests.length, 2);
+    await tester.ensureVisible(find.byKey(const Key('retry-recent')));
     await tester.tap(find.byKey(const Key('retry-recent')));
     await tester.pump();
     expect(client.requests.length, 3);
@@ -101,6 +102,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('row-10')).dy, closeTo(before, 1));
     expect(client.requests.last.$1, isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('deleting the top anchor preserves the next surviving row offset', (tester) async {
+    final rows = List.generate(30, (i) => 'row-$i');
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(rows));
+    await tester.pumpWidget(home());
+    await tester.pumpAndSettle();
+    scroll.jumpTo(800);
+    await tester.pumpAndSettle();
+    client.change('r2');
+    final removed = controller.anchorIdentity!.split('\u0000').last;
+    final neighbor = rows[rows.indexOf(removed) + 1];
+    final before = tester.getTopLeft(find.text(neighbor)).dy;
+    client.requests.last.$2.complete(recentPage(
+      ['inserted', ...rows.where((row) => row != removed)], revision: 'r2', snapshotCursor: 'e1',
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text(removed), findsNothing);
+    expect(tester.getTopLeft(find.text(neighbor)).dy, closeTo(before, 1));
     await tester.pumpWidget(const SizedBox());
   });
 
