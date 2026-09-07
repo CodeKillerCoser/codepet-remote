@@ -8,16 +8,19 @@ import '../../core/domain/models.dart';
 import '../common/app_toast.dart';
 import '../connection/device_connection_notice.dart';
 import 'conversation_detail_screen.dart';
+import 'widgets/conversation_list_item.dart';
 
 class ConversationSearchScreen extends StatefulWidget {
   const ConversationSearchScreen({
     super.key,
     required this.session,
     this.project,
+    this.standaloneOnly = false,
   });
 
   final DeviceSession session;
   final RoutedResourceId? project;
+  final bool standaloneOnly;
 
   @override
   State<ConversationSearchScreen> createState() =>
@@ -44,6 +47,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     _controller = ConversationSearchController(
       session: widget.session,
       project: widget.project,
+      standaloneOnly: widget.standaloneOnly,
     )..addListener(_changed);
   }
 
@@ -51,7 +55,8 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
   void didUpdateWidget(ConversationSearchScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.session == widget.session &&
-        oldWidget.project == widget.project) {
+        oldWidget.project == widget.project &&
+        oldWidget.standaloneOnly == widget.standaloneOnly) {
       return;
     }
     _controller
@@ -60,6 +65,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     _controller = ConversationSearchController(
       session: widget.session,
       project: widget.project,
+      standaloneOnly: widget.standaloneOnly,
     )..addListener(_changed);
   }
 
@@ -139,9 +145,11 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
               textInputAction: TextInputAction.search,
               autofocus: supported,
               decoration: InputDecoration(
-                labelText: widget.project == null
-                    ? '搜索 Host 上的会话'
-                    : '搜索当前项目的会话',
+                labelText: widget.standaloneOnly
+                    ? '搜索聊天分组的会话'
+                    : widget.project == null
+                        ? '搜索 Host 上的会话'
+                        : '搜索当前项目的会话',
                 hintText: '输入标题或会话内容关键词',
                 errorText: _validationError,
                 prefixIcon: const Icon(Icons.search),
@@ -225,53 +233,25 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
         ],
       );
     }
-    return ListView.separated(
+    return ConversationList(
       key: const Key('search-results'),
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-      itemCount: visibleCount + 1 + (hasMore ? 1 : 0) + (_error == null ? 0 : 1),
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return Text(
-            '${_conversations.length}${_canLoadMore ? '+' : ''} 个结果',
-            key: const Key('search-count'),
-            style: Theme.of(context).textTheme.bodySmall,
-          );
-        }
-        var dataIndex = index - 1;
-        if (_error != null) {
-          if (dataIndex == 0) return _InlineError(message: _error!);
-          dataIndex--;
-        }
-        if (dataIndex < visibleCount) {
-          final conversation = _conversations[dataIndex];
-          return Card(
-            key: Key('search-result-${conversationRoutingKey(conversation)}'),
-            margin: EdgeInsets.zero,
-            elevation: 0,
-            child: ListTile(
-              leading: const Icon(Icons.chat_bubble_outline),
-              title: Text(
-                conversation.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                conversation.preview ??
-                    conversation.workspaceRoot ??
-                    '无 workspaceRoot',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              onTap: () => _openConversation(conversation),
-            ),
-          );
-        }
-        return _SearchPagination(
-          loading: _isLoading,
-          onPressed: _loadMore,
-        );
-      },
+      conversations: _conversations.take(visibleCount).toList(growable: false),
+      itemKey: (conversation) => Key(
+        'search-result-${conversationRoutingKey(conversation)}',
+      ),
+      onTap: _openConversation,
+      leading: [
+        Text(
+          '${_conversations.length}${_canLoadMore ? '+' : ''} 个结果',
+          key: const Key('search-count'),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        if (_error != null) _InlineError(message: _error!),
+      ],
+      trailing: [
+        if (hasMore) _SearchPagination(loading: _isLoading, onPressed: _loadMore),
+      ],
     );
   }
 }

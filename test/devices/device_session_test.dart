@@ -225,9 +225,11 @@ void main() {
 
     expect(session.selectedProviderSupportsProjects, isTrue);
     expect(session.selectedProviderProjects, [project]);
-    expect(session.selectedProviderRecentConversations, [standalone]);
+    expect(session.selectedProviderRecentConversations, isEmpty);
+    expect(session.selectedProviderStandaloneConversations, [standalone]);
+    expect(session.selectedProviderConversations, containsAll([standalone, projectConversation]));
     expect(client.listRequests.single.projectFilter,
-        isA<StandaloneConversationFilter>());
+        isA<AllConversationFilter>());
 
     await session.ensureProjectConversations(project);
 

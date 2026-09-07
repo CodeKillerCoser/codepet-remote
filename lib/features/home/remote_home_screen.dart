@@ -10,6 +10,8 @@ import '../connection/device_connection_notice.dart';
 import '../connection/device_detail_screen.dart';
 import '../conversations/conversation_detail_screen.dart';
 import '../conversations/conversation_search_screen.dart';
+import '../conversations/widgets/conversation_list_item.dart';
+export '../conversations/widgets/conversation_list_item.dart' show relativeConversationTime;
 
 const int _projectPageSize = 6;
 const int _conversationPageSize = 8;
@@ -123,10 +125,10 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     final selectedIndex = sessions.isEmpty
         ? 0
         : widget.selectedIndex < 0
-            ? 0
-            : widget.selectedIndex >= sessions.length
-                ? sessions.length - 1
-                : widget.selectedIndex;
+        ? 0
+        : widget.selectedIndex >= sessions.length
+        ? sessions.length - 1
+        : widget.selectedIndex;
     final session = sessions.isEmpty ? null : sessions[selectedIndex];
     final selectedProvider = session?.selectedProvider;
     final projects = session == null
@@ -134,7 +136,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
         : session.selectedProviderProjects;
     final recent = session == null
         ? const <ConversationSummary>[]
-        : sortRecentConversations(
+        : homeRecentConversations(
             deduplicateRoutedConversations(
               session.selectedProviderRecentConversations,
             ),
@@ -188,60 +190,73 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
                     children: [
-                  if (DeviceConnectionNotice.shouldShow(
-                    session,
-                    includeConnecting: true,
-                  )) ...[
-                    DeviceConnectionNotice(session: session),
-                    const SizedBox(height: 12),
-                  ],
-                  if (session.selectedProviderSupportsProjects) ...[
-                    _SectionTitle(
-                      key: Key('projects-section-${session.device.deviceId}'),
-                      title: '项目',
-                      countLabel:
-                          '${projects.length}${session.canLoadMoreSelectedProviderProjects ? '+' : ''}',
-                      expanded: viewState.projectsExpanded,
-                      action: selectedProvider?.isAvailable == true &&
-                              selectedProvider?.methods
-                                      .contains('project.create') ==
-                                  true
-                          ? IconButton(
-                              key: const Key('project-create'),
-                              tooltip: '新建项目',
-                              onPressed: () => _showProjectEditor(
-                                context,
-                                session: session,
-                                provider: selectedProvider!,
-                              ),
-                              icon: const Icon(Icons.create_new_folder_outlined),
-                            )
-                          : null,
-                      onTap: () => setState(() {
-                        viewState.projectsExpanded =
-                            !viewState.projectsExpanded;
-                      }),
-                    ),
-                    if (viewState.projectsExpanded) ...[
-                      const SizedBox(height: 10),
-                      ..._projectWidgets(context, session, projects, viewState),
-                    ],
-                  ],
-                  if (session.selectedProviderSupportsProjects)
-                    const SizedBox(height: 28),
-                  _SectionTitle(
-                    key: Key('recent-section-${session.device.deviceId}'),
-                    title: '会话',
-                    countLabel: session.selectedProviderConversationCountLabel,
-                    expanded: viewState.recentExpanded,
-                    onTap: () => setState(() {
-                      viewState.recentExpanded = !viewState.recentExpanded;
-                    }),
-                  ),
-                  if (viewState.recentExpanded) ...[
-                    const SizedBox(height: 10),
-                    ..._recentWidgets(context, session, recent, viewState),
-                  ],
+                      if (DeviceConnectionNotice.shouldShow(
+                        session,
+                        includeConnecting: true,
+                      )) ...[
+                        DeviceConnectionNotice(session: session),
+                        const SizedBox(height: 12),
+                      ],
+                      ...[
+                        _SectionTitle(
+                          key: Key(
+                            'projects-section-${session.device.deviceId}',
+                          ),
+                          title: '项目',
+                          countLabel:
+                              '${projects.length + 1}${session.canLoadMoreSelectedProviderProjects ? '+' : ''}',
+                          expanded: viewState.projectsExpanded,
+                          action:
+                              selectedProvider?.isAvailable == true &&
+                                  selectedProvider?.methods.contains(
+                                        'project.create',
+                                      ) ==
+                                      true
+                              ? IconButton(
+                                  key: const Key('project-create'),
+                                  tooltip: '新建项目',
+                                  onPressed: () => _showProjectEditor(
+                                    context,
+                                    session: session,
+                                    provider: selectedProvider!,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.create_new_folder_outlined,
+                                  ),
+                                )
+                              : null,
+                          onTap: () => setState(() {
+                            viewState.projectsExpanded =
+                                !viewState.projectsExpanded;
+                          }),
+                        ),
+                        if (viewState.projectsExpanded) ...[
+                          const SizedBox(height: 10),
+                          _ChatProjectCard(session: session),
+                          if (session.selectedProviderSupportsProjects)
+                            ..._projectWidgets(
+                              context,
+                              session,
+                              projects,
+                              viewState,
+                            ),
+                        ],
+                      ],
+                      const SizedBox(height: 28),
+                      _SectionTitle(
+                        key: Key('recent-section-${session.device.deviceId}'),
+                        title: '最近',
+                        countLabel:
+                            session.selectedProviderConversationCountLabel,
+                        expanded: viewState.recentExpanded,
+                        onTap: () => setState(() {
+                          viewState.recentExpanded = !viewState.recentExpanded;
+                        }),
+                      ),
+                      if (viewState.recentExpanded) ...[
+                        const SizedBox(height: 10),
+                        ..._recentWidgets(context, session, recent, viewState),
+                      ],
                     ],
                   ),
                 ),
@@ -253,18 +268,18 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
               searchKey: const Key('home-search'),
               createKey: const Key('home-new'),
               canSearch: selectedProvider != null,
-              canCreate: selectedProvider?.isAvailable == true &&
-                  selectedProvider?.methods
-                          .contains('conversation.create') ==
+              canCreate:
+                  selectedProvider?.isAvailable == true &&
+                  selectedProvider?.methods.contains('conversation.create') ==
                       true,
               onSearch: () => _openSearch(context, session),
               onCreate: selectedProvider == null
                   ? null
                   : () => _startConversation(
-                        context,
-                        session: session,
-                        provider: selectedProvider,
-                      ),
+                      context,
+                      session: session,
+                      provider: selectedProvider,
+                    ),
             ),
     );
   }
@@ -282,11 +297,6 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     if (session.connectionState != DeviceConnectionState.online) return const [];
     if (projects.isEmpty) {
       return [
-        const _MessageCard(
-          icon: Icons.folder_off_outlined,
-          title: '还没有项目',
-          message: '此 Provider 当前没有可展示的项目。',
-        ),
         if (session.canLoadMoreSelectedProviderProjects ||
             session.isLoadingMoreProjects)
           _PaginationControl(
@@ -384,13 +394,15 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     List<ConversationSummary> recent,
     _DeviceHomeViewState viewState,
   ) {
-    if (session.connectionState != DeviceConnectionState.online) return const [];
+    if (session.connectionState != DeviceConnectionState.online) {
+      return const [];
+    }
     if (recent.isEmpty) {
       return [
         const _MessageCard(
           icon: Icons.forum_outlined,
-          title: '还没有会话',
-          message: '此设备当前没有可展示的会话。',
+          title: '暂无最近会话',
+          message: '历史会话可从项目或聊天中查看。',
         ),
         if (session.canLoadMoreSelectedProviderConversations ||
             session.isLoadingMoreConversations)
@@ -400,11 +412,13 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
             loading: session.isLoadingMoreConversations,
             error: session.loadMoreError,
             onPressed: () {
-              unawaited(_advanceWindow(
-                session: session,
-                hasLocalMore: false,
-                advance: () => viewState.recentPages++,
-              ));
+              unawaited(
+                _advanceWindow(
+                  session: session,
+                  hasLocalMore: false,
+                  advance: () => viewState.recentPages++,
+                ),
+              );
             },
           ),
       ];
@@ -414,18 +428,13 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
         ? requestedCount
         : recent.length;
     final widgets = <Widget>[];
-    widgets.addAll(recent.take(visibleCount).map((conversation) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: _ConversationRow(
-              key: Key(
-                'recent-conversation-${session.device.deviceId}-${conversationRoutingKey(conversation)}',
-              ),
-              session: session,
-              conversation: conversation,
-              onTap: (current) =>
-                  _openConversation(context, session, current),
-          ),
-        )));
+    widgets.add(ConversationList(
+      conversations: recent.take(visibleCount).toList(growable: false),
+      embedded: true,
+      padding: EdgeInsets.zero,
+      itemKey: (conversation) => Key('recent-conversation-${session.device.deviceId}-${conversationRoutingKey(conversation)}'),
+      onTap: (current) => _openConversation(context, session, current),
+    ));
     if (visibleCount < recent.length ||
         session.canLoadMoreSelectedProviderConversations ||
         session.isLoadingMoreConversations) {
@@ -436,11 +445,13 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
           loading: session.isLoadingMoreConversations,
           error: visibleCount < recent.length ? null : session.loadMoreError,
           onPressed: () {
-            unawaited(_advanceWindow(
-              session: session,
-              hasLocalMore: visibleCount < recent.length,
-              advance: () => viewState.recentPages++,
-            ));
+            unawaited(
+              _advanceWindow(
+                session: session,
+                hasLocalMore: visibleCount < recent.length,
+                advance: () => viewState.recentPages++,
+              ),
+            );
           },
         ),
       );
@@ -919,7 +930,7 @@ class _ProjectCard extends StatelessWidget {
                       Text(conversationCount ?? '…',
                         key: Key('project-conversation-count-${project.key}'),
                         style: Theme.of(context).textTheme.bodySmall),
-                      _ConversationIndicators(
+                      ConversationIndicators(
                         running: conversations.any(
                           (item) => item.status == ConversationStatus.running),
                         unread: conversations.any(
@@ -927,7 +938,7 @@ class _ProjectCard extends StatelessWidget {
                       ),
                     ]),
                     const SizedBox(height: 4),
-                    _HeadTailPath(roots.isEmpty ? '未关联目录' : roots),
+                    HeadTailPath(roots.isEmpty ? '未关联目录' : roots),
                   ],
                 ),
               ),
@@ -1035,148 +1046,6 @@ class _MessageCard extends StatelessWidget {
   );
 }
 
-class _ConversationRow extends StatelessWidget {
-  const _ConversationRow({
-    super.key,
-    required this.session,
-    required this.conversation,
-    required this.onTap,
-  });
-
-  final DeviceSession session;
-  final ConversationSummary conversation;
-  final ValueChanged<ConversationSummary> onTap;
-
-  @override
-  Widget build(BuildContext context) => Card(
-        margin: EdgeInsets.zero,
-        elevation: 0,
-        child: _ConversationTile(
-          key: Key('conversation-${conversation.id}'),
-          conversation: conversation,
-          onTap: () => onTap(conversation),
-        ),
-      );
-}
-
-class _ConversationTile extends StatelessWidget {
-  const _ConversationTile({
-    super.key,
-    required this.conversation,
-    required this.onTap,
-  });
-
-  final ConversationSummary conversation;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: onTap,
-    borderRadius: BorderRadius.circular(12),
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Flexible(child: Text(conversation.title, maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: conversation.readState.unread ? FontWeight.w700 : FontWeight.w400))),
-                _ConversationIndicators(
-                  running: conversation.status == ConversationStatus.running,
-                  unread: conversation.readState.unread,
-                ),
-              ]),
-              const SizedBox(height: 4),
-              if (conversation.preview != null)
-                Text(conversation.preview!, maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant))
-              else
-                _HeadTailPath(conversation.workspaceRoot ?? '无 workspaceRoot'),
-            ],
-          )),
-          const SizedBox(width: 12),
-          // Match the title line height to keep the timestamp centered with it.
-          Text(relativeConversationTime(conversation.updatedAt),
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w400,
-              color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        ],
-      ),
-    ),
-  );
-}
-
-class _ConversationIndicators extends StatelessWidget {
-  const _ConversationIndicators({required this.running, required this.unread});
-  final bool running;
-  final bool unread;
-
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      if (running)
-        const Padding(
-          padding: EdgeInsets.only(left: 6),
-          child: Tooltip(message: '运行中',
-            child: Icon(Icons.motion_photos_on_outlined, size: 16, semanticLabel: '运行中')),
-        ),
-      if (unread)
-        Padding(
-          padding: const EdgeInsets.only(left: 6),
-          child: Semantics(label: '未读', child: Container(
-            width: 7, height: 7,
-            decoration: const BoxDecoration(shape: BoxShape.circle,
-              color: Colors.blue),
-          )),
-        ),
-    ],
-  );
-}
-
-class _HeadTailPath extends StatelessWidget {
-  const _HeadTailPath(this.path);
-  final String path;
-
-  @override
-  Widget build(BuildContext context) {
-    final style = Theme.of(context).textTheme.bodyMedium?.copyWith(
-      color: Theme.of(context).colorScheme.onSurfaceVariant);
-    return LayoutBuilder(builder: (context, constraints) {
-      final characters = path.characters;
-      String shortened(int length) {
-        if (length >= characters.length) return path;
-        final head = (length / 2).ceil();
-        return '${characters.take(head)}…${characters.skip(characters.length - (length - head))}';
-      }
-      final painter = TextPainter(textDirection: Directionality.of(context),
-        textScaler: MediaQuery.textScalerOf(context), maxLines: 1);
-      var low = 0;
-      var high = characters.length;
-      while (low < high) {
-        final mid = (low + high + 1) ~/ 2;
-        painter.text = TextSpan(text: shortened(mid), style: style);
-        painter.layout();
-        if (painter.width <= constraints.maxWidth) {
-          low = mid;
-        } else {
-          high = mid - 1;
-        }
-      }
-      painter.dispose();
-      return Tooltip(message: path, child: Text(shortened(low),
-        semanticsLabel: path, maxLines: 1, style: style));
-    });
-  }
-}
-
 class _EmptyDevices extends StatelessWidget {
   const _EmptyDevices({required this.onAddDevice});
   final VoidCallback onAddDevice;
@@ -1195,13 +1064,39 @@ class _EmptyDevices extends StatelessWidget {
   ));
 }
 
-class _ProjectConversationsScreen extends StatefulWidget {
-  const _ProjectConversationsScreen({
-    required this.project,
-    required this.session,
-  });
+class _ChatProjectCard extends StatelessWidget {
+  const _ChatProjectCard({required this.session});
 
-  final GatewayProject project;
+  final DeviceSession session;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Card(
+      key: const Key('chat-project-card'),
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      child: ListTile(
+        leading: const Icon(Icons.forum_outlined),
+        title: const Text('聊天'),
+        subtitle: const Text('无项目归属的对话'),
+        trailing: Text(
+          '${session.selectedProviderStandaloneConversations.length}${session.canLoadMoreSelectedProviderConversations ? '+' : ''}',
+        ),
+        onTap: () => Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => _ProjectConversationsScreen(session: session),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _ProjectConversationsScreen extends StatefulWidget {
+  const _ProjectConversationsScreen({this.project, required this.session});
+
+  final GatewayProject? project;
   final DeviceSession session;
 
   @override
@@ -1213,9 +1108,9 @@ class _ProjectConversationsScreenState
     extends State<_ProjectConversationsScreen> {
   int _pages = 1;
 
-  GatewayProject get _project {
+  GatewayProject? get _project {
     for (final project in widget.session.selectedProviderProjects) {
-      if (project.resource == widget.project.resource) return project;
+      if (project.resource == widget.project?.resource) return project;
     }
     return widget.project;
   }
@@ -1225,8 +1120,8 @@ class _ProjectConversationsScreenState
     super.initState();
     widget.session.addListener(_changed);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        unawaited(widget.session.ensureProjectConversations(widget.project));
+      if (mounted && widget.project != null) {
+        unawaited(widget.session.ensureProjectConversations(widget.project!));
       }
     });
   }
@@ -1251,8 +1146,12 @@ class _ProjectConversationsScreenState
 
   Future<void> _showMore({required bool hasLocalMore}) async {
     if (widget.session.isLoadingMoreConversations) return;
-    if (widget.session.canLoadMoreProjectConversations(widget.project)) {
-      await widget.session.loadMoreProjectConversations(widget.project);
+    if (_canLoadMore) {
+      if (widget.project == null) {
+        await widget.session.loadMoreSelectedProviderConversations();
+      } else {
+        await widget.session.loadMoreProjectConversations(widget.project!);
+      }
       if (!mounted ||
           widget.session.connectionState != DeviceConnectionState.online ||
           widget.session.loadMoreError != null) {
@@ -1266,8 +1165,15 @@ class _ProjectConversationsScreenState
     });
   }
 
-  List<ConversationSummary> _projectConversations() =>
-      widget.session.conversationsForProject(_project);
+  bool get _canLoadMore => _project == null
+      ? widget.session.canLoadMoreSelectedProviderConversations
+      : widget.session.canLoadMoreProjectConversations(_project!);
+
+  List<ConversationSummary> _projectConversations() => _project == null
+      ? sortRecentConversations(
+          widget.session.selectedProviderStandaloneConversations,
+        )
+      : widget.session.conversationsForProject(_project!);
 
   @override
   Widget build(BuildContext context) {
@@ -1277,8 +1183,9 @@ class _ProjectConversationsScreenState
         ? requestedCount
         : conversations.length;
     final hasLocalMore = visibleCount < conversations.length;
-    final hasMore = hasLocalMore ||
-        widget.session.canLoadMoreProjectConversations(_project) ||
+    final hasMore =
+        hasLocalMore ||
+        _canLoadMore ||
         widget.session.isLoadingMoreConversations;
     final selectedProvider = widget.session.selectedProvider;
     return Scaffold(
@@ -1286,67 +1193,50 @@ class _ProjectConversationsScreenState
         leadingWidth: 48,
         titleSpacing: 0,
         toolbarHeight: 64,
-        title: _ProjectConversationTitle(
-          project: _project,
-          session: widget.session,
-          provider: selectedProvider,
-        ),
-      ),
-      body: ListView.separated(
-        key: const Key('project-conversation-list'),
-        padding: const EdgeInsets.all(16),
-        itemCount: visibleCount + (hasMore ? 1 : 0),
-        separatorBuilder: (_, _) => const SizedBox(height: 8),
-        itemBuilder: (_, index) {
-          if (index == visibleCount) {
-            return Center(
-              child: _PaginationControl(
-                buttonKey: const Key(
-                  'show-more-project-screen-conversations',
-                ),
-                label: '显示更多对话',
-                loading: widget.session.isLoadingMoreConversations,
-                error: hasLocalMore ? null : widget.session.loadMoreError,
-                onPressed: () {
-                  unawaited(_showMore(hasLocalMore: hasLocalMore));
-                },
+        title: _project == null
+            ? const Text('聊天')
+            : _ProjectConversationTitle(
+                project: _project!,
+                session: widget.session,
+                provider: selectedProvider,
               ),
-            );
-          }
-          final conversation = conversations[index];
-          return _ConversationRow(
-            key: Key(
-              'project-screen-conversation-${conversationRoutingKey(conversation)}',
-            ),
-            session: widget.session,
-            conversation: conversation,
-            onTap: (current) => _openConversation(
-              context,
-              widget.session,
-              current,
-            ),
-          );
-        },
+      ),
+      body: ConversationList(
+        key: const Key('project-conversation-list'),
+        conversations: conversations.take(visibleCount).toList(growable: false),
+        itemKey: (conversation) => Key('project-screen-conversation-${conversationRoutingKey(conversation)}'),
+        onTap: (current) => _openConversation(context, widget.session, current),
+        leading: [
+          if (conversations.isEmpty && !hasMore)
+            const _MessageCard(icon: Icons.forum_outlined, title: '还没有会话', message: '点击新建开始聊天。'),
+        ],
+        trailing: [
+          if (hasMore) _PaginationControl(
+            buttonKey: const Key('show-more-project-screen-conversations'),
+            label: '显示更多对话',
+            loading: widget.session.isLoadingMoreConversations,
+            error: hasLocalMore ? null : widget.session.loadMoreError,
+            onPressed: () => unawaited(_showMore(hasLocalMore: hasLocalMore)),
+          ),
+        ],
       ),
       bottomNavigationBar: _ConversationActionsBar(
         searchKey: const Key('project-search'),
         createKey: const Key('project-new'),
         canSearch: selectedProvider != null,
-        canCreate: selectedProvider?.isAvailable == true &&
+        canCreate:
+            selectedProvider?.isAvailable == true &&
             selectedProvider?.methods.contains('conversation.create') == true,
-        onSearch: () => _openSearch(
-          context,
-          widget.session,
-          project: _project.resource,
-        ),
+        onSearch: () =>
+            _openSearch(context, widget.session, project: _project?.resource, standaloneOnly: _project == null),
         onCreate: selectedProvider == null
             ? null
             : () => _startConversation(
-                  context,
-                  session: widget.session,
-                  provider: selectedProvider,
-                  project: _project,
-                ),
+                context,
+                session: widget.session,
+                provider: selectedProvider,
+                project: _project,
+              ),
       ),
     );
   }
@@ -1732,7 +1622,7 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                   items: [
                     const DropdownMenuItem(
                       value: _standaloneProjectKey,
-                      child: Text('无项目'),
+                      child: Text('聊天'),
                     ),
                     for (final project in _projects)
                       DropdownMenuItem(
@@ -1930,13 +1820,12 @@ void _openSearch(
   BuildContext context,
   DeviceSession session, {
   RoutedResourceId? project,
+  bool standaloneOnly = false,
 }) {
   Navigator.of(context).push<void>(
     MaterialPageRoute(
-      builder: (_) => ConversationSearchScreen(
-        session: session,
-        project: project,
-      ),
+      builder: (_) =>
+          ConversationSearchScreen(session: session, project: project, standaloneOnly: standaloneOnly),
     ),
   );
 }
@@ -1993,17 +1882,4 @@ String _providerStateLabel(GatewayProvider provider, DeviceConnectionState state
     return '连接中';
   }
   return provider.isAvailable ? '在线' : '不可用';
-}
-
-String relativeConversationTime(DateTime value, {DateTime? now}) {
-  final local = value.toLocal();
-  final current = (now ?? DateTime.now()).toLocal();
-  final day = DateTime(local.year, local.month, local.day);
-  final today = DateTime(current.year, current.month, current.day);
-  final difference = today.difference(day).inDays;
-  final time = '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
-  if (difference == 0) return time;
-  if (difference == 1) return '昨天';
-  if (difference < 7 && difference > 1) return '$difference 天前';
-  return '${local.month}/${local.day}';
 }

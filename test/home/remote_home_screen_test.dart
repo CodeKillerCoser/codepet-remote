@@ -11,8 +11,38 @@ import 'package:codepet_remote/gateway/demo_gateway_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+final _testNow = DateTime.now().toUtc();
+
 void main() {
-  testWidgets('hides projects when project.list is absent even with cwd values',
+  testWidgets('chat retains old standalone history and excludes project conversations', (tester) async {
+    _useTallSurface(tester);
+    final old = _conversation('old-chat', '旧聊天', updatedMilliseconds: -const Duration(days: 30).inMilliseconds);
+    final session = _sessionForClient('chat-history', _PagedClient(
+      ({required cursor, required limit}) async => ConversationPage(
+        conversations: [old], snapshotCursor: 'handshake',
+      ),
+    ));
+    await session.connect();
+    session.conversations = [old, ConversationSummary(
+      id: 'project-chat', providerId: 'test', title: '项目对话',
+      status: ConversationStatus.idle, permissionLevel: PermissionLevel.readOnly,
+      createdAt: _testNow, updatedAt: _testNow,
+      project: const RoutedResourceId(providerId: 'test', nativeResourceId: 'project'),
+    )];
+    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: [session])));
+    expect(find.text('最近'), findsOneWidget);
+    expect(find.text('旧聊天'), findsNothing);
+    expect(find.text('项目对话'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('chat-project-card')));
+    await tester.pumpAndSettle();
+    expect(find.text('旧聊天'), findsOneWidget);
+    expect(find.text('项目对话'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+
+  testWidgets('shows default chat when project.list is absent even with cwd values',
       (tester) async {
     tester.view.physicalSize = const Size(320, 850);
     tester.view.devicePixelRatio = 1;
@@ -40,7 +70,7 @@ void main() {
 
     expect(
       find.byKey(const Key('projects-section-no-project-capability')),
-      findsNothing,
+      findsOneWidget,
     );
     expect(find.text('只有 cwd 的会话'), findsOneWidget);
     expect(find.byIcon(Icons.chat_bubble_outline), findsNothing);
@@ -90,14 +120,13 @@ void main() {
       '${session.conversationsForProject(project).length}',
     );
     expect(find.text('Gateway 协议契约核对'), findsOneWidget);
-    expect(find.text('实现 Remote 会话流'), findsNothing);
-    expect(find.text('会话'), findsOneWidget);
-    expect(find.text('最近'), findsNothing);
+    expect(find.text('实现 Remote 会话流'), findsOneWidget);
+    expect(find.text('聊天'), findsOneWidget);
+    expect(find.text('最近'), findsOneWidget);
 
     await tester.tap(find.byKey(Key('project-${project.key}')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(find.text('实现 Remote 会话流'), findsOneWidget);
     expect(find.byKey(const Key('project-provider-icon')), findsOneWidget);
@@ -279,7 +308,7 @@ void main() {
     await tester.tap(find.byKey(const Key('home-new')));
     await tester.pumpAndSettle();
 
-    expect(find.text('无项目'), findsOneWidget);
+    expect(find.text('聊天'), findsWidgets);
     expect(
       tester
           .widget<TextField>(
@@ -386,11 +415,11 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('/usr/local/bin/codex'), findsNothing);
-    final sectionTop = tester.getTopLeft(find.text('会话'));
+    final sectionTop = tester.getTopLeft(find.text('最近'));
     await tester.tap(find.text('Codex Work · v0.151.0 · 在线'));
     await tester.pumpAndSettle();
     expect(find.text('/usr/local/bin/codex'), findsOneWidget);
-    expect(tester.getTopLeft(find.text('会话')), sectionTop);
+    expect(tester.getTopLeft(find.text('最近')), sectionTop);
     expect(find.text('Signed in'), findsOneWidget);
     expect(find.text('72% remaining'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -852,10 +881,7 @@ ConversationSummary _conversation(
   permissionLevel: PermissionLevel.readOnly,
   workspaceRoot: workspaceRoot,
   createdAt: DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true),
-  updatedAt: DateTime.fromMillisecondsSinceEpoch(
-    updatedMilliseconds,
-    isUtc: true,
-  ),
+  updatedAt: _testNow.subtract(const Duration(hours: 1)).add(Duration(milliseconds: updatedMilliseconds)),
 );
 
 class _EventClient implements GatewayClient {

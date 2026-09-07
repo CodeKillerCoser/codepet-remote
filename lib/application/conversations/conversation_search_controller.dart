@@ -6,6 +6,7 @@ class ConversationSearchController extends ApplicationNotifier {
   ConversationSearchController({
     required DeviceSession session,
     this.project,
+    this.standaloneOnly = false,
     this.pageSize = 20,
   }) : _session = session {
     _observedLease = session.runtimeLease;
@@ -13,6 +14,7 @@ class ConversationSearchController extends ApplicationNotifier {
   }
 
   final RoutedResourceId? project;
+  final bool standaloneOnly;
   final int pageSize;
   DeviceSession _session;
   final Map<String, String?> _cursors = {};
@@ -302,6 +304,9 @@ class ConversationSearchController extends ApplicationNotifier {
     Iterable<ConversationSummary> conversations,
   ) {
     final project = this.project;
+    if (standaloneOnly) {
+      return conversations.where((conversation) => conversation.project == null);
+    }
     return project == null
         ? conversations
         : conversations.where(

@@ -10,7 +10,33 @@ import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+final _testNow = DateTime.now().toUtc();
+
 void main() {
+  testWidgets('chat search excludes project results', (tester) async {
+    _useTallSurface(tester);
+    final client = _SearchClient(
+      providers: const [_primaryProvider],
+      onSearch: ({required providerId, required searchTerm, required cursor, required limit}) async => ConversationPage(
+        conversations: [
+          _conversation(providerId, 'chat', '聊天结果', 1000),
+          _conversation(providerId, 'project', '项目结果', 2000,
+            project: const RoutedResourceId(providerId: _primaryRoute, nativeResourceId: 'project')),
+        ], snapshotCursor: 'handshake',
+      ),
+    );
+    final session = _session(client);
+    await session.connect();
+    await tester.pumpWidget(MaterialApp(home: ConversationSearchScreen(session: session, standaloneOnly: true)));
+    await tester.enterText(find.byKey(const Key('search-input')), 'result');
+    await tester.tap(find.byKey(const Key('search-submit')));
+    await _pumpAsync(tester);
+    expect(find.text('聊天结果'), findsOneWidget);
+    expect(find.text('项目结果'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
   testWidgets('project search filters by project identity instead of cwd',
       (tester) async {
     _useTallSurface(tester);
@@ -409,7 +435,7 @@ ConversationSummary _conversation(
     workspaceRoot: '/repo',
     project: project,
     createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
-    updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt, isUtc: true),
+    updatedAt: _testNow.subtract(const Duration(hours: 1)).add(Duration(milliseconds: updatedAt)),
     resource: resource,
   );
 }

@@ -252,16 +252,14 @@ class DeviceSession extends ApplicationNotifier {
         .where((project) => project.resource.providerId == providerId)
         .toList(growable: false);
   }
-  List<ConversationSummary> get selectedProviderRecentConversations {
-    final provider = selectedProvider;
-    if (provider == null) return conversations;
-    final values = selectedProviderConversations;
-    return provider.methods.contains('project.list')
-        ? values
-            .where((conversation) => conversation.project == null)
-            .toList(growable: false)
-        : values;
-  }
+  List<ConversationSummary> get selectedProviderRecentConversations =>
+      homeRecentConversations(selectedProviderConversations);
+
+  List<ConversationSummary> get selectedProviderStandaloneConversations =>
+      selectedProviderConversations
+          .where((conversation) => conversation.project == null)
+          .toList(growable: false);
+
   List<ConversationSummary> conversationsForProject(GatewayProject project) =>
       sortRecentConversations(
         selectedProviderConversations.where(
@@ -327,9 +325,7 @@ class DeviceSession extends ApplicationNotifier {
     return null;
   }
   _ConversationListScope _recentScope(GatewayProvider provider) =>
-      provider.methods.contains('project.list')
-          ? _ConversationListScope.standalone(provider.id)
-          : _ConversationListScope.all(provider.id);
+      _ConversationListScope.all(provider.id);
   _ConversationListScope _recentScopeForProvider(String providerId) {
     final provider = _providerForId(providerId);
     return provider == null
@@ -1601,6 +1597,33 @@ class DeviceSession extends ApplicationNotifier {
   }
 }
 
+/// Tasks waiting for input still require attention and must remain in Recent.
+bool conversationIsInProgress(ConversationSummary conversation) =>
+    conversation.status == ConversationStatus.running ||
+    conversation.status == ConversationStatus.waitingApproval ||
+    conversation.status == ConversationStatus.waitingUserInput;
+
+List<ConversationSummary> homeRecentConversations(
+  Iterable<ConversationSummary> values, {
+  DateTime? now,
+}) {
+  final cutoff = (now ?? DateTime.now()).subtract(const Duration(days: 14));
+  int priority(ConversationSummary value) => conversationIsInProgress(value)
+      ? 0
+      : value.readState.unread
+      ? 1
+      : 2;
+  return values
+      .where(
+        (value) => priority(value) < 2 || !value.updatedAt.isBefore(cutoff),
+      )
+      .toList(growable: false)
+    ..sort((left, right) {
+      final order = priority(left).compareTo(priority(right));
+      return order != 0 ? order : _compareRecentConversations(left, right);
+    });
+}
+
 List<ConversationSummary> sortRecentConversations(
   Iterable<ConversationSummary> values,
 ) {
@@ -1687,7 +1710,7 @@ String _tailRunes(String value, int limit) {
   return String.fromCharCodes(runes.skip(runes.length - limit));
 }
 
-enum _ConversationListScopeKind { all, standalone, project }
+enum _ConversationListScopeKind { all, project }
 
 class _ConversationListScope {
   const _ConversationListScope._({
@@ -1698,12 +1721,6 @@ class _ConversationListScope {
 
   const _ConversationListScope.all(String providerId)
       : this._(providerId: providerId, kind: _ConversationListScopeKind.all);
-
-  const _ConversationListScope.standalone(String providerId)
-      : this._(
-          providerId: providerId,
-          kind: _ConversationListScopeKind.standalone,
-        );
 
   _ConversationListScope.project(RoutedResourceId project)
       : this._(
@@ -1718,8 +1735,6 @@ class _ConversationListScope {
 
   ConversationProjectFilter get filter => switch (kind) {
         _ConversationListScopeKind.all => const AllConversationFilter(),
-        _ConversationListScopeKind.standalone =>
-          const StandaloneConversationFilter(),
         _ConversationListScopeKind.project => ProjectConversationFilter(project!),
       };
 
