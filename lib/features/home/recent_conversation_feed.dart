@@ -82,7 +82,8 @@ class _RecentConversationFeedState extends State<RecentConversationFeed> {
       ..clear()
       ..addAll(rows.skip(first).map((row) => (row.$1, row.$2)))
       ..addAll(rows.take(first).toList().reversed.map((row) => (row.$1, row.$2)));
-    widget.controller?.anchorIdentity = rows[first].$1;
+    widget.controller?.anchorCandidates =
+        List.unmodifiable(_anchors.map((anchor) => anchor.$1));
     _restoring = true;
   }
 
@@ -113,7 +114,7 @@ class _RecentConversationFeedState extends State<RecentConversationFeed> {
         // If every previous identity disappeared, retain the clamped offset.
         _restoring = false;
         _anchors.clear();
-        controller?.anchorIdentity = null;
+        controller?.anchorCandidates = const [];
       }
       if (widget.online && controller?.canAutoLoadMore == true &&
           widget.scrollController.position.extentAfter < 240) {

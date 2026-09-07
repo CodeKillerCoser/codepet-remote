@@ -67,7 +67,7 @@ void main() {
     controller.attach(client, recentProvider);
     client.requests.single.$2.complete(recentPage(['a', 'anchor']));
     await pumpEventQueue();
-    controller.anchorIdentity = 'test\u0000anchor';
+    controller.anchorCandidates = ['test\u0000anchor'];
     client.change('r2');
     client.requests.last.$2.complete(recentPage(['x', 'y'], revision: 'r2', nextCursor: 'new-next', snapshotCursor: 'e1'));
     await pumpEventQueue();
@@ -88,6 +88,95 @@ void main() {
     await pumpEventQueue();
     expect(client.requests.map((request) => request.$1), [null, null]);
     expect(controller.conversations.single.id, 'fresh');
+  });
+
+  test('deleted anchor uses a surviving neighbor without reading the remaining feed', () async {
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(['deleted', 'neighbor']));
+    await pumpEventQueue();
+    controller.anchorCandidates = ['test\u0000deleted', 'test\u0000neighbor'];
+    client.change('r2');
+    client.requests.last.$2.complete(recentPage(['new', 'neighbor'],
+      revision: 'r2', snapshotCursor: 'e1', nextCursor: 'large-unread-tail'));
+    await pumpEventQueue();
+    expect(client.requests, hasLength(2));
+    expect(controller.refreshing, isFalse);
+    expect(controller.conversations.map((item) => item.id), ['new', 'neighbor']);
+    expect(controller.canLoadMore, isTrue);
+  });
+
+  test('all missing anchor candidates bound lookahead and retain the remaining cursor', () async {
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(['deleted', 'also-deleted']));
+    await pumpEventQueue();
+    controller.anchorCandidates = ['test\u0000deleted', 'test\u0000also-deleted'];
+    client.change('r2');
+    client.requests.last.$2.complete(recentPage(['new-0', 'new-1'],
+      revision: 'r2', snapshotCursor: 'e1', nextCursor: 'lookahead-1'));
+    await pumpEventQueue();
+    for (var page = 1; page <= 5; page++) {
+      expect(client.requests.last.$1, 'lookahead-$page');
+      client.requests.last.$2.complete(recentPage(['replacement-$page'],
+        revision: 'r2', snapshotCursor: 'e1', nextCursor: 'lookahead-${page + 1}'));
+      await pumpEventQueue();
+    }
+    expect(client.requests, hasLength(7));
+    expect(controller.loaded, isTrue);
+    expect(controller.refreshing, isFalse);
+    expect(controller.canLoadMore, isTrue);
+    expect(controller.conversations.any((item) => item.id.contains('deleted')), isFalse);
+  });
+
+  test('a successful first page does not reset consecutive expired-tail recovery', () async {
+    const expired = GatewayProtocolException(
+      code: 'recent_cursor_expired', message: 'expired', retryable: false,
+    );
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(['a'], nextCursor: 'old'));
+    await pumpEventQueue();
+    final firstTail = controller.loadMore();
+    client.requests.last.$2.completeError(expired);
+    await pumpEventQueue();
+    client.requests.last.$2.complete(recentPage(['a'], revision: 'r2', nextCursor: 'new'));
+    await firstTail;
+    final secondTail = controller.loadMore();
+    client.requests.last.$2.completeError(expired);
+    await secondTail;
+    expect(client.requests, hasLength(4));
+    expect(controller.error, same(expired));
+    expect(controller.canAutoLoadMore, isFalse);
+    await controller.loadMore();
+    expect(client.requests, hasLength(4));
+    final retry = controller.retry();
+    expect(client.requests.last.$1, isNull);
+    client.requests.last.$2.complete(recentPage(['recovered']));
+    await retry;
+    expect(controller.error, isNull);
+  });
+
+  test('successful tail advancement renews automatic expiry recovery', () async {
+    const expired = GatewayProtocolException(
+      code: 'recent_cursor_expired', message: 'expired', retryable: false,
+    );
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(['a'], nextCursor: 'old'));
+    await pumpEventQueue();
+    final firstTail = controller.loadMore();
+    client.requests.last.$2.completeError(expired);
+    await pumpEventQueue();
+    client.requests.last.$2.complete(recentPage(['a'], revision: 'r2', nextCursor: 'new'));
+    await firstTail;
+    final progress = controller.loadMore();
+    client.requests.last.$2.complete(recentPage(['b'], revision: 'r2', nextCursor: 'following'));
+    await progress;
+    final following = controller.loadMore();
+    client.requests.last.$2.completeError(expired);
+    await pumpEventQueue();
+    expect(client.requests, hasLength(6));
+    expect(client.requests.last.$1, isNull);
+    client.requests.last.$2.complete(recentPage(['a', 'b'], revision: 'r3'));
+    await following;
+    expect(controller.error, isNull);
   });
 
   test('cursor expiry restarts first page once; refresh errors require retry', () async {

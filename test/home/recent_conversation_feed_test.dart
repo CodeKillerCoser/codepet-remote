@@ -1,4 +1,5 @@
 import 'package:codepet_remote/application/conversations/recent_conversation_controller.dart';
+import 'package:codepet_remote/application/errors/application_failures.dart';
 import 'package:codepet_remote/features/home/recent_conversation_feed.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -85,6 +86,44 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('successful first pages do not cause an endless expired-tail loop', (tester) async {
+    const expired = GatewayProtocolException(
+      code: 'recent_cursor_expired', message: 'expired tail', retryable: false,
+    );
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(['first'], nextCursor: 'tail-1'));
+    await tester.pumpWidget(home());
+    await tester.pump();
+    expect(client.requests, hasLength(2));
+    client.requests.last.$2.completeError(expired);
+    await tester.pump();
+    expect(client.requests, hasLength(3));
+    client.requests.last.$2.complete(recentPage(['first'], revision: 'r2', nextCursor: 'tail-2'));
+    await tester.pump();
+    await tester.pump();
+    expect(client.requests, hasLength(4));
+    client.requests.last.$2.completeError(expired);
+    await tester.pumpAndSettle();
+    expect(find.text('expired tail'), findsOneWidget);
+    expect(client.requests, hasLength(4));
+    // An unrelated invalidation may update the first page, but cannot unlock
+    // the exhausted automatic recovery cycle.
+    client.change('r3');
+    client.requests.last.$2.complete(recentPage(['first'], revision: 'r3',
+      snapshotCursor: 'e1', nextCursor: 'tail-3'));
+    await tester.pumpAndSettle();
+    expect(client.requests, hasLength(5));
+    expect(controller.canAutoLoadMore, isFalse);
+    await tester.ensureVisible(find.byKey(const Key('retry-recent')));
+    await tester.tap(find.byKey(const Key('retry-recent')));
+    await tester.pump();
+    expect(client.requests, hasLength(6));
+    client.requests.last.$2.complete(recentPage(['recovered'], revision: 'r3', snapshotCursor: 'e1'));
+    await tester.pumpAndSettle();
+    expect(find.text('expired tail'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('reconnect restores an anchor after the offline layout collapses', (tester) async {
     final rows = List.generate(30, (i) => 'row-$i');
     controller.attach(client, recentProvider);
@@ -114,13 +153,19 @@ void main() {
     scroll.jumpTo(800);
     await tester.pumpAndSettle();
     client.change('r2');
-    final removed = controller.anchorIdentity!.split('\u0000').last;
+    final removed = controller.anchorCandidates.first.split('\u0000').last;
     final neighbor = rows[rows.indexOf(removed) + 1];
     final before = tester.getTopLeft(find.text(neighbor)).dy;
-    client.requests.last.$2.complete(recentPage(
-      ['inserted', ...rows.where((row) => row != removed)], revision: 'r2', snapshotCursor: 'e1',
-    ));
+    final replacement = ['inserted', ...rows.where((row) => row != removed)];
+    client.requests.last.$2.complete(recentPage(replacement.take(15).toList(),
+      revision: 'r2', snapshotCursor: 'e1', nextCursor: 'restore-depth'));
+    await tester.pump();
+    expect(client.requests.last.$1, 'restore-depth');
+    client.requests.last.$2.complete(recentPage(replacement.skip(15).toList(),
+      revision: 'r2', snapshotCursor: 'e1', nextCursor: 'large-remaining-feed'));
     await tester.pumpAndSettle();
+    expect(client.requests, hasLength(3));
+    expect(controller.canLoadMore, isTrue);
     expect(find.text(removed), findsNothing);
     expect(tester.getTopLeft(find.text(neighbor)).dy, closeTo(before, 1));
     await tester.pumpWidget(const SizedBox());

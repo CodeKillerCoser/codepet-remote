@@ -14,6 +14,8 @@ class RecentConversationController extends ApplicationNotifier {
 
   final String providerId;
   static const pageSize = 20;
+  // This bounds anchor recovery, not feed membership or ordinary pagination.
+  static const anchorLookaheadPages = 5;
   GatewayClient? _client;
   GatewayEventWindow? _window;
   int? _providerGeneration;
@@ -28,8 +30,10 @@ class RecentConversationController extends ApplicationNotifier {
   String? revision;
   String? _nextCursor;
   final Set<String> _consumedCursors = {};
+  int _automaticRecoveries = 0;
+  Object? _automaticRecoveryError;
   List<ConversationSummary> conversations = const [];
-  String? anchorIdentity;
+  List<String> anchorCandidates = const [];
 
   bool get canLoadMore => supported && loaded && _nextCursor != null;
   bool get canAutoLoadMore => canLoadMore && !loading && error == null;
@@ -64,6 +68,8 @@ class RecentConversationController extends ApplicationNotifier {
     error = null;
     _nextCursor = null;
     _consumedCursors.clear();
+    _automaticRecoveries = 0;
+    _automaticRecoveryError = null;
     final window = _window;
     _window = null;
     if (window != null) unawaited(window.close());
@@ -74,7 +80,7 @@ class RecentConversationController extends ApplicationNotifier {
   bool _owns(int generation, GatewayClient client) =>
       !_disposed && generation == _requestGeneration && identical(client, _client);
 
-  Future<void> refresh({bool retryExpired = true}) async {
+  Future<void> refresh() async {
     final client = _client;
     if (!supported || client == null || client is! RecentConversationGateway) return;
     final generation = ++_requestGeneration;
@@ -83,7 +89,9 @@ class RecentConversationController extends ApplicationNotifier {
     loaded = false;
     loading = true;
     refreshing = true;
-    error = null;
+    // A successful first page is not proof that the following cursor works.
+    // Keep an exhausted recovery cycle paused even through invalidations.
+    error = _automaticRecoveryError;
     final previousWindow = _window;
     final window = client.openEventWindow();
     _window = window;
@@ -123,10 +131,14 @@ class RecentConversationController extends ApplicationNotifier {
       final replacement = <ConversationSummary>[];
       final seen = <String>{};
       final cursors = <String>{};
+      var anchorLookahead = 0;
       _append(replacement, seen, page.conversations);
       while ((replacement.length < restoreCount ||
-              anchorIdentity != null && !seen.contains(anchorIdentity)) &&
+              anchorCandidates.isNotEmpty &&
+                  !anchorCandidates.any(seen.contains) &&
+                  anchorLookahead < anchorLookaheadPages) &&
           page.nextCursor != null) {
+        if (replacement.length >= restoreCount) anchorLookahead++;
         final cursor = page.nextCursor!;
         if (!cursors.add(cursor)) throw const FormatException('最近分页游标重复');
         page = await gateway.recentConversations(providerId: providerId, cursor: cursor, limit: pageSize);
@@ -146,9 +158,9 @@ class RecentConversationController extends ApplicationNotifier {
       loaded = true;
     } catch (value) {
       if (!_owns(generation, client)) return;
-      if (retryExpired && value is GatewayProtocolException &&
+      if (value is GatewayProtocolException &&
           value.code == 'recent_cursor_expired') {
-        await refresh(retryExpired: false);
+        await _recoverSnapshot(value);
         return;
       }
       error = value;
@@ -164,7 +176,8 @@ class RecentConversationController extends ApplicationNotifier {
   Future<void> loadMore() async {
     final client = _client;
     final cursor = _nextCursor;
-    if (!canLoadMore || loading || client == null || cursor == null) return;
+    if (!canLoadMore || loading || _automaticRecoveryError != null ||
+        client == null || cursor == null) return;
     final generation = _requestGeneration;
     loading = true;
     error = null;
@@ -175,7 +188,7 @@ class RecentConversationController extends ApplicationNotifier {
       );
       if (!_owns(generation, client)) return;
       if (page.revision != revision) {
-        await refresh();
+        await _recoverSnapshot(const FormatException('最近分页快照已变化'));
         return;
       }
       if (page.nextCursor == cursor || _consumedCursors.contains(page.nextCursor)) {
@@ -184,12 +197,16 @@ class RecentConversationController extends ApplicationNotifier {
       _consumedCursors.add(cursor);
       final next = [...conversations];
       _append(next, next.map(_identity).toSet(), page.conversations);
+      if (next.length > conversations.length || page.nextCursor == null) {
+        _automaticRecoveries = 0;
+        _automaticRecoveryError = null;
+      }
       conversations = List.unmodifiable(next);
       _nextCursor = page.nextCursor;
     } catch (value) {
       if (!_owns(generation, client)) return;
       if (value is GatewayProtocolException && value.code == 'recent_cursor_expired') {
-        await refresh();
+        await _recoverSnapshot(value);
         return;
       }
       error = value;
@@ -201,7 +218,23 @@ class RecentConversationController extends ApplicationNotifier {
     }
   }
 
-  Future<void> retry() => _nextCursor != null && loaded ? loadMore() : refresh();
+  Future<void> _recoverSnapshot(Object cause) async {
+    _nextCursor = null;
+    if (_automaticRecoveries >= 1) {
+      _automaticRecoveryError = cause;
+      error = cause;
+      return;
+    }
+    _automaticRecoveries++;
+    await refresh();
+  }
+
+  Future<void> retry() {
+    if (loading) return Future.value();
+    _automaticRecoveries = 0;
+    _automaticRecoveryError = null;
+    return _nextCursor != null && loaded ? loadMore() : refresh();
+  }
 
   static String _identity(ConversationSummary conversation) =>
       conversation.resource?.key ?? '${conversation.providerId}\u0000${conversation.id}';
