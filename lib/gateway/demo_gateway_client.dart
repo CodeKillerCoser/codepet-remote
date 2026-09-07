@@ -2,9 +2,11 @@ import 'dart:async';
 
 import '../core/domain/models.dart';
 import '../application/ports/gateway_client.dart';
+import '../application/ports/recent_conversation_gateway.dart';
+import '../application/errors/application_failures.dart';
 import '../application/sync/gateway_event_window.dart';
 
-class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
+class DemoGatewayClient implements GatewayClient, ProjectGatewayClient, RecentConversationGateway {
   DemoGatewayClient({this.profileId = 'studio'}) : _now = DateTime.now().toUtc();
 
   final String profileId;
@@ -39,6 +41,7 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
             'project.update',
             'project.delete',
             'conversation.list',
+            'conversation.recent',
             'conversation.search',
             'conversation.get',
             'conversation.create',
@@ -220,6 +223,66 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
     );
   }
 
+  int _recentRevision = 1;
+  int _recentSnapshotSequence = 0;
+  final _recentSnapshots = <String, (List<ConversationSummary>, String, String)>{};
+
+  // The demo simulates the Gateway's complete aggregation, before pagination.
+  // The application/UI use exactly the same port as the real Gateway.
+  @override
+  Future<RecentConversationPage> recentConversations({
+    required String providerId, String? cursor, int limit = 20,
+  }) async {
+    if (providerId != _providerId || limit < 1 || limit > 100) {
+      throw const FormatException('Invalid demo recent request');
+    }
+    final String snapshotId;
+    final int offset;
+    if (cursor == null) {
+      snapshotId = 'snapshot-${++_recentSnapshotSequence}';
+      offset = 0;
+      final cutoff = DateTime.now().toUtc().subtract(const Duration(days: 14));
+      int priority(ConversationSummary item) => _activeTurns.containsKey(item.id) ||
+          item.status == ConversationStatus.running ||
+          item.status == ConversationStatus.waitingApproval ||
+          item.status == ConversationStatus.waitingUserInput ? 0 : item.readState.unread ? 1 : 2;
+      final all = _conversations.where((item) =>
+          priority(item) < 2 || !item.updatedAt.isBefore(cutoff)).toList()
+        ..sort((a, b) {
+          final group = priority(a).compareTo(priority(b));
+          if (group != 0) return group;
+          final time = b.updatedAt.compareTo(a.updatedAt);
+          return time != 0 ? time : (a.resource?.key ?? a.id).compareTo(b.resource?.key ?? b.id);
+        });
+      if (_recentSnapshots.length >= 32) _recentSnapshots.remove(_recentSnapshots.keys.first);
+      _recentSnapshots[snapshotId] = (List.unmodifiable(all), 'demo-recent-$_recentRevision', _cursor);
+    } else {
+      final parts = cursor.split('/');
+      snapshotId = parts.first;
+      offset = parts.length == 2 ? int.tryParse(parts.last) ?? -1 : -1;
+    }
+    final snapshot = _recentSnapshots[snapshotId];
+    if (snapshot == null || offset < 0 || offset > snapshot.$1.length) {
+      throw const GatewayProtocolException(code: 'recent_cursor_expired',
+        message: 'Demo recent cursor expired', retryable: false);
+    }
+    final end = (offset + limit).clamp(0, snapshot.$1.length).toInt();
+    return RecentConversationPage(
+      conversations: snapshot.$1.sublist(offset, end), revision: snapshot.$2,
+      snapshotCursor: snapshot.$3,
+      nextCursor: end < snapshot.$1.length ? '$snapshotId/$end' : null,
+    );
+  }
+
+  void _invalidateRecent() {
+    _recentSnapshots.clear();
+    _recentRevision++;
+    _events.add(RecentConversationsChangedEvent(
+      eventCursor: 'demo-${++_sequence}', providerId: _providerId,
+      revision: 'demo-recent-$_recentRevision',
+    ));
+  }
+
   @override
   Future<ConversationPage> searchConversations({
     required String providerId,
@@ -349,6 +412,7 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
       eventCursor: 'demo-${++_sequence}',
       conversation: conversation,
     ));
+    _invalidateRecent();
     return conversation;
   }
 
@@ -381,6 +445,7 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
     );
     _sentHistory.putIfAbsent(conversation.id, () => []).add(input);
     _activeTurns[conversation.id] = turn;
+    _invalidateRecent();
     _scheduleSentTurn(conversation, turn, text);
     return TurnSendReceipt(
       clientRequestId: clientRequestId,
@@ -439,6 +504,7 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
         eventCursor: 'demo-${++_sequence}',
         turn: completed,
       ));
+      _invalidateRecent();
     }));
   }
 
@@ -513,6 +579,7 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient {
             turn: completed,
           ),
         );
+        _invalidateRecent();
       }),
     );
   }

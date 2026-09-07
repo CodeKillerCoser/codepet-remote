@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'recent_conversation_feed.dart';
+
 import 'package:flutter/material.dart';
 
 import '../../application/sessions/device_session.dart';
@@ -15,7 +17,7 @@ export '../conversations/widgets/conversation_list_item.dart' show relativeConve
 
 const int _projectPageSize = 6;
 const int _conversationPageSize = 8;
-const int _recentPageSize = 20;
+
 int _standaloneWorkspaceSequence = 0;
 
 class RemoteHomeScreen extends StatefulWidget {
@@ -72,25 +74,6 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _advanceWindow({
-    required DeviceSession session,
-    required bool hasLocalMore,
-    required VoidCallback advance,
-  }) async {
-    if (session.isLoadingMoreConversations) return;
-    if (session.canLoadMoreSelectedProviderConversations) {
-      await session.loadMoreSelectedProviderConversations();
-      if (!mounted ||
-          session.connectionState != DeviceConnectionState.online ||
-          session.loadMoreError != null) {
-        return;
-      }
-    } else if (!hasLocalMore) {
-      return;
-    }
-    setState(advance);
-  }
-
   Future<void> _advanceProjectWindow({
     required DeviceSession session,
     required bool hasLocalMore,
@@ -116,6 +99,9 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
       session.removeListener(_changed);
     }
     _listenedSessions.clear();
+    for (final state in _deviceViewStates.values) {
+      state.scrollController.dispose();
+    }
     super.dispose();
   }
 
@@ -134,17 +120,10 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     final projects = session == null
         ? const <GatewayProject>[]
         : session.selectedProviderProjects;
-    final recent = session == null
-        ? const <ConversationSummary>[]
-        : homeRecentConversations(
-            deduplicateRoutedConversations(
-              session.selectedProviderRecentConversations,
-            ),
-          );
     final viewState = session == null
         ? _DeviceHomeViewState()
         : _deviceViewStates.putIfAbsent(
-            '${session.device.deviceId}\u0000${selectedProvider?.id ?? 'no-provider'}',
+            '${session.device.deviceId}\u0000${session.selectedProviderId ?? 'no-provider'}',
             _DeviceHomeViewState.new,
           );
     return Scaffold(
@@ -187,6 +166,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                 Expanded(
                   child: ListView(
                     key: const Key('home-content-scroll'),
+                    controller: viewState.scrollController,
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
                     children: [
@@ -255,7 +235,13 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                       ),
                       if (viewState.recentExpanded) ...[
                         const SizedBox(height: 10),
-                        ..._recentWidgets(context, session, recent, viewState),
+                                                RecentConversationFeed(
+                          key: ValueKey(viewState),
+                          controller: session.selectedProviderRecent,
+                          scrollController: viewState.scrollController,
+                          online: session.connectionState == DeviceConnectionState.online,
+                          onTap: (conversation) => _openConversation(context, session, conversation),
+                        ),
                       ],
                     ],
                   ),
@@ -388,83 +374,13 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     }
   }
 
-  List<Widget> _recentWidgets(
-    BuildContext context,
-    DeviceSession session,
-    List<ConversationSummary> recent,
-    _DeviceHomeViewState viewState,
-  ) {
-    if (session.connectionState != DeviceConnectionState.online) {
-      return const [];
-    }
-    if (recent.isEmpty) {
-      return [
-        const _MessageCard(
-          icon: Icons.forum_outlined,
-          title: '暂无最近会话',
-          message: '历史会话可从项目或聊天中查看。',
-        ),
-        if (session.canLoadMoreSelectedProviderConversations ||
-            session.isLoadingMoreConversations)
-          _PaginationControl(
-            buttonKey: Key('show-more-recent-${session.device.deviceId}'),
-            label: '显示更多对话',
-            loading: session.isLoadingMoreConversations,
-            error: session.loadMoreError,
-            onPressed: () {
-              unawaited(
-                _advanceWindow(
-                  session: session,
-                  hasLocalMore: false,
-                  advance: () => viewState.recentPages++,
-                ),
-              );
-            },
-          ),
-      ];
-    }
-    final requestedCount = viewState.recentPages * _recentPageSize;
-    final visibleCount = requestedCount < recent.length
-        ? requestedCount
-        : recent.length;
-    final widgets = <Widget>[];
-    widgets.add(ConversationList(
-      conversations: recent.take(visibleCount).toList(growable: false),
-      embedded: true,
-      padding: EdgeInsets.zero,
-      itemKey: (conversation) => Key('recent-conversation-${session.device.deviceId}-${conversationRoutingKey(conversation)}'),
-      onTap: (current) => _openConversation(context, session, current),
-    ));
-    if (visibleCount < recent.length ||
-        session.canLoadMoreSelectedProviderConversations ||
-        session.isLoadingMoreConversations) {
-      widgets.add(
-        _PaginationControl(
-          buttonKey: Key('show-more-recent-${session.device.deviceId}'),
-          label: '显示更多对话',
-          loading: session.isLoadingMoreConversations,
-          error: visibleCount < recent.length ? null : session.loadMoreError,
-          onPressed: () {
-            unawaited(
-              _advanceWindow(
-                session: session,
-                hasLocalMore: visibleCount < recent.length,
-                advance: () => viewState.recentPages++,
-              ),
-            );
-          },
-        ),
-      );
-    }
-    return widgets;
-  }
 }
 
 class _DeviceHomeViewState {
   bool projectsExpanded = true;
   bool recentExpanded = true;
   int projectPages = 1;
-  int recentPages = 1;
+  final scrollController = ScrollController();
 }
 
 class _DeviceDropdown extends StatelessWidget {

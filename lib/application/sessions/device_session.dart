@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../conversations/conversation_message_cache.dart';
+import '../conversations/recent_conversation_controller.dart';
 
 import '../../core/domain/models.dart';
 import '../errors/application_failures.dart';
@@ -121,6 +122,23 @@ class DeviceSession extends ApplicationNotifier {
   }
 
   final messageCache = ConversationMessageCache();
+  final Map<String, RecentConversationController> _recentControllers = {};
+
+  RecentConversationController? get selectedProviderRecent =>
+      _recentControllers[selectedProviderId];
+
+  String? get selectedProviderId => selectedProvider?.id ?? _selectedProviderId;
+
+  void _ensureRecent(GatewayProvider provider) {
+    final client = _client;
+    if (client == null) return;
+    final controller = _recentControllers.putIfAbsent(provider.id, () {
+      final value = RecentConversationController(providerId: provider.id);
+      value.addListener(_notifyListenersImmediately);
+      return value;
+    });
+    controller.attach(client, provider);
+  }
 
   static const int conversationPageSize = 20;
 
@@ -253,7 +271,7 @@ class DeviceSession extends ApplicationNotifier {
         .toList(growable: false);
   }
   List<ConversationSummary> get selectedProviderRecentConversations =>
-      homeRecentConversations(selectedProviderConversations);
+      selectedProviderRecent?.conversations ?? const [];
 
   List<ConversationSummary> get selectedProviderStandaloneConversations =>
       selectedProviderConversations
@@ -282,13 +300,17 @@ class DeviceSession extends ApplicationNotifier {
   bool get canLoadMoreSelectedProviderConversations {
     final provider = selectedProvider;
     if (provider == null) return false;
-    final scope = _recentScope(provider);
+    final scope = _standaloneScope(provider);
     return connectionState == DeviceConnectionState.online &&
         _conversationCursors[scope] != null;
   }
-  String get selectedProviderConversationCountLabel =>
-      '${selectedProviderRecentConversations.length}'
-      '${canLoadMoreSelectedProviderConversations ? '+' : ''}';
+  String get selectedProviderConversationCountLabel {
+    final recent = selectedProviderRecent;
+    if (recent == null || !recent.supported) return '—';
+    if (recent.refreshing) return '…';
+    if (!recent.loaded) return '—';
+    return '${recent.conversations.length}${recent.canLoadMore ? '+' : ''}';
+  }
 
   bool get canLoadMoreSelectedProviderProjects {
     final provider = selectedProvider;
@@ -324,13 +346,13 @@ class DeviceSession extends ApplicationNotifier {
     }
     return null;
   }
-  _ConversationListScope _recentScope(GatewayProvider provider) =>
-      _ConversationListScope.all(provider.id);
-  _ConversationListScope _recentScopeForProvider(String providerId) {
+  _ConversationListScope _standaloneScope(GatewayProvider provider) =>
+      _ConversationListScope.standalone(provider.id);
+  _ConversationListScope _standaloneScopeForProvider(String providerId) {
     final provider = _providerForId(providerId);
     return provider == null
-        ? _ConversationListScope.all(providerId)
-        : _recentScope(provider);
+        ? _ConversationListScope.standalone(providerId)
+        : _standaloneScope(provider);
   }
   bool conversationBelongsToProvider(
     ConversationSummary conversation,
@@ -450,7 +472,7 @@ class DeviceSession extends ApplicationNotifier {
         _projectCursors[provider.id] = page.nextCursor;
       }
       for (final provider in conversationListProviders.where((p) => p.isAvailable)) {
-        final scope = _recentScope(provider);
+        final scope = _standaloneScope(provider);
         final page = await client.listConversations(
           providerId: provider.id,
           projectFilter: scope.filter,
@@ -583,7 +605,7 @@ class DeviceSession extends ApplicationNotifier {
         .where((entry) =>
             entry.value != null &&
             (providerId == null || entry.key.providerId == providerId) &&
-            entry.key == _recentScopeForProvider(entry.key.providerId))
+            entry.key == _standaloneScopeForProvider(entry.key.providerId))
         .toList(growable: false);
     if (connectionState != DeviceConnectionState.online ||
         client == null ||
@@ -1026,6 +1048,9 @@ class DeviceSession extends ApplicationNotifier {
       generation == _runtimeGeneration && identical(_client, client);
 
   void _resetConversationPagination() {
+    for (final controller in _recentControllers.values) {
+      controller.detach();
+    }
     _initialConversationLoads.clear();
     conversations = const [];
     projects = const [];
@@ -1375,7 +1400,7 @@ class DeviceSession extends ApplicationNotifier {
               .where((scope) => scope.providerId == providerId)
               .toList(growable: false);
           final scopes = loadedScopes.isEmpty
-              ? [_recentScopeForProvider(providerId)]
+              ? [_standaloneScopeForProvider(providerId)]
               : loadedScopes;
           for (final scope in scopes) {
             final page = await client.listConversations(
@@ -1430,11 +1455,12 @@ class DeviceSession extends ApplicationNotifier {
   final Set<_ConversationListScope> _initialConversationLoads = {};
 
   void _ensureProviderLists(GatewayProvider provider) {
+    if (connectionState == DeviceConnectionState.online) _ensureRecent(provider);
     if (connectionState != DeviceConnectionState.online || !provider.isAvailable) return;
     if (provider.methods.contains('project.list') && !_projectCursors.containsKey(provider.id)) {
       if (!_projectRefreshes.contains(provider.id)) _queueProjectRefresh(provider.id);
     }
-    final scope = _recentScope(provider);
+    final scope = _standaloneScope(provider);
     if (provider.methods.contains('conversation.list') && !_loadedConversationScopes.contains(scope)) {
       unawaited(_loadInitialProviderConversations(provider, scope));
     }
@@ -1580,6 +1606,10 @@ class DeviceSession extends ApplicationNotifier {
   void dispose() {
     _cancelConversationNotification();
     _disposed = true;
+    for (final controller in _recentControllers.values) {
+      controller.dispose();
+    }
+    _recentControllers.clear();
     _reconnectEnabled = false;
     _retryableFailure = false;
     _cancelReconnect(resetAttempt: true);
@@ -1602,27 +1632,6 @@ bool conversationIsInProgress(ConversationSummary conversation) =>
     conversation.status == ConversationStatus.running ||
     conversation.status == ConversationStatus.waitingApproval ||
     conversation.status == ConversationStatus.waitingUserInput;
-
-List<ConversationSummary> homeRecentConversations(
-  Iterable<ConversationSummary> values, {
-  DateTime? now,
-}) {
-  final cutoff = (now ?? DateTime.now()).subtract(const Duration(days: 14));
-  int priority(ConversationSummary value) => conversationIsInProgress(value)
-      ? 0
-      : value.readState.unread
-      ? 1
-      : 2;
-  return values
-      .where(
-        (value) => priority(value) < 2 || !value.updatedAt.isBefore(cutoff),
-      )
-      .toList(growable: false)
-    ..sort((left, right) {
-      final order = priority(left).compareTo(priority(right));
-      return order != 0 ? order : _compareRecentConversations(left, right);
-    });
-}
 
 List<ConversationSummary> sortRecentConversations(
   Iterable<ConversationSummary> values,
@@ -1710,7 +1719,7 @@ String _tailRunes(String value, int limit) {
   return String.fromCharCodes(runes.skip(runes.length - limit));
 }
 
-enum _ConversationListScopeKind { all, project }
+enum _ConversationListScopeKind { standalone, project }
 
 class _ConversationListScope {
   const _ConversationListScope._({
@@ -1719,8 +1728,8 @@ class _ConversationListScope {
     this.project,
   });
 
-  const _ConversationListScope.all(String providerId)
-      : this._(providerId: providerId, kind: _ConversationListScopeKind.all);
+  const _ConversationListScope.standalone(String providerId)
+      : this._(providerId: providerId, kind: _ConversationListScopeKind.standalone);
 
   _ConversationListScope.project(RoutedResourceId project)
       : this._(
@@ -1734,7 +1743,7 @@ class _ConversationListScope {
   final RoutedResourceId? project;
 
   ConversationProjectFilter get filter => switch (kind) {
-        _ConversationListScopeKind.all => const AllConversationFilter(),
+        _ConversationListScopeKind.standalone => const StandaloneConversationFilter(),
         _ConversationListScopeKind.project => ProjectConversationFilter(project!),
       };
 
