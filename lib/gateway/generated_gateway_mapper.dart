@@ -583,7 +583,19 @@ final class GeneratedGatewayMapper {
         );
       case sdk.ProtocolEventName.conversationItemUpserted:
         final payload = envelope.payload as sdk.ConversationItemUpsertedEvent;
-        final item = _itemParts(payload.item);
+        final canonical = payload.item;
+        if (canonical == null) {
+          final route = payload.conversation;
+          if (route == null) throw const FormatException('Item invalidation requires a conversation route');
+          _requireResourceRoute(route, expectedDeviceId: expectedDeviceId,
+            expectedProviderRouteKeys: expectedProviderRouteKeys);
+          return ConversationItemUpsertedEvent(eventCursor: cursor,
+            conversationId: resourceKey(route), item: null);
+        }
+        final item = _itemParts(canonical);
+        if (payload.conversation != null && resourceKey(payload.conversation!) != resourceKey(item.conversation)) {
+          throw const FormatException('Item invalidation conversation mismatch');
+        }
         _requireSameRoute(item.resource, item.turn);
         _requireSameRoute(item.resource, item.conversation);
         _requireResourceRoute(
@@ -594,7 +606,7 @@ final class GeneratedGatewayMapper {
         return ConversationItemUpsertedEvent(
           eventCursor: cursor,
           conversationId: resourceKey(item.conversation),
-          item: message(payload.item, 0),
+          item: message(canonical, 0),
         );
       case sdk.ProtocolEventName.conversationActivityChanged:
         final payload = envelope.payload as sdk.ConversationActivityChangedEvent;

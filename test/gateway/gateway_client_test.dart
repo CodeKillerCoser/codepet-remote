@@ -1631,8 +1631,8 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     final event = received.single as ConversationItemUpsertedEvent;
-    expect(event.item.tool?.name, 'shell');
-    expect(event.item.tool?.outcome?.exitCode, 0);
+    expect(event.item!.tool?.name, 'shell');
+    expect(event.item!.tool?.outcome?.exitCode, 0);
     expect(event.conversationId, contains('conversation-1'));
     await subscription.cancel();
     await client.close();

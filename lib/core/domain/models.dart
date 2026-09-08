@@ -1452,41 +1452,42 @@ class ConversationDetail {
     }
 
     if (event is ConversationItemUpsertedEvent &&
-        event.conversationId == summary.id) {
+        event.conversationId == summary.id && event.item != null) {
+      final item = event.item!;
       final nextMessages = [...committedMessages];
       var index = nextMessages.indexWhere(
         (message) =>
-            message.turnId == event.item.turnId &&
+            message.turnId == item.turnId &&
             (message.itemId ?? message.id) ==
-                (event.item.itemId ?? event.item.id),
+                (item.itemId ?? item.id),
       );
-      if (index == -1 && event.item.role == MessageRole.user) {
+      if (index == -1 && item.role == MessageRole.user) {
         final clientRequestId =
-            _clientRequestIdForTurn(event.item.turnId);
+            _clientRequestIdForTurn(item.turnId);
         if (clientRequestId != null) {
           index = nextMessages.indexWhere(
             (message) =>
                 message.id == _pendingUserMessageId(clientRequestId) &&
-                message.turnId == event.item.turnId,
+                message.turnId == item.turnId,
           );
         }
       }
       final replacedKey = index == -1 ? null : _messageKey(nextMessages[index]);
       if (index == -1) {
-        nextMessages.add(event.item);
+        nextMessages.add(item);
       } else {
-        nextMessages[index] = event.item;
+        nextMessages[index] = item;
       }
       final nextLiveOutput = liveOutputMessages
           .where((message) =>
-              message.turnId != event.item.turnId ||
+              message.turnId != item.turnId ||
               (message.itemId ?? message.id) !=
-                  (event.item.itemId ?? event.item.id))
+                  (item.itemId ?? item.id))
           .toList(growable: false);
       return ConversationDetail(
       messageOrder: [
           for (final key in _orderedKeys)
-            key == replacedKey ? _messageKey(event.item) : key,
+            key == replacedKey ? _messageKey(item) : key,
         ],
         summary: summary,
         committedMessages: nextMessages,
@@ -1870,7 +1871,7 @@ final class ConversationItemUpsertedEvent extends GatewayEvent {
   });
 
   final String conversationId;
-  final GatewayMessage item;
+  final GatewayMessage? item;
 }
 
 final class ConversationActivityChangedEvent extends GatewayEvent {

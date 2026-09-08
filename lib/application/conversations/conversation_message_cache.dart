@@ -14,6 +14,11 @@ class ConversationMessageSource extends ApplicationNotifier {
   DateTime lastAccess;
   int readers = 0;
   bool initialized = false;
+  bool interactionAcquired = false;
+  Future<ConversationDetail> Function()? loadLatest;
+  bool _refreshing = false;
+  bool _refreshPending = false;
+  final Set<String> _changedDuringRefresh = {};
   int version = 0;
   Completer<void>? initialLoad;
   bool loadingEarlier = false;
@@ -28,11 +33,67 @@ class ConversationMessageSource extends ApplicationNotifier {
   void applyEvent(GatewayEvent incoming) {
     if (closed) return;
     final event = incoming is ObservedGatewayEvent ? incoming.event : incoming;
-    final next = detail.apply(event);
+    if (event is ConversationItemUpsertedEvent && event.item == null &&
+        event.conversationId == detail.summary.id) {
+      if (!interactionAcquired && loadLatest != null) {
+        _refreshPending = true;
+        unawaited(_refreshLatest());
+      }
+      return;
+    }
+    if (_refreshing) {
+      if (event is ConversationItemUpsertedEvent && event.item != null && event.conversationId == detail.summary.id) {
+        final item = event.item!;
+        _changedDuringRefresh.add('${item.turnId}\u0000${item.itemId ?? item.id}');
+      } else if (event is TurnOutputDeltaEvent && event.conversationId == detail.summary.id) {
+        _changedDuringRefresh.add('${event.turnId}\u0000${event.itemId}');
+      }
+    }
+    var next = detail.apply(event);
     if (identical(next, detail)) return;
+    if (!interactionAcquired && event is ConversationUpsertedEvent &&
+        next.summary.activeTurn == null) {
+      // External lifecycle facts have no native turn identity. Retire stale
+      // active projections without manufacturing a terminal turn or losing text.
+      final ended = next.summary.status == ConversationStatus.idle;
+      next = ConversationDetail(summary: next.summary,
+        committedMessages: ended ? [for (final item in next.committedMessages) item.copyWith(isStreaming: false)] : next.committedMessages,
+        liveOutputMessages: ended ? [for (final item in next.liveOutputMessages) item.copyWith(isStreaming: false)] : next.liveOutputMessages,
+        turns: next.turns.where((turn) => turn.status.isTerminal).toList(),
+        messageOrder: next.messageOrder, lastEventCursor: next.lastEventCursor);
+    }
     detail = next;
     lastEvent = incoming;
     notifyApplicationListeners();
+  }
+
+  Future<void> _refreshLatest() async {
+    if (_refreshing) return;
+    _refreshing = true;
+    final expectedVersion = version;
+    try {
+      while (_refreshPending && !closed && !interactionAcquired && version == expectedVersion) {
+        _refreshPending = false;
+        _changedDuringRefresh.clear();
+        final page = await loadLatest!();
+        if (closed || interactionAcquired || version != expectedVersion) return;
+        // Canonical upserts preserve older pages, item identity and pagination/fence.
+        for (final item in page.committedMessages) {
+          if (_changedDuringRefresh.contains('${item.turnId}\u0000${item.itemId ?? item.id}')) continue;
+          detail = detail.apply(ConversationItemUpsertedEvent(
+            eventCursor: detail.lastEventCursor ?? '', conversationId: detail.summary.id, item: item));
+        }
+        historyError = null;
+        notifyApplicationListeners();
+      }
+    } catch (error) {
+      if (!closed && version == expectedVersion && !interactionAcquired) {
+        historyError = '更新消息失败：$error';
+        notifyApplicationListeners();
+      }
+    } finally {
+      _refreshing = false;
+    }
   }
 
   @override

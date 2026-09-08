@@ -310,6 +310,7 @@ class ConversationDetailController extends ApplicationNotifier {
       }
       _lastInteractionFailure = null;
       _interactionAcquired = true;
+      _source?.interactionAcquired = true;
       _interactionError = null;
       if (!_selectionInitializedFromInteraction &&
           _hasSelection(interaction.selection)) {
@@ -333,6 +334,7 @@ class ConversationDetailController extends ApplicationNotifier {
       }
       _lastInteractionFailure = failure;
       _interactionAcquired = false;
+      _source?.interactionAcquired = false;
       _interactionError = _interactionFailureMessage(error);
       _scheduleInteractionRetry(
         lease: lease,
@@ -416,6 +418,8 @@ class ConversationDetailController extends ApplicationNotifier {
         return;
       }
       source.window = window;
+      source.interactionAcquired = _interactionAcquired;
+      source.loadLatest = () async => (await lease.getConversation(conversation)).detail;
       source.nextCursor = snapshot.nextCursor;
       source.loadedCursors.clear();
       source.historyError = null;

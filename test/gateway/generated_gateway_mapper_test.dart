@@ -7,6 +7,20 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const mapper = GeneratedGatewayMapper();
 
+  test('empty item updates retain routing and reject absent or foreign routes', () {
+    sdk.ProtocolEventEnvelope envelope(Map<String, Object?> payload) => sdk.ProtocolEventEnvelope.fromJson({
+      'jsonrpc': '2.0', 'method': 'conversation.itemUpserted',
+      'params': {'eventCursor': 'hint-fence', 'payload': payload},
+    });
+    final update = envelope({'conversation': {'providerId': 'test', 'nativeResourceId': 'thread'}, 'updateId': 'hook-1'});
+    final event = mapper.event(update, expectedDeviceId: 'device', expectedProviderRouteKeys: {'test'}) as ConversationItemUpsertedEvent;
+    expect(event.item, isNull);
+    expect(event.eventCursor, 'hint-fence');
+    expect(event.conversationId, contains('thread'));
+    expect(() => mapper.event(update, expectedDeviceId: 'device', expectedProviderRouteKeys: {'other'}), throwsFormatException);
+    expect(() => mapper.event(envelope({}), expectedDeviceId: 'device', expectedProviderRouteKeys: {'test'}), throwsFormatException);
+  });
+
   test('recent invalidation keeps its independent revision and event cursor', () {
     final envelope = sdk.ProtocolEventEnvelope.fromJson({
       'jsonrpc': '2.0', 'method': 'conversation.recentChanged',
