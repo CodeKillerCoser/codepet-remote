@@ -347,7 +347,9 @@ class DeviceSession extends ApplicationNotifier {
     return null;
   }
   _ConversationListScope _standaloneScope(GatewayProvider provider) =>
-      _ConversationListScope.standalone(provider.id);
+      provider.methods.contains('project.list')
+          ? _ConversationListScope.standalone(provider.id)
+          : _ConversationListScope.all(provider.id);
   _ConversationListScope _standaloneScopeForProvider(String providerId) {
     final provider = _providerForId(providerId);
     return provider == null
@@ -1719,7 +1721,7 @@ String _tailRunes(String value, int limit) {
   return String.fromCharCodes(runes.skip(runes.length - limit));
 }
 
-enum _ConversationListScopeKind { standalone, project }
+enum _ConversationListScopeKind { all, standalone, project }
 
 class _ConversationListScope {
   const _ConversationListScope._({
@@ -1727,6 +1729,9 @@ class _ConversationListScope {
     required this.kind,
     this.project,
   });
+
+  const _ConversationListScope.all(String providerId)
+      : this._(providerId: providerId, kind: _ConversationListScopeKind.all);
 
   const _ConversationListScope.standalone(String providerId)
       : this._(providerId: providerId, kind: _ConversationListScopeKind.standalone);
@@ -1743,6 +1748,7 @@ class _ConversationListScope {
   final RoutedResourceId? project;
 
   ConversationProjectFilter get filter => switch (kind) {
+        _ConversationListScopeKind.all => const AllConversationFilter(),
         _ConversationListScopeKind.standalone => const StandaloneConversationFilter(),
         _ConversationListScopeKind.project => ProjectConversationFilter(project!),
       };

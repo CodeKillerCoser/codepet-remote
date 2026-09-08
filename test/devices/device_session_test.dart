@@ -194,6 +194,28 @@ void main() {
     session.dispose();
   });
 
+  test('provider without projects uses all conversations through pagination',
+      () async {
+    final client = _FakeClient([], nextCursor: 'next-page');
+    final session = DeviceSession(
+      device: _device('without-projects'),
+      clientFactory: () => client,
+    );
+
+    await session.connect();
+
+    expect(session.connectionState, DeviceConnectionState.online);
+    expect(session.selectedProviderSupportsProjects, isFalse);
+    expect(client.listRequests.single.projectFilter, isA<AllConversationFilter>());
+
+    await session.loadMoreConversations();
+
+    expect(client.listRequests, hasLength(2));
+    expect(client.listRequests.last.cursor, 'next-page');
+    expect(client.listRequests.last.projectFilter, isA<AllConversationFilter>());
+    session.dispose();
+  });
+
   test('loads projects independently and uses explicit conversation scopes',
       () async {
     final project = _gatewayProject();
