@@ -25,10 +25,12 @@ final class UserMessageBlock extends ConversationTimelineBlock {
     required super.sourceItemIds,
     required super.isStreaming,
     required this.text,
+    this.attachments = const [],
     super.status,
   });
 
   final String text;
+  final List<GatewayMessageContent> attachments;
 }
 
 final class AssistantMessageBlock extends ConversationTimelineBlock {
@@ -354,6 +356,9 @@ final class ConversationTimelineProjector {
             sourceItemIds: common.sourceItemIds,
             isStreaming: common.isStreaming,
             text: text,
+            attachments: List.unmodifiable(contents.where((content) =>
+                const {'image', 'audio', 'resource-link', 'embedded-resource'}
+                    .contains(content.kind))),
             status: common.status,
           );
         }

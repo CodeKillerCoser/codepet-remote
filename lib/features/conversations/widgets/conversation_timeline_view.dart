@@ -66,15 +66,68 @@ class _UserMessage extends StatelessWidget {
                   horizontal: 16,
                   vertical: 12,
                 ),
-                child: _MarkdownContent(
-                  data: block.text,
-                  textStyle: Theme.of(context).textTheme.bodyLarge,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (block.attachments.isNotEmpty)
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final attachment in block.attachments)
+                            _UserAttachmentLabel(attachment: attachment),
+                        ],
+                      ),
+                    if (block.attachments.isNotEmpty && block.text.isNotEmpty)
+                      const SizedBox(height: 8),
+                    if (block.text.isNotEmpty)
+                      _MarkdownContent(
+                        data: block.text,
+                        textStyle: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                  ],
                 ),
               ),
             ),
 
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _UserAttachmentLabel extends StatelessWidget {
+  const _UserAttachmentLabel({required this.attachment});
+
+  final GatewayMessageContent attachment;
+
+  @override
+  Widget build(BuildContext context) {
+    final uri = Uri.tryParse(attachment.uri ?? '');
+    final fallback = switch (attachment.kind) {
+      'image' => '图片附件',
+      'audio' => '音频附件',
+      _ => '文件附件',
+    };
+    final name = attachment.name?.trim();
+    final label = name?.isNotEmpty == true
+        ? name!
+        : uri != null && uri.scheme != 'data' && uri.pathSegments.isNotEmpty
+            ? uri.pathSegments.last
+            : fallback;
+    return Tooltip(
+      message: label,
+      child: Chip(
+        key: ValueKey('user-attachment-${attachment.id}'),
+        avatar: Icon(switch (attachment.kind) {
+          'image' => Icons.image_outlined,
+          'audio' => Icons.audio_file_outlined,
+          _ => Icons.insert_drive_file_outlined,
+        }, size: 18),
+        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        visualDensity: VisualDensity.compact,
       ),
     );
   }
