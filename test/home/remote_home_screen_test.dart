@@ -14,6 +14,36 @@ import 'package:flutter_test/flutter_test.dart';
 final _testNow = DateTime.now().toUtc();
 
 void main() {
+  testWidgets('connection failure after scrolling keeps recovery actions usable', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final session = DeviceSession(
+      device: const PairedDevice(deviceId: 'scroll-failure', displayName: 'Phone host', connectionKind: DeviceConnectionKind.demo),
+      clientFactory: () => DemoGatewayClient(profileId: 'recent'),
+      autoReconnect: false,
+    );
+    final connecting = session.connect();
+    await tester.pump(const Duration(seconds: 1));
+    await connecting;
+    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: [session])));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byKey(const Key('home-content-scroll')), const Offset(0, -1500));
+    await tester.pumpAndSettle();
+    session.disconnect();
+    session.connectionState = DeviceConnectionState.failed;
+    session.error = 'Gateway timed out';
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('device-connection-reconnect')).hitTestable(), findsOneWidget);
+    await tester.tap(find.byKey(const Key('home-overflow-menu')));
+    await tester.pumpAndSettle();
+    expect(find.text('App 设置'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
   testWidgets('chat retains old standalone history and excludes project conversations', (tester) async {
     _useTallSurface(tester);
     final old = _conversation('old-chat', '旧聊天', updatedMilliseconds: -const Duration(days: 30).inMilliseconds);

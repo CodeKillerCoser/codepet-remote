@@ -51,12 +51,14 @@ class _RecentConversationFeedState extends State<RecentConversationFeed> {
       oldWidget.scrollController.removeListener(_scrolled);
       widget.scrollController.addListener(_scrolled);
     }
-    if (oldWidget.online && !widget.online) _captureAnchor();
+    if (oldWidget.online && !widget.online) _restoring = _anchors.isNotEmpty;
   }
 
   void _changed() {
     if (!mounted) return;
-    if (widget.controller?.refreshing == true && !_restoring) _captureAnchor();
+    if (widget.controller?.refreshing == true && !_restoring) {
+      _restoring = _anchors.isNotEmpty;
+    }
     setState(() {});
   }
 
@@ -84,11 +86,9 @@ class _RecentConversationFeedState extends State<RecentConversationFeed> {
       ..addAll(rows.take(first).toList().reversed.map((row) => (row.$1, row.$2)));
     widget.controller?.anchorCandidates =
         List.unmodifiable(_anchors.map((anchor) => anchor.$1));
-    _restoring = true;
   }
 
   void _scrolled() {
-    if (widget.controller?.refreshing == true || _restoring) _captureAnchor();
     _scheduleFrame();
   }
 
@@ -119,6 +119,12 @@ class _RecentConversationFeedState extends State<RecentConversationFeed> {
       if (widget.online && controller?.canAutoLoadMore == true &&
           widget.scrollController.position.extentAfter < 240) {
         unawaited(controller!.loadMore());
+      }
+      // Sliver children can temporarily lack layout offsets during rebuilds
+      // (notably when a connection notice is inserted). Only measure a completed
+      // layout, retaining that snapshot while offline or refreshing.
+      if (widget.online && controller?.refreshing == false && !_restoring) {
+        _captureAnchor();
       }
     });
   }
