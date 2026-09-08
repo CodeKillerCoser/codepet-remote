@@ -45,7 +45,9 @@ class RecentConversationController extends ApplicationNotifier {
     if (identical(_client, client) &&
         _providerGeneration == provider.generation &&
         _capabilityRevision == provider.capabilities.revision &&
-        supported == available) return;
+        supported == available) {
+      return;
+    }
     detach();
     _client = client;
     _providerGeneration = provider.generation;
@@ -177,7 +179,9 @@ class RecentConversationController extends ApplicationNotifier {
     final client = _client;
     final cursor = _nextCursor;
     if (!canLoadMore || loading || _automaticRecoveryError != null ||
-        client == null || cursor == null) return;
+        client == null || cursor == null) {
+      return;
+    }
     final generation = _requestGeneration;
     loading = true;
     error = null;

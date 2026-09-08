@@ -5,6 +5,7 @@ import 'package:codepet_remote/application/sessions/device_session.dart';
 import 'package:codepet_remote/features/conversations/conversation_search_screen.dart';
 import 'package:codepet_remote/features/home/remote_home_screen.dart';
 import 'package:codepet_remote/application/ports/gateway_client.dart';
+import 'package:codepet_remote/application/ports/recent_conversation_gateway.dart';
 import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
@@ -468,7 +469,7 @@ class _SearchRequest {
   final int limit;
 }
 
-class _SearchClient implements GatewayClient {
+class _SearchClient implements GatewayClient, RecentConversationGateway {
   _SearchClient({
     required this.providers,
     required this.onSearch,
@@ -516,6 +517,17 @@ class _SearchClient implements GatewayClient {
     int limit = 50,
   }) async => ConversationPage(
         conversations: listValues[providerId] ?? const [],
+        snapshotCursor: 'handshake',
+      );
+
+  @override
+  Future<RecentConversationPage> recentConversations({
+    required String providerId,
+    String? cursor,
+    int limit = 20,
+  }) async => RecentConversationPage(
+        conversations: listValues[providerId] ?? const [],
+        revision: 'recent-1',
         snapshotCursor: 'handshake',
       );
 
@@ -576,7 +588,7 @@ const _primaryProvider = GatewayProvider(
   status: ProviderStatus.ready,
   capabilities: GatewayCapabilities(
     revision: 'test-1',
-    methods: ['conversation.list', 'conversation.search', 'conversation.get'],
+    methods: ['conversation.list', 'conversation.recent', 'conversation.search', 'conversation.get'],
   ),
 );
 
@@ -586,7 +598,7 @@ const _secondaryProvider = GatewayProvider(
   status: ProviderStatus.ready,
   capabilities: GatewayCapabilities(
     revision: 'test-1',
-    methods: ['conversation.list', 'conversation.search', 'conversation.get'],
+    methods: ['conversation.list', 'conversation.recent', 'conversation.search', 'conversation.get'],
   ),
 );
 

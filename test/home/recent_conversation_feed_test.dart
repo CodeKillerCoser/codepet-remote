@@ -57,6 +57,8 @@ void main() {
     expect(find.textContaining('offline page'), findsOneWidget);
     expect(client.requests.length, 2);
     await tester.ensureVisible(find.byKey(const Key('retry-recent')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('retry-recent')).hitTestable(), findsOneWidget);
     await tester.tap(find.byKey(const Key('retry-recent')));
     await tester.pump();
     expect(client.requests.length, 3);
