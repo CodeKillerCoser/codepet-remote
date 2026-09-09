@@ -39,6 +39,7 @@ dependencies:
   codepet_lan_channel_sdk:
     path: sdk/lan/codepet-lan-channel-sdk
   crypto: ^3.0.7
+  cryptography: ^2.9.0
   device_info_plus: ^13.2.0
   flutter:
     sdk: flutter

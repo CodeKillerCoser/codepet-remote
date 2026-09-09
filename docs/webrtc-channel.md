@@ -1,26 +1,29 @@
 # WebRTC 通道开发状态
 
-2026-09-09：已实现原生 RTC 通道，默认 LAN/WSS 保留；公网信令与 TURN 待后续交付。
+2026-09-09：已实现原生 RTC 通道及公网信令接入，默认 LAN/WSS 保留；公网服务已部署，验收进行中。
 文件挂载、上传下载和预览不在本轮范围。
 
 ## 使用
 
 先按既有 LAN 流程配对，在首页菜单进入 App 设置，打开“开启 WebRTC”，
 完全退出并重新打开 App。设置页“当前通道：WebRTC”表示此次启动选用了 RTC。
-组合入口选择 WebRtcGatewayTransport；GatewayClient、业务方法和界面不判断通道。
+组合入口选择 RoutedRtcTransport，由通道层选择本地或公网信令；GatewayClient、业务方法不判断路由。
 开关默认关闭，关闭后重启恢复 LAN/WSS。旧设备记录、TLS pin、credential 不迁移。
 设置替代原 CODEPET_WEBRTC 编译期开关，普通 Debug/Release 构建均可在 App 内选择。
 lib/app/channel_preferences.dart 负责持久化，main.dart 在启动前读取；
 设置页只保存下次启动的值，组合入口本次启动的选择保持不变，重连也不会提前切换。
 保存失败保留原开关状态并提示重试。不会自动回退到 WSS。
 
-验收需使用包含 WebRTC 实现的 Host 版本（当前隔离分支提交 7de1663）；旧 Host 不提供 RTC 信令。
+验收需安装本轮包含公网接入的 Host 与 Remote；旧版 LAN RTC 包不包含公网授权升级。
 打开开关重启后连接已配对设备，验证会话列表、请求和事件；再关闭重启验证 LAN。
 仅把 App 切到后台不算重启。手机验收和覆盖安装需使用固定 Debug 签名的 APK。
 
-此阶段仍需要 LAN HTTPS 信令可达，不能将 Wi-Fi 互通等同于公网完成。
-信令接口独立为 RtcSignaling；当前 PinnedLanRtcSignaling POST 标准 SDP 至
-`/remote/v1/webrtc/offer`，沿用证书 pin 和 bearer。没有 STUN/TURN 服务配置。
+首次在 LAN 连接时，使用原 TLS pin 和 bearer 完成 `/remote/v1/channel-bootstrap`，
+把设备签名私钥和独立信令 token 保存在安全存储。退出 LAN 后可通过公网信令连接。
+当前部署地址为 https://172.96.254.12:8443；地址由可信 bootstrap 下发，不硬编码进业务层。
+不要求注册账号。签名验证绑定 host/client/attempt/expiry/offerHash 和 SDP，业务 bearer 不交给云端。
+本地信令仍使用 `/remote/v1/webrtc/offer`，云端故障不影响已健康连接的数据通道。
+TURN 凭据短期获取，在到期前受控重连；不自动重放业务写请求。通道诊断记录实际 direct/relay。
 
 ## 实现与边界
 
@@ -38,6 +41,11 @@ lib/app/channel_preferences.dart 负责持久化，main.dart 在启动前读取�
   `protocol/gateway/v1/webrtc-cpg1.md` 为准。
 
 ## 验证与签名
+
+公网增量：最终 Gateway/设置/App/分层测试 107 项通过；Debug APK 构建成功且仍用仓库固定
+签名。Host Windows 双 peer 强制 TURN/UDP 探针已验证 VPS 中继、大消息与撤销。
+Android 公网探针 APK 构建成功，但手机锁定导致 ADB 安装等待，测试尚未运行。
+Rust webrtc-ice 0.14.0 仅实现 TURN/UDP；桌面端 TURN/TCP/TLS 尚不支持，不作兜底承诺。
 
 设置入口增量验证（2026-09-09）：flutter test test/settings test/app test/architecture
 共 13 项通过，覆盖默认 LAN、保存后当前通道不变、重开读取、关闭恢复和保存失败；
@@ -63,5 +71,6 @@ Windows Host ↔ Android RMX3366 原生探针通过握手、大消息、心跳�
 
 ## 剩余交付
 
-公网 rendezvous 与准入、TURN 凭据/部署、大陆移动网络、网络切换/重连及最终验收。
-现有美国 VPS 尚未部署或修改。本轮没有把文件能力混入通道实现。
+大陆手机实际跨网络验收、TURN TCP/TLS 分支、网络切换及临时凭据到期恢复仍待实测。
+VPS 上信令/coturn 已启动，IP 证书自动续期模拟通过，原有 xray 443 服务保留。
+部署与协议细节见 Host `knowledge/40-runbooks/webrtc-public-signaling.md`。

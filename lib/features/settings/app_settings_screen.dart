@@ -105,7 +105,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         SwitchListTile(
           key: const Key('webrtc-switch'),
           title: const Text('开启 WebRTC'),
-          subtitle: const Text('更改后完全退出并重新打开 App 生效。当前仍需与电脑处于同一局域网。'),
+          subtitle: const Text('更改后完全退出并重新打开 App 生效。首次公网授权需在同一局域网连接新版电脑端。'),
           value: _webRtcEnabled,
           onChanged: _savingChannel || widget.onWebRtcChanged == null
               ? null

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:codepet_remote/gateway/webrtc/signaling.dart';
+import 'package:codepet_remote/gateway/webrtc/cloud_signaling.dart';
 import 'package:codepet_remote/gateway/webrtc/webrtc_gateway_transport.dart';
 import 'package:codepet_remote/security/pinned_tls.dart';
 
@@ -23,12 +24,16 @@ void main() {
         reason: 'Use the ephemeral Host probe config',
       );
       final uri = Uri.parse(uriValue);
+      const cloud = bool.fromEnvironment('RTC_CLOUD_PROBE');
+      RtcSignaling signaling = PinnedLanRtcSignaling(gatewayUri: uri, credential: credential, certSha256: pin);
+      if (cloud) {
+        final pairing = CloudPairing('device-lan-listener', credential, pin);
+        await pairing.bootstrap(uri);
+        signaling = CloudRtcSignaling((await pairing.load())!, forceRelay: true);
+      }
       final transport = WebRtcGatewayTransport(
-        signaling: PinnedLanRtcSignaling(
-          gatewayUri: uri,
-          credential: credential,
-          certSha256: pin,
-        ),
+        signaling: signaling,
+        connectTimeout: const Duration(seconds: 60),
       );
       final errors = <Object>[];
       final events = <Map<String, dynamic>>[];
@@ -39,6 +44,7 @@ void main() {
       addTearDown(subscription.cancel);
       addTearDown(transport.close);
       await transport.connect();
+      if (cloud) expect(await transport.selectedPathKind(), 'relay');
       final handshake = await transport.request(
         Map<String, Object?>.from(jsonDecode(handshakeValue) as Map),
       );

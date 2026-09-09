@@ -10,3 +10,4 @@ export '../gateway/pinned_web_socket_transport.dart';
 export '../gateway/transport.dart';
 export '../gateway/webrtc/signaling.dart';
 export '../gateway/webrtc/webrtc_gateway_transport.dart';
+export '../gateway/webrtc/routed_rtc_transport.dart';

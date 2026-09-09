@@ -6,6 +6,11 @@ abstract interface class RtcSignaling {
   Future<Map<String, dynamic>> answer(Map<String, dynamic> offer);
 }
 
+abstract interface class RtcIceSignaling implements RtcSignaling {
+  Future<Map<String, dynamic>> configuration();
+  void close();
+}
+
 /// Bootstrap adapter for already paired LAN devices. The TLS pin authenticates
 /// the SDP and its ephemeral DTLS fingerprint; bearer authenticates the client.
 final class PinnedLanRtcSignaling implements RtcSignaling {

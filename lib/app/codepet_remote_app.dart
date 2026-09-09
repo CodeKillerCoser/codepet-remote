@@ -222,7 +222,12 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
           );
         }
         return ProtocolGatewayClient(
-          transport: ResolvingPinnedGatewayTransport(
+          transport: widget.webRtcEnabled ? RoutedRtcTransport(
+            deviceId: device.deviceId, preferredGatewayUri: preferredGateway,
+            debugAndroidEmulatorGatewayUri: debugAndroidEmulatorGatewayUri,
+            credential: restoredCredential, certSha256: device.tlsFingerprint!,
+            hostDirectory: _discoveryEnabled ? _hostDirectory : null,
+          ) : ResolvingPinnedGatewayTransport(
             deviceId: device.deviceId,
             preferredGatewayUri: preferredGateway,
             debugAndroidEmulatorGatewayUri:
@@ -230,16 +235,6 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
             credential: restoredCredential,
             certSha256: device.tlsFingerprint!,
             hostDirectory: _discoveryEnabled ? _hostDirectory : null,
-            connectTimeout: widget.webRtcEnabled
-                ? const Duration(seconds: 25)
-                : ResolvingPinnedGatewayTransport.defaultConnectTimeout,
-            transportFactory: widget.webRtcEnabled
-                ? (uri, credential, pin) => WebRtcGatewayTransport(
-                    signaling: PinnedLanRtcSignaling(
-                      gatewayUri: uri, credential: credential, certSha256: pin,
-                    ),
-                  )
-                : null,
           ),
           clientId: device.clientId!, clientDevice: clientDevice, expectedDeviceId: device.deviceId, expectedIdentityFingerprint: device.tlsFingerprint!,
           traceRecorder: traceRecorder,

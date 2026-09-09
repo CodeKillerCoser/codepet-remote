@@ -20,12 +20,10 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     RtcPeerFactory? peerFactory,
     this.connectTimeout = const Duration(seconds: 25),
     this.requestTimeout = const Duration(seconds: 15),
-  }) : _peerFactory =
-           peerFactory ??
-           (() => createPeerConnection({'iceServers': <Object>[]}));
+  }) : _peerFactory = peerFactory;
 
   final RtcSignaling signaling;
-  final RtcPeerFactory _peerFactory;
+  final RtcPeerFactory? _peerFactory;
   final Duration connectTimeout;
   final Duration requestTimeout;
   final _events = StreamController<JsonMap>.broadcast();
@@ -45,6 +43,22 @@ final class WebRtcGatewayTransport implements GatewayTransport {
   @override
   Stream<JsonMap> get events => _events.stream;
 
+  /// Report only the selected ICE route; configured TURN servers are not proof.
+  Future<String> selectedPathKind() async {
+    final reports = await _peer?.getStats() ?? [];
+    final byId = {for (final report in reports) report.id: report};
+    for (final report in reports) {
+      if (report.type != 'transport') continue;
+      final pair = byId[report.values['selectedCandidatePairId']];
+      if (pair == null) continue;
+      final local = byId[pair.values['localCandidateId']];
+      final remote = byId[pair.values['remoteCandidateId']];
+      if (local?.values['candidateType'] == 'relay' || remote?.values['candidateType'] == 'relay') return 'relay';
+      if (local != null && remote != null) return 'direct';
+    }
+    return 'unknown';
+  }
+
   @override
   Future<void> connect() => _connecting ??= _connect();
 
@@ -59,7 +73,11 @@ final class WebRtcGatewayTransport implements GatewayTransport {
 
   Future<void> _open() async {
     _checkNotClosed();
-    final peer = await _peerFactory();
+    final config = signaling is RtcIceSignaling
+        ? await (signaling as RtcIceSignaling).configuration()
+        : <String, dynamic>{'iceServers': <Object>[]};
+    _checkNotClosed();
+    final peer = await (_peerFactory?.call() ?? createPeerConnection(config));
     if (_closed) {
       await peer.close();
       await peer.dispose();
@@ -321,6 +339,7 @@ final class WebRtcGatewayTransport implements GatewayTransport {
 
   Future<void> _close() async {
     _closed = true;
+    if (signaling is RtcIceSignaling) (signaling as RtcIceSignaling).close();
     _connected = false;
     _fragmentTimer?.cancel();
     if (_gathered != null && !_gathered!.isCompleted) {
