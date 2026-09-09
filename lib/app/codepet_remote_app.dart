@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'channel_preferences.dart';
 
 import '../core/domain/paired_device.dart';
 import '../devices/device_registry.dart';
@@ -40,9 +41,11 @@ class CodePetRemoteApp extends StatefulWidget {
     this.gatewayClientBuilder,
     this.hostDirectory,
     this.logExporter,
+    this.webRtcEnabled = false,
   });
 
   final bool includeDemoDevices;
+  final bool webRtcEnabled;
   final DeviceRepository? registry;
   final DeviceDescriptorProvider? descriptorProvider;
   final RestoredGatewayClientBuilder? gatewayClientBuilder;
@@ -64,10 +67,12 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   final List<DeviceSession> _sessions = [];
   int _selectedIndex = 0;
   bool _loading = true;
+  late bool _savedWebRtcEnabled;
 
   @override
   void initState() {
     super.initState();
+    _savedWebRtcEnabled = widget.webRtcEnabled;
     _registry = widget.registry ?? DeviceRegistry(
       metadata: PreferencesMetadataStore(),
       credentials: const SecureCredentialStore(),
@@ -225,10 +230,10 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
             credential: restoredCredential,
             certSha256: device.tlsFingerprint!,
             hostDirectory: _discoveryEnabled ? _hostDirectory : null,
-            connectTimeout: const bool.fromEnvironment('CODEPET_WEBRTC')
+            connectTimeout: widget.webRtcEnabled
                 ? const Duration(seconds: 25)
                 : ResolvingPinnedGatewayTransport.defaultConnectTimeout,
-            transportFactory: const bool.fromEnvironment('CODEPET_WEBRTC')
+            transportFactory: widget.webRtcEnabled
                 ? (uri, credential, pin) => WebRtcGatewayTransport(
                     signaling: PinnedLanRtcSignaling(
                       gatewayUri: uri, credential: credential, certSha256: pin,
@@ -474,6 +479,12 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   void _openSettings() {
     _navigatorKey.currentState!.push<void>(MaterialPageRoute(
       builder: (_) => AppSettingsScreen(
+        webRtcEnabled: _savedWebRtcEnabled,
+        activeWebRtcEnabled: widget.webRtcEnabled,
+        onWebRtcChanged: (enabled) async {
+          await ChannelPreferences.saveWebRtcEnabled(enabled);
+          _savedWebRtcEnabled = enabled;
+        },
         sessions: List.unmodifiable(_sessions),
         exportLogs: widget.logExporter ?? AppLog.exportLogs,
         logger: _log,

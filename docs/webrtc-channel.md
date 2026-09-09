@@ -5,9 +5,18 @@
 
 ## 使用
 
-先按既有 LAN 流程配对，再以 `--dart-define=CODEPET_WEBRTC=true` 构建/启动 Remote。
+先按既有 LAN 流程配对，在首页菜单进入 App 设置，打开“开启 WebRTC”，
+完全退出并重新打开 App。设置页“当前通道：WebRTC”表示此次启动选用了 RTC。
 组合入口选择 WebRtcGatewayTransport；GatewayClient、业务方法和界面不判断通道。
-未设置此开关时继续原 LAN/WSS。旧设备记录、TLS pin、credential 不迁移。
+开关默认关闭，关闭后重启恢复 LAN/WSS。旧设备记录、TLS pin、credential 不迁移。
+设置替代原 CODEPET_WEBRTC 编译期开关，普通 Debug/Release 构建均可在 App 内选择。
+lib/app/channel_preferences.dart 负责持久化，main.dart 在启动前读取；
+设置页只保存下次启动的值，组合入口本次启动的选择保持不变，重连也不会提前切换。
+保存失败保留原开关状态并提示重试。不会自动回退到 WSS。
+
+验收需使用包含 WebRTC 实现的 Host 版本（当前隔离分支提交 7de1663）；旧 Host 不提供 RTC 信令。
+打开开关重启后连接已配对设备，验证会话列表、请求和事件；再关闭重启验证 LAN。
+仅把 App 切到后台不算重启。手机验收和覆盖安装需使用固定 Debug 签名的 APK。
 
 此阶段仍需要 LAN HTTPS 信令可达，不能将 Wi-Fi 互通等同于公网完成。
 信令接口独立为 RtcSignaling；当前 PinnedLanRtcSignaling POST 标准 SDP 至
@@ -29,6 +38,13 @@
   `protocol/gateway/v1/webrtc-cpg1.md` 为准。
 
 ## 验证与签名
+
+设置入口增量验证（2026-09-09）：flutter test test/settings test/app test/architecture
+共 13 项通过，覆盖默认 LAN、保存后当前通道不变、重开读取、关闭恢复和保存失败；
+360×800 逻辑尺寸无布局异常，相关 5 个文件 flutter analyze 无问题。
+flutter build apk --debug 成功，固定签名核验一致，adb install -r 成功。
+RMX3366 实际打开开关后 force-stop/relaunch，设置仍开启且显示“当前通道：WebRTC”；
+截图检查文字和动作完整可见。此轮手机尚无配对设备，未重新执行真实业务连接验收。
 
 相关 Gateway、设备、发现、架构和 App 回归 180 项通过；
 后续 RTC 与配对定向回归 14 项通过，最终 RTC 8 项通过。

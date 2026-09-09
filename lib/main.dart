@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import 'app/codepet_remote_app.dart';
+import 'app/channel_preferences.dart';
 import 'diagnostics/app_log.dart';
 
 Future<void> main() async {
@@ -27,7 +28,8 @@ Future<void> main() async {
       );
       return true;
     };
-    runApp(const CodePetRemoteApp());
+    final webRtcEnabled = await ChannelPreferences.loadWebRtcEnabled();
+    runApp(CodePetRemoteApp(webRtcEnabled: webRtcEnabled));
   }, (error, stackTrace) {
     AppLog.named('uncaught').severe(
       'Uncaught asynchronous error',
