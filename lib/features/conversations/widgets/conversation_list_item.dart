@@ -162,10 +162,13 @@ class ConversationIndicators extends StatelessWidget {
           padding: EdgeInsets.only(left: 6),
           child: Tooltip(
             message: '运行中',
-            child: Icon(
-              Icons.motion_photos_on_outlined,
-              size: 16,
-              semanticLabel: '运行中',
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                semanticsLabel: '运行中',
+              ),
             ),
           ),
         ),

@@ -7,7 +7,7 @@ import '../support/recent_gateway.dart';
 
 void main() {
   test('recent and old standalone history have independent membership and cursors', () async {
-    final client = RecentGatewayFake();
+    final client = RecentGatewayFake(withProjects: true);
     final session = DeviceSession(
       device: const PairedDevice(deviceId: 'test', displayName: 'Test', connectionKind: DeviceConnectionKind.demo),
       clientFactory: () => client,

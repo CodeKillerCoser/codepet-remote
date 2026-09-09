@@ -1062,6 +1062,20 @@ void main() {
     session.dispose();
   });
 
+  test('summary events cannot enlarge paginated membership or counts', () async {
+    final client = _FakeClient([_conversation('listed', '/one', 1000)]);
+    final session = DeviceSession(device: _device('membership'), clientFactory: () => client);
+    await session.connect();
+    for (var index = 0; index < 300; index++) {
+      client.emit(ConversationUpsertedEvent(eventCursor: 'bulk-$index', conversation: _conversation('outside-$index', '/one', 3000)));
+    }
+    client.emit(ConversationUpsertedEvent(eventCursor: 'known', conversation: _conversation('listed', '/one', 4000)));
+    await Future<void>.delayed(Duration.zero);
+    expect(session.conversations.map((row) => row.id), ['listed']);
+    expect(session.conversations.single.updatedAt.millisecondsSinceEpoch, 4000);
+    session.dispose();
+  });
+
   test('sessions isolate projections and disconnect clears runtime data', () async {
     final firstClient = _FakeClient([_conversation('first', '/one', 1000)]);
     final secondClient = _FakeClient([_conversation('second', '/two', 2000)]);
@@ -1072,7 +1086,7 @@ void main() {
     expect(second.conversations.single.id, 'second');
     firstClient.emit(ConversationUpsertedEvent(eventCursor: 'event-2', conversation: _conversation('first-new', '/one', 3000)));
     await Future<void>.delayed(Duration.zero);
-    expect(first.conversations.map((item) => item.id), contains('first-new'));
+    expect(first.conversations.map((item) => item.id), ['first']);
     expect(second.conversations.single.id, 'second');
     await first.disconnect();
     expect(first.conversations, isEmpty);

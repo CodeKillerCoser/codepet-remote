@@ -166,6 +166,7 @@ class DeviceSession extends ApplicationNotifier {
   final Map<String, DateTime> _backgroundWarningTimes = {};
   final Map<String, int> _suppressedBackgroundWarnings = {};
   bool _isLoadingMoreConversations = false;
+  final Map<String, ConversationSummary> _pageEvents = {};
   String? _loadMoreError;
   bool _isLoadingMoreProjects = false;
   String? _loadMoreProjectsError;
@@ -618,6 +619,7 @@ class DeviceSession extends ApplicationNotifier {
 
     final generation = _runtimeGeneration;
     _isLoadingMoreConversations = true;
+    _pageEvents.clear();
     _loadMoreError = null;
     _notifyListenersImmediately();
     try {
@@ -639,6 +641,9 @@ class DeviceSession extends ApplicationNotifier {
         );
         _conversationCursors[pendingRoutes[index].key] = page.nextCursor;
       }
+      for (final event in _pageEvents.values.toList()) {
+        _upsertEventConversation(event);
+      }
       _loadMoreError = null;
       logger.fine(
         'Conversation page loaded for device ${device.deviceId} '
@@ -656,6 +661,7 @@ class DeviceSession extends ApplicationNotifier {
     } finally {
       if (_ownsRuntime(generation, client)) {
         _isLoadingMoreConversations = false;
+        _pageEvents.clear();
         _notifyListenersImmediately();
       }
     }
@@ -853,7 +859,7 @@ class DeviceSession extends ApplicationNotifier {
       if (!ownsRuntimeLease(lease)) {
         throw StateError('连接已变化，请重新新建会话');
       }
-      _upsertEventConversation(conversation);
+      _upsertEventConversation(conversation, allowInsert: true);
       _notifyListenersImmediately();
       logger.info(
         'Conversation create succeeded for device ${device.deviceId} '
@@ -1050,6 +1056,7 @@ class DeviceSession extends ApplicationNotifier {
       generation == _runtimeGeneration && identical(_client, client);
 
   void _resetConversationPagination() {
+    _pageEvents.clear();
     for (final controller in _recentControllers.values) {
       controller.detach();
     }
@@ -1253,7 +1260,7 @@ class DeviceSession extends ApplicationNotifier {
     }
   }
 
-  void _upsertEventConversation(ConversationSummary incoming) {
+  void _upsertEventConversation(ConversationSummary incoming, {bool allowInsert = false}) {
     final key = conversationRoutingKey(incoming);
     ConversationSummary? current;
     for (final conversation in conversations) {
@@ -1261,6 +1268,14 @@ class DeviceSession extends ApplicationNotifier {
         current = conversation;
         break;
       }
+    }
+    // Events update known rows; membership and counts come from paginated list.
+    if (current == null && !allowInsert) {
+      if (_isLoadingMoreConversations) {
+        _pageEvents[key] = incoming;
+        if (_pageEvents.length > 512) _pageEvents.remove(_pageEvents.keys.first);
+      }
+      return;
     }
     final eventConversation = current == null
         ? incoming

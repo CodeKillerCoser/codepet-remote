@@ -28,17 +28,17 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await connecting;
     await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: [session])));
-    await tester.pumpAndSettle();
+    await _pumpAnimatedUi(tester);
     await tester.drag(find.byKey(const Key('home-content-scroll')), const Offset(0, -1500));
-    await tester.pumpAndSettle();
+    await _pumpAnimatedUi(tester);
     session.disconnect();
     session.connectionState = DeviceConnectionState.failed;
     session.error = 'Gateway timed out';
-    await tester.pumpAndSettle();
+    await _pumpAnimatedUi(tester);
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('device-connection-reconnect')).hitTestable(), findsOneWidget);
     await tester.tap(find.byKey(const Key('home-overflow-menu')));
-    await tester.pumpAndSettle();
+    await _pumpAnimatedUi(tester);
     expect(find.text('App 设置'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
@@ -159,7 +159,7 @@ void main() {
 
     await tester.tap(find.byKey(Key('project-${project.key}')));
     await tester.pump();
-    await tester.pumpAndSettle();
+    await _pumpAnimatedUi(tester);
 
     expect(find.text('实现 Remote 会话流'), findsOneWidget);
     expect(find.byKey(const Key('project-provider-icon')), findsOneWidget);
@@ -198,18 +198,18 @@ void main() {
     expect(find.byKey(const Key('project-create')), findsOneWidget);
     final project = session.selectedProviderProjects.single;
     await tester.tap(find.byKey(Key('project-menu-${project.key}')));
-    await tester.pumpAndSettle();
+    await _pumpAnimatedUi(tester);
     expect(find.text('编辑项目'), findsOneWidget);
     expect(find.text('删除项目'), findsOneWidget);
 
     await tester.tapAt(const Offset(10, 10));
-    await tester.pumpAndSettle();
+    await _pumpAnimatedUi(tester);
     await tester.tap(find.byKey(const Key('project-create')));
-    await tester.pumpAndSettle();
+    await _pumpAnimatedUi(tester);
     await tester.enterText(find.byKey(const Key('project-name')), '新项目');
     await tester.enterText(find.byKey(const Key('project-roots')), '/tmp/new');
     await tester.tap(find.byKey(const Key('confirm-project-save')));
-    await tester.pumpAndSettle();
+    await _pumpAnimatedUi(tester);
 
     expect(session.selectedProviderProjects.map((item) => item.name),
         contains('新项目'));
@@ -642,6 +642,10 @@ void main() {
     expect(find.text('动态事件会话'), findsNothing);
     expect(find.text('Host Metadata'), findsOneWidget);
     expect(find.text('TestOS 9'), findsOneWidget);
+
+    // Seed membership as if received from list; stream events update that row.
+    tester.state<_MutableSessionsHarnessState>(find.byType(_MutableSessionsHarness))
+        .sessions.single.conversations = [_conversation('dynamic', '原始标题')];
 
     client.emit(ConversationUpsertedEvent(
       eventCursor: 'event-1',
@@ -1086,3 +1090,11 @@ GatewayProject _homeProject() => GatewayProject(
       createdAt: DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(2000, isUtc: true),
     );
+
+// Running indicators deliberately never settle; allow finite navigation and
+// asynchronous fixture work to finish without waiting for those tickers.
+Future<void> _pumpAnimatedUi(WidgetTester tester) async {
+  for (var frame = 0; frame < 10; frame++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
