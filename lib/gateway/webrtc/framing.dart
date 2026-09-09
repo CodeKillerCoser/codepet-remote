@@ -35,6 +35,8 @@ class RtcDecoder {
   final int maximum;
   Uint8List? _partial;
   int _offset = 0;
+  int get receivedBytes => _offset;
+  int get totalBytes => _partial?.length ?? 0;
   bool get pending => _partial != null;
 
   void clear() {

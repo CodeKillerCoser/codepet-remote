@@ -9,6 +9,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../application/errors/application_failures.dart';
 import '../../security/pinned_tls.dart';
 import 'signaling.dart';
+import 'rtc_diagnostics.dart';
 
 /// A new key is pinned only over the existing LAN TLS/bearer boundary.
 class CloudPairing {
@@ -76,6 +77,7 @@ class CloudRtcSignaling implements RtcIceSignaling {
     ..connectionTimeout = const Duration(seconds: 10);
   bool _closed = false;
   int? iceExpires;
+  final _diagnostics = RtcDiagnostics();
 
   Future<Map<String, dynamic>> _request(
     String method,
@@ -89,6 +91,7 @@ class CloudRtcSignaling implements RtcIceSignaling {
     if (uri.scheme != 'https') {
       throw const FormatException('Cloud requires HTTPS');
     }
+    final started = Stopwatch()..start();
     final request = await _http
         .openUrl(method, uri)
         .timeout(const Duration(seconds: 12));
@@ -100,6 +103,12 @@ class CloudRtcSignaling implements RtcIceSignaling {
     request.headers.contentType = ContentType.json;
     if (body != null) request.add(utf8.encode(jsonEncode(body)));
     final response = await request.close().timeout(const Duration(seconds: 12));
+    _diagnostics.emit('signal.http', {
+      'method': method,
+      'path': uri.path,
+      'status': response.statusCode,
+      'durationMs': started.elapsedMilliseconds,
+    });
     if (response.statusCode != 200) {
       throw GatewayConnectionException(
         'Cloud signaling status ${response.statusCode}',
@@ -136,6 +145,8 @@ class CloudRtcSignaling implements RtcIceSignaling {
     final attempt = hashes.sha256
         .convert(await nonce.extractPrivateKeyBytes())
         .toString();
+    _diagnostics.offerId = rtcOfferId(offer['sdp'] as String);
+    _diagnostics.emit('signal.attempt', {'attempt': attempt});
     final expires = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 60;
     final payload = utf8.encode(
       jsonEncode({

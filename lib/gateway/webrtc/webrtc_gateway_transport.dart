@@ -9,17 +9,20 @@ import '../../application/errors/application_failures.dart';
 import '../../core/domain/models.dart';
 import '../transport.dart';
 import 'framing.dart';
+import 'rtc_diagnostics.dart';
 import 'signaling.dart';
 
 typedef RtcPeerFactory = Future<RTCPeerConnection> Function();
 
 /// Carries unchanged Gateway JSON-RPC over a reliable, ordered DataChannel.
 final class WebRtcGatewayTransport implements GatewayTransport {
+  // Public peerFactory name is retained for existing callers.
   WebRtcGatewayTransport({
     required this.signaling,
     RtcPeerFactory? peerFactory,
     this.connectTimeout = const Duration(seconds: 25),
     this.requestTimeout = const Duration(seconds: 15),
+    // ignore: prefer_initializing_formals
   }) : _peerFactory = peerFactory;
 
   final RtcSignaling signaling;
@@ -29,6 +32,55 @@ final class WebRtcGatewayTransport implements GatewayTransport {
   final _events = StreamController<JsonMap>.broadcast();
   final _pending = <String, Completer<Object?>>{};
   final _decoder = RtcDecoder();
+  final _diagnostics = RtcDiagnostics();
+  Timer? _statsTimer;
+  bool _sampling = false;
+  int _statsSamples = 0;
+  int _receivedFrames = 0;
+  int _messageFrames = 0;
+  int? _messageStartedMs;
+  int? _lastFragmentMs;
+  int _lastProgressMs = 0;
+
+  Future<void> _sampleStats(String reason) async {
+    final peer = _peer;
+    if (peer == null || _sampling) return;
+    _sampling = true;
+    try {
+      final reports = await peer.getStats().timeout(const Duration(seconds: 1));
+      final relevant = reports
+          .where(
+            (r) => const {
+              'candidate-pair',
+              'local-candidate',
+              'remote-candidate',
+              'transport',
+              'data-channel',
+            }.contains(r.type),
+          )
+          .toList();
+      _diagnostics.emit('ice.stats', {
+        'reason': reason,
+        'count': relevant.length,
+        'truncated': relevant.length > 128,
+        'reports': relevant
+            .take(128)
+            .map(
+              (r) =>
+                  rtcStat(r, _diagnostics.offerId ?? _diagnostics.connectionId),
+            )
+            .toList(),
+      });
+    } catch (error) {
+      _diagnostics.emit('ice.statsUnavailable', {
+        'reason': reason,
+        'errorType': error.runtimeType.toString(),
+      });
+    } finally {
+      _sampling = false;
+    }
+  }
+
   RTCPeerConnection? _peer;
   RTCDataChannel? _channel;
   Future<void>? _connecting;
@@ -53,7 +105,10 @@ final class WebRtcGatewayTransport implements GatewayTransport {
       if (pair == null) continue;
       final local = byId[pair.values['localCandidateId']];
       final remote = byId[pair.values['remoteCandidateId']];
-      if (local?.values['candidateType'] == 'relay' || remote?.values['candidateType'] == 'relay') return 'relay';
+      if (local?.values['candidateType'] == 'relay' ||
+          remote?.values['candidateType'] == 'relay') {
+        return 'relay';
+      }
       if (local != null && remote != null) return 'direct';
     }
     return 'unknown';
@@ -66,12 +121,16 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     try {
       await _open().timeout(connectTimeout);
     } catch (error) {
+      _diagnostics.emit('connect.failed', {
+        'errorType': error.runtimeType.toString(),
+      });
       await close();
       throw _failure(error, unknown: false);
     }
   }
 
   Future<void> _open() async {
+    _diagnostics.emit('connect.start');
     _checkNotClosed();
     final config = signaling is RtcIceSignaling
         ? await (signaling as RtcIceSignaling).configuration()
@@ -84,7 +143,32 @@ final class WebRtcGatewayTransport implements GatewayTransport {
       _checkNotClosed();
     }
     _peer = peer;
+    _diagnostics.emit('ice.configuration', {
+      'policy': config['iceTransportPolicy'] ?? 'all',
+      'serverCount': (config['iceServers'] as List?)?.length ?? 0,
+      'candidateErrorCallback': 'notExposedByFlutterWebrtc',
+    });
+    _statsTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      _statsSamples++;
+      if (!_connected || _statsSamples <= 30 || _statsSamples % 15 == 0) {
+        unawaited(_sampleStats('periodic'));
+      }
+    });
+    peer.onIceConnectionState = (state) {
+      _diagnostics.emit('ice.state', {'state': state.name});
+      unawaited(_sampleStats('iceState'));
+    };
+    peer.onSignalingState = (state) =>
+        _diagnostics.emit('signaling.state', {'state': state.name});
+    peer.onIceCandidate = (candidate) => _diagnostics.emit(
+      'ice.localCandidate',
+      rtcCandidate(
+        candidate.candidate ?? '',
+        _diagnostics.offerId ?? _diagnostics.connectionId,
+      ),
+    );
     peer.onConnectionState = (state) {
+      _diagnostics.emit('peer.state', {'state': state.name});
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
         _abort(
@@ -98,6 +182,7 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     };
     final gathered = _gathered = Completer<void>();
     peer.onIceGatheringState = (state) {
+      _diagnostics.emit('ice.gathering', {'state': state.name});
       if (state == RTCIceGatheringState.RTCIceGatheringStateComplete &&
           !gathered.isCompleted) {
         gathered.complete();
@@ -145,14 +230,19 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     if (description?.sdp == null) {
       throw const FormatException('Missing RTC offer');
     }
+    _diagnostics.offerId = rtcOfferId(description!.sdp!);
+    _diagnostics.description('localOffer', description.sdp!);
+    _diagnostics.emit('signaling.offer.start');
     final answer = await signaling.answer({
       'type': 'offer',
-      'sdp': description!.sdp,
+      'sdp': description.sdp,
     });
     _checkNotClosed();
     if (answer['type'] != 'answer' || answer['sdp'] is! String) {
       throw const FormatException('Invalid RTC answer');
     }
+    _diagnostics.emit('signaling.answer.received');
+    _diagnostics.description('remoteAnswer', answer['sdp'] as String);
     await peer.setRemoteDescription(
       RTCSessionDescription(answer['sdp'] as String, 'answer'),
     );
@@ -161,6 +251,8 @@ final class WebRtcGatewayTransport implements GatewayTransport {
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
     _connected = true;
+    _diagnostics.emit('channel.open');
+    unawaited(_sampleStats('open'));
   }
 
   void _checkNotClosed() {
@@ -204,6 +296,12 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     }
     final completer = Completer<Object?>();
     _pending[id] = completer;
+    _diagnostics.emit('rpc.queued', {
+      'rpcId': rtcOfferId(id),
+      'method': request['method'],
+      'bytes': bytes.length,
+      'pendingRequests': _pending.length,
+    });
     _queuedBytes += bytes.length;
     final result = completer.future
         .timeout(
@@ -238,13 +336,26 @@ final class WebRtcGatewayTransport implements GatewayTransport {
 
   Future<void> _send(Uint8List bytes) async {
     final channel = _channel!;
+    final started = Stopwatch()..start();
+    var waitMs = 0;
+    _diagnostics.emit('message.send.start', {'bytes': bytes.length});
     for (var offset = 0; offset < bytes.length;) {
       _checkNotClosed();
       if (await channel.getBufferedAmount() > 64 * 1024) {
+        final waiting = Stopwatch()..start();
+        _diagnostics.emit('send.backpressure.start', {
+          'offset': offset,
+          'total': bytes.length,
+        });
         while (await channel.getBufferedAmount() > 16 * 1024) {
           _checkNotClosed();
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
+        waitMs += waiting.elapsedMilliseconds;
+        _diagnostics.emit('send.backpressure.end', {
+          'waitMs': waiting.elapsedMilliseconds,
+          'offset': offset,
+        });
       }
       _checkNotClosed();
       final end = (offset + rtcFrameBytes - rtcHeaderBytes).clamp(
@@ -262,6 +373,11 @@ final class WebRtcGatewayTransport implements GatewayTransport {
       );
       offset = end;
     }
+    _diagnostics.emit('message.send.complete', {
+      'bytes': bytes.length,
+      'durationMs': started.elapsedMilliseconds,
+      'backpressureMs': waitMs,
+    });
   }
 
   void _onMessage(RTCDataChannelMessage message) {
@@ -271,6 +387,21 @@ final class WebRtcGatewayTransport implements GatewayTransport {
         throw const FormatException('RTC requires CPG1 binary frames');
       }
       final envelope = _decoder.push(message.binary);
+      final now = _diagnostics.clock.elapsedMilliseconds;
+      _receivedFrames++;
+      _messageFrames++;
+      _messageStartedMs ??= now;
+      _lastFragmentMs = now;
+      if (envelope == null &&
+          (_messageFrames == 1 || now - _lastProgressMs >= 1000)) {
+        _lastProgressMs = now;
+        _diagnostics.emit('message.receive.progress', {
+          'received': _decoder.receivedBytes,
+          'total': _decoder.totalBytes,
+          'frames': _messageFrames,
+          'durationMs': now - _messageStartedMs!,
+        });
+      }
       if (envelope == null) {
         _fragmentTimer ??= Timer(
           const Duration(seconds: 5),
@@ -284,6 +415,13 @@ final class WebRtcGatewayTransport implements GatewayTransport {
         );
         return;
       }
+      _diagnostics.emit('message.receive.complete', {
+        'bytes': envelope is RtcJson ? envelope.bytes.length : 0,
+        'frames': _messageFrames,
+        'durationMs': now - _messageStartedMs!,
+      });
+      _messageFrames = 0;
+      _messageStartedMs = null;
       _fragmentTimer?.cancel();
       _fragmentTimer = null;
       if (envelope is RtcClose) {
@@ -308,6 +446,11 @@ final class WebRtcGatewayTransport implements GatewayTransport {
         if (id is! String) {
           throw const FormatException('Invalid Gateway response id');
         }
+        _diagnostics.emit('rpc.response', {
+          'rpcId': rtcOfferId(id),
+          'bytes': envelope.bytes.length,
+          'isError': json.containsKey('error'),
+        });
         _pending.remove(id)?.complete(json);
       }
     } catch (error) {
@@ -326,6 +469,25 @@ final class WebRtcGatewayTransport implements GatewayTransport {
 
   void _abort(GatewayConnectionException error) {
     if (_closed) return;
+    final now = _diagnostics.clock.elapsedMilliseconds;
+    _diagnostics.emit('channel.abort', {
+      'errorType': error.runtimeType.toString(),
+      'cause': error.message == 'RTC fragment timed out'
+          ? 'fragmentTimeout'
+          : 'transportFailure',
+      'pendingRequests': _pending.length,
+      'queuedBytes': _queuedBytes,
+      'receivedFrames': _receivedFrames,
+      'partialReceived': _decoder.receivedBytes,
+      'partialTotal': _decoder.totalBytes,
+      'partialFrames': _messageFrames,
+      'partialAgeMs': _messageStartedMs == null
+          ? null
+          : now - _messageStartedMs!,
+      'lastFragmentAgeMs': _lastFragmentMs == null
+          ? null
+          : now - _lastFragmentMs!,
+    });
     _events.addError(error);
     for (final pending in _pending.values) {
       if (!pending.isCompleted) pending.completeError(error);
@@ -339,6 +501,9 @@ final class WebRtcGatewayTransport implements GatewayTransport {
 
   Future<void> _close() async {
     _closed = true;
+    _statsTimer?.cancel();
+    await _sampleStats('closing');
+    _diagnostics.emit('channel.close');
     if (signaling is RtcIceSignaling) (signaling as RtcIceSignaling).close();
     _connected = false;
     _fragmentTimer?.cancel();
@@ -372,6 +537,9 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     if (peer != null) {
       peer.onConnectionState = null;
       peer.onIceGatheringState = null;
+      peer.onIceConnectionState = null;
+      peer.onIceCandidate = null;
+      peer.onSignalingState = null;
       try {
         await peer.close().timeout(const Duration(seconds: 2));
       } catch (_) {}

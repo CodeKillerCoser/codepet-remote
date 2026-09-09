@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:logging/logging.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:codepet_remote/application/errors/application_failures.dart';
 import 'package:codepet_remote/gateway/webrtc/framing.dart';
@@ -25,6 +26,18 @@ class FakePeer extends RTCPeerConnection {
   final channel = FakeChannel();
   RTCDataChannelInit? init;
   bool disposed = false;
+  int statsCalls = 0;
+  @override
+  Future<List<StatsReport>> getStats([MediaStreamTrack? track]) async {
+    statsCalls++;
+    return [
+      StatsReport('pair', 'candidate-pair', 0, {
+        'state': 'succeeded',
+        'requestsSent': 3,
+      }),
+    ];
+  }
+
   @override
   Future<RTCDataChannel> createDataChannel(
     String label,
@@ -135,6 +148,44 @@ Future<void> eventually(bool Function() condition) async {
 }
 
 void main() {
+  test(
+    'fragment timeout logs partial progress and stops ICE sampling on close',
+    () async {
+      final records = <Map<String, dynamic>>[];
+      final logger = Logger('gateway.rtc.diagnostic');
+      final logSubscription = logger.onRecord.listen((record) {
+        records.add(jsonDecode(record.message) as Map<String, dynamic>);
+      });
+      addTearDown(logSubscription.cancel);
+      final peer = FakePeer()..channel.autoReply = false;
+      final transport = WebRtcGatewayTransport(
+        signaling: FakeSignaling(),
+        peerFactory: () async => peer,
+      );
+      final subscription = transport.events.listen(
+        (_) {},
+        onError: (Object _) {},
+      );
+      addTearDown(subscription.cancel);
+      addTearDown(transport.close);
+      await transport.connect();
+      peer.channel.onMessage!(
+        RTCDataChannelMessage.fromBinary(rtcFragment(100, 0, [1, 2, 3])),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 5150));
+      await transport.close();
+      final abort = records.singleWhere((r) => r['event'] == 'channel.abort');
+      expect(abort['cause'], 'fragmentTimeout');
+      expect(abort['partialReceived'], 3);
+      expect(abort['partialTotal'], 100);
+      expect(abort['lastFragmentAgeMs'], greaterThanOrEqualTo(4900));
+      final calls = peer.statsCalls;
+      await Future<void>.delayed(const Duration(milliseconds: 2100));
+      expect(peer.statsCalls, calls);
+      expect(peer.onIceCandidate, isNull);
+    },
+  );
+
   test('TLS pin failures stop retries and dispose the native peer', () async {
     final peer = FakePeer();
     final transport = WebRtcGatewayTransport(
