@@ -52,8 +52,9 @@ class DeviceSessionRuntimeLease {
   bool get supportsConversationResume => _client is ConversationResumeGatewayClient;
 
   Future<ConversationResumeResult> resumeConversation(
-    ConversationSummary conversation,
-  ) => (_client as ConversationResumeGatewayClient).resumeConversation(conversation);
+    ConversationSummary conversation, {
+    bool force = false,
+  }) => (_client as ConversationResumeGatewayClient).resumeConversation(conversation, force: force);
 
   Future<ConversationPage> searchConversations({
     required String providerId,

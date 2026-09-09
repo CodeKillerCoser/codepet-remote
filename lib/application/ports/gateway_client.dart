@@ -72,8 +72,9 @@ abstract interface class ConversationHistoryGatewayClient {
 /// Combined conversation entry; successful interaction does not require renewal.
 abstract interface class ConversationResumeGatewayClient {
   Future<ConversationResumeResult> resumeConversation(
-    ConversationSummary conversation,
-  );
+    ConversationSummary conversation, {
+    bool force = false,
+  });
 }
 
 class ConversationResumeResult {

@@ -108,6 +108,36 @@ class ConversationDetailController extends ApplicationNotifier {
     return _conversation;
   }
 
+  bool get canForceTakeover =>
+      !_disposed && !_interactionAcquired && !_interactionRequestInFlight &&
+      !_sending && !_outcomeUnknown && _interactionError != null &&
+      (_lastInteractionFailure == 'conversation_write_conflict' ||
+       _lastInteractionFailure == 'force_takeover_failed') &&
+      _session.runtimeLease?.supportsConversationResume == true &&
+      _provider?.isAvailable == true &&
+      _detail?.effectiveStatus == ConversationStatus.idle &&
+      _detail?.activeTurn == null && pendingApproval == null;
+
+  Future<void> forceTakeover() async {
+    if (!canForceTakeover) return;
+    final lease = _session.runtimeLease!;
+    final binding = _binding;
+    if (binding == null) return;
+    _interactionRetryTimer?.cancel();
+    _interactionRetryTimer = null;
+    await _acquireInteraction(
+      lease: lease, binding: binding,
+      conversation: currentConversation, epoch: _runtimeEpoch,
+      acquire: () async {
+        final result = await lease.resumeConversation(currentConversation, force: true);
+        if (result.interaction == null) {
+          throw result.interactionError ?? StateError('Conversation interaction was not acquired');
+        }
+        return result.interaction!;
+      },
+    );
+  }
+
   bool consumeFollowOutputRequest() {
     final value = _followOutputRequested;
     _followOutputRequested = false;
@@ -294,6 +324,7 @@ class ConversationDetailController extends ApplicationNotifier {
       return;
     }
     _interactionRequestInFlight = true;
+    notifyApplicationListeners();
     try {
       final interaction = await (acquire?.call() ?? lease.acquireInteraction(conversation));
       if (!_acceptsRuntime(epoch, lease, binding)) return;
@@ -344,7 +375,10 @@ class ConversationDetailController extends ApplicationNotifier {
       );
       notifyApplicationListeners();
     } finally {
-      if (epoch == _runtimeEpoch) _interactionRequestInFlight = false;
+      if (epoch == _runtimeEpoch) {
+        _interactionRequestInFlight = false;
+        notifyApplicationListeners();
+      }
     }
   }
 
@@ -374,6 +408,12 @@ class ConversationDetailController extends ApplicationNotifier {
     if (error is GatewayProtocolException &&
         error.code == 'conversation_write_conflict') {
       return '该会话正在被另一个客户端写入，暂时无法继续对话。';
+    }
+    if (error is GatewayProtocolException && error.code == 'conversation_active') {
+      return '会话仍有活动，暂时无法强制接管。';
+    }
+    if (error is GatewayProtocolException && error.code == 'force_takeover_failed') {
+      return '未能安全结束其他 Codex 进程，请重试或在电脑上关闭后再接管。';
     }
     return '无法获取会话交互权：$error';
   }

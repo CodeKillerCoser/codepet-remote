@@ -972,6 +972,96 @@ void main() {
     }
   }
 
+  testWidgets('force takeover is explicit, single flight and enables interaction', (tester) async {
+    final forced = Completer<ConversationResumeResult>();
+    var calls = 0;
+    final client = _ResumeDetailClient(onResume: (conversation) async {
+      if (++calls > 1) return forced.future;
+      return ConversationResumeResult(
+        interactionError: const GatewayProtocolException(
+          code: 'conversation_write_conflict', message: 'writer held', retryable: true,
+        ),
+        loadHistory: () async => ConversationSnapshot(
+          detail: ConversationDetail(summary: conversation), snapshotCursor: 'H',
+        ),
+      );
+    });
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pump();
+    expect(client.resumeForces, [false]);
+    expect(find.text('强制接管会结束电脑上非 Codepet 管理的 Codex 进程及其任务。'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('force-takeover')));
+    await tester.pump();
+    expect(client.resumeForces, [false, true]);
+    expect(find.byKey(const Key('force-takeover')), findsNothing);
+    forced.complete(const ConversationResumeResult(
+      interaction: ConversationInteraction(selection: TurnSendSelection()),
+    ));
+    await tester.pump();
+    expect(find.byKey(const Key('interaction-unavailable')), findsNothing);
+    expect(tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled, isTrue);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('failed force takeover retries only ordinary acquisition', (tester) async {
+    var calls = 0;
+    final client = _ResumeDetailClient(onResume: (conversation) async => ConversationResumeResult(
+      interactionError: GatewayProtocolException(
+        code: ++calls == 1 ? 'conversation_write_conflict' : 'force_takeover_failed',
+        message: 'writer held', retryable: true,
+      ),
+      loadHistory: () async => ConversationSnapshot(
+        detail: ConversationDetail(summary: conversation), snapshotCursor: 'H',
+      ),
+    ));
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('force-takeover')));
+    await tester.pump();
+    expect(find.text('未能安全结束其他 Codex 进程，请重试或在电脑上关闭后再接管。'), findsOneWidget);
+    expect(find.byKey(const Key('force-takeover')), findsOneWidget);
+    await tester.pump(const Duration(seconds: 10));
+    expect(client.acquireCalls, 1);
+    expect(client.resumeForces, [false, true]);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  for (final code in ['capability_unsupported', 'conversation_active', 'internal_error']) {
+    testWidgets('force takeover is hidden for $code', (tester) async {
+      final client = _ResumeDetailClient(onResume: (conversation) async => ConversationResumeResult(
+        interactionError: GatewayProtocolException(code: code, message: 'failed', retryable: false),
+        loadHistory: () async => ConversationSnapshot(
+          detail: ConversationDetail(summary: conversation), snapshotCursor: 'H',
+        ),
+      ));
+      await _pumpDetail(tester, client, conversation: _idleConversation());
+      await tester.pump();
+      expect(find.byKey(const Key('force-takeover')), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      await client.close();
+    });
+  }
+
+  testWidgets('force takeover is hidden while a turn is active', (tester) async {
+    final client = _ResumeDetailClient(onResume: (conversation) async => ConversationResumeResult(
+      interactionError: const GatewayProtocolException(
+        code: 'conversation_write_conflict', message: 'writer held', retryable: true,
+      ),
+      loadHistory: () async => ConversationSnapshot(
+        detail: ConversationDetail(summary: conversation), snapshotCursor: 'H',
+      ),
+    ));
+    await _pumpDetail(tester, client, conversation: _conversation);
+    await tester.pump();
+    expect(find.byKey(const Key('interaction-unavailable')), findsOneWidget);
+    expect(find.byKey(const Key('force-takeover')), findsNothing);
+    expect(client.resumeForces, [false]);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('resume metadata keeps the known project while updating the title', (tester) async {
     const project = RoutedResourceId(providerId: 'provider', nativeResourceId: 'project');
     final initial = ConversationSummary(
@@ -2047,8 +2137,10 @@ class _ResumeDetailClient extends _DetailClient implements ConversationResumeGat
   _ResumeDetailClient({required this.onResume});
   final Future<ConversationResumeResult> Function(ConversationSummary) onResume;
   int resumeCalls = 0;
+  final List<bool> resumeForces = [];
   @override
-  Future<ConversationResumeResult> resumeConversation(ConversationSummary conversation) {
+  Future<ConversationResumeResult> resumeConversation(ConversationSummary conversation, {bool force = false}) {
+    resumeForces.add(force);
     resumeCalls++;
     return onResume(conversation);
   }

@@ -46,6 +46,16 @@ forbidden import fails CI.
 ## Conversation entry
 
 Remote enters a writable conversation through Gateway `conversation.resume(limit=20)`.
+When interaction acquisition reports a write conflict (or a previous force takeover
+failed) for an idle conversation with no active turn,
+Remote offers an explicit force takeover action and explains that it ends Codex
+processes and tasks outside Codepet management, including independent CLI sessions. Only this action sends `conversation.resume(force=true)`;
+normal entry omits force and automatic retries never force. The Host rechecks
+activity and preserves Codex processes carrying the harness environment marker
+`CODEPET_CODEX_HARNESS`, as well as Codepet itself, before terminating unmanaged
+Codex processes.
+The action is hidden while acquisition is in flight and runtime fences reject stale results.
+
 Host acquires interaction first, then reuses `conversation.get` for the first page.
 The response keeps interaction and history outcomes separate, so a history failure
 cannot erase acquired interaction. Codex uses `thread/resume(excludeTurns=true)`;

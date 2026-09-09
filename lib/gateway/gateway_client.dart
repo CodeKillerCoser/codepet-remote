@@ -806,8 +806,9 @@ final class ProtocolGatewayClient
 
   @override
   Future<ConversationResumeResult> resumeConversation(
-    ConversationSummary conversation,
-  ) async {
+    ConversationSummary conversation, {
+    bool force = false,
+  }) async {
     final resource = conversation.resource;
     if (resource == null) {
       throw const FormatException('Conversation has no routed identity');
@@ -816,6 +817,7 @@ final class ProtocolGatewayClient
       () => _protocol.conversationResume(sdk.ConversationResumeRequest(
         conversation: _mapper.sdkResourceId(resource),
         limit: _conversationHistoryPageLimits.first,
+        force: force ? true : null,
       )),
     );
     if (response.interactionAcquired != (response.interaction != null) ||

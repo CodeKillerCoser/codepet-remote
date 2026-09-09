@@ -580,12 +580,27 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    interactionError,
-                    key: const Key('interaction-error'),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        interactionError,
+                        key: const Key('interaction-error'),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.error,
                         ),
+                      ),
+                      if (_controller.canForceTakeover) ...[
+                        const SizedBox(height: 8),
+                        const Text('强制接管会结束电脑上非 Codepet 管理的 Codex 进程及其任务。'),
+                        TextButton(
+                          key: const Key('force-takeover'),
+                          onPressed: _controller.forceTakeover,
+                          child: const Text('强制接管'),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ],

@@ -744,8 +744,10 @@ void main() {
     expect(message.tool!.outcome!.content.single.truncation?.retainedBytes, 18);
   });
 
-  for (final hasOlderPage in [false, true]) {
-    test('resume reuses its first history page (older=$hasOlderPage)', () async {
+  for (final (force, hasOlderPage) in [
+    (false, false), (false, true), (true, false), (true, true),
+  ]) {
+    test('resume reuses its first history page (older=$hasOlderPage force=$force)', () async {
       final history = {
         'conversation': _conversationJson(),
         'items': <Object>[],
@@ -767,7 +769,7 @@ void main() {
         expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint,
       );
       await client.connect();
-      final resumed = await client.resumeConversation(_domainConversation());
+      final resumed = await client.resumeConversation(_domainConversation(), force: force);
       expect(resumed.interaction, isNotNull);
       final snapshot = await resumed.loadHistory!();
       expect(snapshot.detail.messages, isEmpty);
@@ -776,6 +778,7 @@ void main() {
       expect(requests.map((request) => request.method),
           ['conversation.resume']);
       expect(requests.first.params['limit'], 20);
+      expect(requests.first.params['force'], force ? true : null);
       expect(snapshot.nextCursor, hasOlderPage ? 'older-page' : null);
       await client.close();
     });
