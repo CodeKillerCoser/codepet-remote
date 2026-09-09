@@ -8,6 +8,12 @@ import '../diagnostics/app_log.dart';
 
 final AppLog _log = AppLog.named('tls');
 
+/// HTTP admission status retained for channel retry decisions.
+final class PinnedHttpException extends HttpException {
+  PinnedHttpException(this.statusCode, super.message, {super.uri});
+  final int statusCode;
+}
+
 class PinnedTlsConnection {
   const PinnedTlsConnection({required this.expectedSha256});
   final String expectedSha256;
@@ -103,7 +109,8 @@ class PinnedTlsConnection {
         throw const FormatException('HTTPS JSON response must be an object');
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException(
+        throw PinnedHttpException(
+          response.statusCode,
           'Remote request failed (${response.statusCode}): '
           '${payload['message'] ?? payload['code'] ?? 'unknown'}',
           uri: uri,

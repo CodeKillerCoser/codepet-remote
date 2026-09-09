@@ -44,6 +44,12 @@ android {
     }
 
     signingConfigs {
+        create("repositoryDebug") {
+            storeFile = rootProject.file("keystore/codepet-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         if (hasReleaseSigning) {
             create("release") {
                 storeFile = file(releaseStoreFile!!)
@@ -55,10 +61,27 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("repositoryDebug")
+            // Install native transport probes alongside the user's normal app.
+            if (System.getenv("CODEPET_RTC_PROBE") == "true") {
+                applicationIdSuffix = ".rtcprobe"
+            }
+        }
         release {
             signingConfig = signingConfigs.findByName("release")
-                ?: signingConfigs.getByName("debug")
         }
+    }
+}
+
+// Release must never fall back to the public repository debug identity.
+gradle.taskGraph.whenReady {
+    val packagesApp = allTasks.any {
+        it.project == project &&
+            it.name.matches(Regex("(assemble|bundle|package|install).*Release.*"))
+    }
+    if (packagesApp && !hasReleaseSigning) {
+        throw GradleException("Configure all CODEPET_RELEASE_* signing values before building a release APK; debug signing fallback is disabled.")
     }
 }
 
