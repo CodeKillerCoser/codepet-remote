@@ -189,9 +189,7 @@ void main() {
     );
     expect(handshake.providers.single.authenticationDisplayText, 'Signed in');
     expect(handshake.providers.single.usageDisplayText, '72% remaining');
-    expect(handshake.providers.single.usageDetails.single['data'], {
-      'opaque': true,
-    });
+    expect(handshake.providers.single.usageDetails.single['data'], {'opaque': true});
     expect(transport.requests[0].method, 'protocol.handshake');
     expect(transport.requests[0].params['device'], _clientDevice.toJson());
     expect(transport.requests[0].params, isNot(contains('clientName')));
@@ -2044,6 +2042,9 @@ JsonMap _providerSummaryJson() => {
 JsonMap _providerDescriptionJson() => {
       'provider': _providerSummaryJson(),
       'capabilities': {
+        // Current Host includes this even when no usage dataset is available.
+        // Older vendored SDKs rejected the whole description as an unknown field.
+        'usageDatasets': <Object>[],
         'revision': 'revision-1',
         'methods': [
           'conversation.list',

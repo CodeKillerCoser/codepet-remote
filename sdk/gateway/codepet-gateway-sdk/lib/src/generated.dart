@@ -1390,16 +1390,19 @@ final class GatewayCapabilities {
     required List<GatewayCapability> methods,
     TurnSendCapabilities? turnSend,
     ConversationCreateCapabilities? conversationCreate,
+    List<UsageDataset>? usageDatasets,
   }) {
     final validatedRevision = _string(revision, 'GatewayCapabilities.revision', minLength: 1);
     final validatedMethods = _freezeList<GatewayCapability>(methods, 'GatewayCapabilities.methods', (item, itemPath) => item, uniqueItems: true, encodeItem: (item) => item.toJson());
     final validatedTurnSend = turnSend == null ? null : turnSend;
     final validatedConversationCreate = conversationCreate == null ? null : conversationCreate;
+    final validatedUsageDatasets = usageDatasets == null ? null : _freezeList<UsageDataset>(usageDatasets, 'GatewayCapabilities.usageDatasets', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     return GatewayCapabilities._(
       revision: validatedRevision,
       methods: validatedMethods,
       turnSend: validatedTurnSend,
       conversationCreate: validatedConversationCreate,
+      usageDatasets: validatedUsageDatasets,
     );
   }
 
@@ -1408,21 +1411,24 @@ final class GatewayCapabilities {
     required this.methods,
     required this.turnSend,
     required this.conversationCreate,
+    required this.usageDatasets,
   });
 
   final String revision;
   final List<GatewayCapability> methods;
   final TurnSendCapabilities? turnSend;
   final ConversationCreateCapabilities? conversationCreate;
+  final List<UsageDataset>? usageDatasets;
 
   factory GatewayCapabilities.fromJson(Object? value, {String path = 'GatewayCapabilities'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'revision', 'methods', 'turnSend', 'conversationCreate'}, path);
+    _expectKeys(json, const {'revision', 'methods', 'turnSend', 'conversationCreate', 'usageDatasets'}, path);
     return GatewayCapabilities(
       revision: _string(_required(json, 'revision', path), '$path.revision', minLength: 1),
       methods: _decodeList<GatewayCapability>(_required(json, 'methods', path), '$path.methods', (item, itemPath) => GatewayCapability.fromJson(item, path: itemPath), uniqueItems: true, encodeItem: (item) => item.toJson()),
       turnSend: json.containsKey('turnSend') && json['turnSend'] != null ? TurnSendCapabilities.fromJson(json['turnSend'], path: '$path.turnSend') : null,
       conversationCreate: json.containsKey('conversationCreate') && json['conversationCreate'] != null ? ConversationCreateCapabilities.fromJson(json['conversationCreate'], path: '$path.conversationCreate') : null,
+      usageDatasets: json.containsKey('usageDatasets') && json['usageDatasets'] != null ? _decodeList<UsageDataset>(json['usageDatasets'], '$path.usageDatasets', (item, itemPath) => UsageDataset.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
     );
   }
 
@@ -1431,10 +1437,11 @@ final class GatewayCapabilities {
     'methods': methods.map((item) => item.toJson()).toList(growable: false),
     if (turnSend != null) 'turnSend': turnSend!.toJson(),
     if (conversationCreate != null) 'conversationCreate': conversationCreate!.toJson(),
+    if (usageDatasets != null) 'usageDatasets': usageDatasets!.map((item) => item.toJson()).toList(growable: false),
   };
 
   @override
-  String toString() => 'GatewayCapabilities(revision: $revision, methods: $methods, turnSend: $turnSend, conversationCreate: $conversationCreate)';
+  String toString() => 'GatewayCapabilities(revision: $revision, methods: $methods, turnSend: $turnSend, conversationCreate: $conversationCreate, usageDatasets: $usageDatasets)';
 }
 
 enum GatewayCapability {
@@ -1450,7 +1457,8 @@ enum GatewayCapability {
   turnSend('turn.send'),
   turnInterrupt('turn.interrupt'),
   approvalResolve('approval.resolve'),
-  conversationRecent('conversation.recent');
+  conversationRecent('conversation.recent'),
+  codepetUsageQuery('codepet.usage.query');
 
   const GatewayCapability(this.wireValue);
 
@@ -1461,7 +1469,7 @@ enum GatewayCapability {
     for (final candidate in values) {
       if (candidate.wireValue == wireValue) return candidate;
     }
-    throw ProtocolCodecException(path, 'expected one of: project.list, project.get, project.create, project.update, project.delete, conversation.list, conversation.search, conversation.get, conversation.create, turn.send, turn.interrupt, approval.resolve, conversation.recent');
+    throw ProtocolCodecException(path, 'expected one of: project.list, project.get, project.create, project.update, project.delete, conversation.list, conversation.search, conversation.get, conversation.create, turn.send, turn.interrupt, approval.resolve, conversation.recent, codepet.usage.query');
   }
 
   String toJson() => wireValue;
@@ -2894,6 +2902,77 @@ final class TurnUpsertedEvent {
   String toString() => 'TurnUpsertedEvent(turn: $turn)';
 }
 
+final class UsageQueryRequest {
+  factory UsageQueryRequest({
+    required ProviderInstanceId providerId,
+    required UsageQuery query,
+  }) {
+    final validatedProviderId = _string(providerId, 'UsageQueryRequest.providerId', minLength: 1);
+    final validatedQuery = query;
+    return UsageQueryRequest._(
+      providerId: validatedProviderId,
+      query: validatedQuery,
+    );
+  }
+
+  UsageQueryRequest._({
+    required this.providerId,
+    required this.query,
+  });
+
+  final ProviderInstanceId providerId;
+  final UsageQuery query;
+
+  factory UsageQueryRequest.fromJson(Object? value, {String path = 'UsageQueryRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'providerId', 'query'}, path);
+    return UsageQueryRequest(
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
+      query: UsageQuery.fromJson(_required(json, 'query', path), path: '$path.query'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'providerId': providerId,
+    'query': query.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageQueryRequest(providerId: $providerId, query: $query)';
+}
+
+final class UsageQueryResponse {
+  factory UsageQueryResponse({
+    required UsageQueryResult result,
+  }) {
+    final validatedResult = result;
+    return UsageQueryResponse._(
+      result: validatedResult,
+    );
+  }
+
+  UsageQueryResponse._({
+    required this.result,
+  });
+
+  final UsageQueryResult result;
+
+  factory UsageQueryResponse.fromJson(Object? value, {String path = 'UsageQueryResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'result'}, path);
+    return UsageQueryResponse(
+      result: UsageQueryResult.fromJson(_required(json, 'result', path), path: '$path.result'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'result': result.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageQueryResponse(result: $result)';
+}
+
 const int protocolVersion = 1;
 const String jsonRpcVersion = '2.0';
 
@@ -2925,7 +3004,8 @@ enum ProtocolMethod {
   conversationCreate('conversation.create', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.conversationCreate, requestType: ConversationCreateRequest, responseType: ConversationCreateResponse),
   turnSend('turn.send', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.turnSend, requestType: TurnSendRequest, responseType: TurnSendResponse),
   turnInterrupt('turn.interrupt', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.turnInterrupt, requestType: TurnInterruptRequest, responseType: TurnInterruptResponse),
-  approvalResolve('approval.resolve', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.approvalResolve, requestType: ApprovalResolveRequest, responseType: ApprovalResolveResponse);
+  approvalResolve('approval.resolve', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.approvalResolve, requestType: ApprovalResolveRequest, responseType: ApprovalResolveResponse),
+  codepetUsageQuery('codepet.usage.query', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.codepetUsageQuery, requestType: UsageQueryRequest, responseType: UsageQueryResponse);
 
   const ProtocolMethod(this.wireName, {required this.direction, required this.idempotency, required this.capability, required this.requestType, required this.responseType});
 
@@ -3024,6 +3104,8 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
       return TurnInterruptRequest.fromJson(value, path: path);
     case ProtocolMethod.approvalResolve:
       return ApprovalResolveRequest.fromJson(value, path: path);
+    case ProtocolMethod.codepetUsageQuery:
+      return UsageQueryRequest.fromJson(value, path: path);
   }
 }
 
@@ -3095,6 +3177,9 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
     case ProtocolMethod.approvalResolve:
       if (value is! ApprovalResolveRequest) throw ProtocolCodecException(path, 'expected ApprovalResolveRequest');
       return value.toJson();
+    case ProtocolMethod.codepetUsageQuery:
+      if (value is! UsageQueryRequest) throw ProtocolCodecException(path, 'expected UsageQueryRequest');
+      return value.toJson();
   }
 }
 
@@ -3144,6 +3229,8 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
       return TurnInterruptResponse.fromJson(value, path: path);
     case ProtocolMethod.approvalResolve:
       return ApprovalResolveResponse.fromJson(value, path: path);
+    case ProtocolMethod.codepetUsageQuery:
+      return UsageQueryResponse.fromJson(value, path: path);
   }
 }
 
@@ -3214,6 +3301,9 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
       return value.toJson();
     case ProtocolMethod.approvalResolve:
       if (value is! ApprovalResolveResponse) throw ProtocolCodecException(path, 'expected ApprovalResolveResponse');
+      return value.toJson();
+    case ProtocolMethod.codepetUsageQuery:
+      if (value is! UsageQueryResponse) throw ProtocolCodecException(path, 'expected UsageQueryResponse');
       return value.toJson();
   }
 }
@@ -3465,4 +3555,6 @@ final class ProtocolClient {
   Future<TurnInterruptResponse> turnInterrupt(TurnInterruptRequest request) => _request<TurnInterruptResponse>(ProtocolMethod.turnInterrupt, request);
 
   Future<ApprovalResolveResponse> approvalResolve(ApprovalResolveRequest request) => _request<ApprovalResolveResponse>(ProtocolMethod.approvalResolve, request);
+
+  Future<UsageQueryResponse> codepetUsageQuery(UsageQueryRequest request) => _request<UsageQueryResponse>(ProtocolMethod.codepetUsageQuery, request);
 }

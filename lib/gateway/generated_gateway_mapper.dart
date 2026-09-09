@@ -55,7 +55,14 @@ final class GeneratedGatewayMapper {
                 methods: const [],
               )
             : GatewayCapabilities.fromJson(
-                Map<String, dynamic>.from(capabilities.toJson()),
+                {
+                  'revision': capabilities.revision,
+                  'methods': capabilities.methods.map((method) => method.wireValue).toList(),
+                  if (capabilities.turnSend != null)
+                    'turnSend': capabilities.turnSend!.toJson(),
+                  if (capabilities.conversationCreate != null)
+                    'conversationCreate': capabilities.conversationCreate!.toJson(),
+                },
               ),
         capabilitiesLoaded: capabilities != null,
       );

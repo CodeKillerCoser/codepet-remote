@@ -4,6 +4,6 @@
   "package": "lan-channel",
   "role": "models",
   "protocolVersion": 1,
-  "protocolDigest": "sha256:af2dce3104057a0818c0b16297dbdd43611f53194383eb43197a4be05c1c3085",
+  "protocolDigest": "sha256:01b66b8fab9417f5ae9db2b652eaefdd09ab62ea376bcae0c705d815d3d51047",
   "language": "dart"
 }
