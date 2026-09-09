@@ -225,6 +225,16 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
             credential: restoredCredential,
             certSha256: device.tlsFingerprint!,
             hostDirectory: _discoveryEnabled ? _hostDirectory : null,
+            connectTimeout: const bool.fromEnvironment('CODEPET_WEBRTC')
+                ? const Duration(seconds: 25)
+                : ResolvingPinnedGatewayTransport.defaultConnectTimeout,
+            transportFactory: const bool.fromEnvironment('CODEPET_WEBRTC')
+                ? (uri, credential, pin) => WebRtcGatewayTransport(
+                    signaling: PinnedLanRtcSignaling(
+                      gatewayUri: uri, credential: credential, certSha256: pin,
+                    ),
+                  )
+                : null,
           ),
           clientId: device.clientId!, clientDevice: clientDevice, expectedDeviceId: device.deviceId, expectedIdentityFingerprint: device.tlsFingerprint!,
           traceRecorder: traceRecorder,

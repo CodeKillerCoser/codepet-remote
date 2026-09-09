@@ -14,7 +14,7 @@
 流水线使用所选分支的代码和 `pubspec.yaml` 版本号，生成包含各支持架构的通用 APK。
 手动流水线的 `release` 使用仓库 Actions Secrets 中的固定签名；缺少配置时直接失败，
 不会回退到临时 debug 签名。与本地使用同一密钥签名的旧版可覆盖安装（版本号不得降低）。
-`debug` 仍使用临时 debug 签名，不用于覆盖正式签名版本。
+本地和 CI 的 Debug APK 使用仓库内同一份固定调试签名，无需配置 Secrets。
 
 在 **Settings → Secrets and variables → Actions** 配置以下 Repository secrets：
 
@@ -24,13 +24,24 @@
 - `CODEPET_RELEASE_KEY_PASSWORD`：签名密钥密码。
 
 流水线仅在 release 构建步骤注入密钥，将 keystore 还原至 runner 临时目录，构建结束后删除。
-密钥和密码不得提交到仓库。
+正式密钥和密码不得提交到仓库。
+
+## Android 调试签名
+
+Debug 固定使用 `android/keystore/codepet-debug.keystore`，该公开调试密钥按用户要求纳入仓库。
+别名为 `androiddebugkey`，store/key 密码均为 `android`；构建时不得重新生成。
+这使本地和 CI 后续 Debug 包保持签名一致；覆盖安装还要求包名一致、版本号不降低。
+此前使用其他签名的安装包不能直接由这份新签名覆盖。
+
+2026-09-09 已构建启用 WebRTC 的 Debug APK，并通过 apksigner 校验：
+包名 `com.codepet.remote`，证书 SHA-256 为
+`15d8c13ab1ae0aefa0010c7a90d7f2eed2883be2f1be9ec399beb7555d537860`。
+调试密钥用途与指纹见 [keystore 说明](../android/keystore/README.md)。
 
 ## Android 发布签名
 
-当前开发阶段，Release 缺少正式签名配置时会回退使用 debug keystore，保证 APK
-可以直接安装测试。正式发布前通过 Gradle property 或环境变量提供以下四项，
-配置完整时会自动改用正式签名：
+通过 Gradle property 或环境变量提供以下四项。Release 缺少配置时拒绝打包，
+不回退到调试签名。覆盖安装还需保持签名、applicationId 一致、版本号不降低：
 
 ```text
 CODEPET_RELEASE_STORE_FILE

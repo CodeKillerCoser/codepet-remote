@@ -1,5 +1,7 @@
 # 资源 URI、Host 文件挂载与 WebRTC 预览传输方案
 
+> **2026-09-09 范围调整：暂缓。** 当前实施只新增 WebRTC 连接通道，保留现有 LAN HTTPS/WSS；文件挂载、预览、上传下载和网页代理不进入本轮。本页保留为后续设计，不是当前交付清单。当前通道计划见 Host 仓库 `knowledge/20-product/webrtc-channel-delivery.md`。
+
 ## 背景
 
 状态：**设计提案，尚未实现**。2026-09-08 根据用户确认的 WebRTC 连接方向修订。本次只修改文档，不实施 Host/Remote 代码、依赖或部署。
