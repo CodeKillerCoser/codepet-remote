@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:logging/logging.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 import 'package:codepet_remote/application/errors/application_failures.dart';
 import 'package:codepet_remote/gateway/webrtc/framing.dart';
 import 'package:codepet_remote/gateway/webrtc/signaling.dart';
@@ -91,6 +92,7 @@ class FakeChannel extends RTCDataChannel {
       RTCDataChannelState.RTCDataChannelConnecting;
   int buffer = 0;
   bool autoReply = true;
+  bool blockAfterFirstFrame = false;
   final sent = <Uint8List>[];
   final decoder = RtcDecoder(maximum: rtcRequestBytes);
   @override
@@ -107,6 +109,7 @@ class FakeChannel extends RTCDataChannel {
   Future<void> send(RTCDataChannelMessage message) async {
     expect(message.isBinary, isTrue);
     sent.add(message.binary);
+    if (blockAfterFirstFrame && sent.length == 1) buffer = 100000;
     final decoded = decoder.push(message.binary);
     if (decoded is RtcJson && autoReply) {
       final request = jsonDecode(utf8.decode(decoded.bytes)) as Map;
@@ -149,7 +152,46 @@ Future<void> eventually(bool Function() condition) async {
 
 void main() {
   test(
-    'fragment timeout logs partial progress and stops ICE sampling on close',
+    'heartbeat failure owns liveness after ordinary request timeout',
+    () async {
+      final peer = FakePeer()..channel.autoReply = false;
+      final transport = WebRtcGatewayTransport(
+        signaling: FakeSignaling(),
+        peerFactory: () async => peer,
+        requestTimeout: const Duration(milliseconds: 30),
+      );
+      addTearDown(transport.close);
+      await transport.connect();
+      await expectLater(
+        transport.request({'id': 'business', 'method': 'conversation.get'}),
+        throwsA(isA<GatewayConnectionException>()),
+      );
+      expect(peer.disposed, isFalse);
+      final failed = Completer<void>();
+      var sequence = 0;
+      final heartbeat = sdk.GatewayHeartbeatClient(
+        client: sdk.ProtocolClient(
+          transport,
+          requestIdFactory: () => 'ping-${sequence++}',
+        ),
+        interval: const Duration(milliseconds: 10),
+        requestTimeout: const Duration(milliseconds: 10),
+        failureTimeout: const Duration(milliseconds: 50),
+        onProviders: (_) {},
+        onFailure: (_, _) {
+          failed.complete();
+        },
+      )..start();
+      addTearDown(heartbeat.close);
+      await failed.future.timeout(const Duration(seconds: 2));
+      // Session owner receives this signal and closes/reconnects the transport.
+      await transport.close();
+      expect(peer.disposed, isTrue);
+    },
+  );
+
+  test(
+    'slow fragments survive five seconds and sampling stops only on close',
     () async {
       final records = <Map<String, dynamic>>[];
       final logger = Logger('gateway.rtc.diagnostic');
@@ -169,16 +211,29 @@ void main() {
       addTearDown(subscription.cancel);
       addTearDown(transport.close);
       await transport.connect();
+      expect(transport.requestTimeout, const Duration(seconds: 30));
+      final response = transport.request({
+        'id': 'slow',
+        'method': 'conversation.get',
+      });
+      final bytes = utf8.encode(
+        jsonEncode({'jsonrpc': '2.0', 'id': 'slow', 'result': {}}),
+      );
       peer.channel.onMessage!(
-        RTCDataChannelMessage.fromBinary(rtcFragment(100, 0, [1, 2, 3])),
+        RTCDataChannelMessage.fromBinary(
+          rtcFragment(bytes.length, 0, bytes.sublist(0, 3)),
+        ),
       );
       await Future<void>.delayed(const Duration(milliseconds: 5150));
+      expect(peer.disposed, isFalse);
+      peer.channel.onMessage!(
+        RTCDataChannelMessage.fromBinary(
+          rtcFragment(bytes.length, 3, bytes.sublist(3)),
+        ),
+      );
+      expect((await response as Map)['id'], 'slow');
+      expect(records.where((r) => r['event'] == 'channel.abort'), isEmpty);
       await transport.close();
-      final abort = records.singleWhere((r) => r['event'] == 'channel.abort');
-      expect(abort['cause'], 'fragmentTimeout');
-      expect(abort['partialReceived'], 3);
-      expect(abort['partialTotal'], 100);
-      expect(abort['lastFragmentAgeMs'], greaterThanOrEqualTo(4900));
       final calls = peer.statsCalls;
       await Future<void>.delayed(const Duration(milliseconds: 2100));
       expect(peer.statsCalls, calls);
@@ -306,9 +361,9 @@ void main() {
   );
 
   test(
-    'timeout aborts an unfinished send and reports unknown outcome',
+    'timeout preserves a blocked send and subsequent requests still work',
     () async {
-      final peer = FakePeer()..channel.buffer = 100000;
+      final peer = FakePeer()..channel.blockAfterFirstFrame = true;
       final transport = WebRtcGatewayTransport(
         signaling: FakeSignaling(),
         peerFactory: () async => peer,
@@ -316,13 +371,18 @@ void main() {
       );
       final subscription = transport.events.listen(
         (_) {},
-        onError: (Object _) {},
+        onError: (Object error) =>
+            fail('Request timeout leaked to events: $error'),
       );
       addTearDown(subscription.cancel);
       addTearDown(transport.close);
       await transport.connect();
       await expectLater(
-        transport.request({'id': 'a', 'method': 'turn.send'}),
+        transport.request({
+          'id': 'a',
+          'method': 'turn.send',
+          'params': {'text': 'x' * 40000},
+        }),
         throwsA(
           isA<GatewayConnectionException>().having(
             (e) => e.outcomeUnknown,
@@ -331,9 +391,72 @@ void main() {
           ),
         ),
       );
-      await transport.close();
-      expect(peer.channel.sent, isEmpty);
-      expect(peer.disposed, isTrue);
+      expect(peer.channel.sent, hasLength(1));
+      expect(peer.disposed, isFalse);
+      peer.channel.buffer = 0;
+      await eventually(() => peer.channel.sent.length >= 3);
+      final next = await transport.request({
+        'id': 'b',
+        'method': 'provider.list',
+      });
+      expect((next as Map)['id'], 'b');
+    },
+  );
+
+  test(
+    'timed out response drains without harming another RPC or events',
+    () async {
+      final peer = FakePeer()..channel.autoReply = false;
+      final transport = WebRtcGatewayTransport(
+        signaling: FakeSignaling(),
+        peerFactory: () async => peer,
+        requestTimeout: const Duration(milliseconds: 80),
+      );
+      addTearDown(transport.close);
+      final errors = <Object>[];
+      final events = <Map<String, dynamic>>[];
+      final subscription = transport.events.listen(
+        events.add,
+        onError: errors.add,
+      );
+      addTearDown(subscription.cancel);
+      await transport.connect();
+      final first = transport.request({
+        'id': 'late',
+        'method': 'conversation.get',
+      });
+      final failure = expectLater(
+        first,
+        throwsA(isA<GatewayConnectionException>()),
+      );
+      final bytes = utf8.encode(
+        jsonEncode({'jsonrpc': '2.0', 'id': 'late', 'result': {}}),
+      );
+      peer.channel.onMessage!(
+        RTCDataChannelMessage.fromBinary(
+          rtcFragment(bytes.length, 0, bytes.sublist(0, 5)),
+        ),
+      );
+      await failure;
+      final second = transport.request({
+        'id': 'live',
+        'method': 'protocol.ping',
+      });
+      peer.channel.onMessage!(
+        RTCDataChannelMessage.fromBinary(
+          rtcFragment(bytes.length, 5, bytes.sublist(5)),
+        ),
+      );
+      peer.channel.emit({'jsonrpc': '2.0', 'id': 'live', 'result': {}});
+      expect((await second as Map)['id'], 'live');
+      peer.channel.emit({
+        'jsonrpc': '2.0',
+        'method': 'test.event',
+        'params': {},
+      });
+      await eventually(() => events.isNotEmpty);
+      expect(errors, isEmpty);
+      expect(peer.disposed, isFalse);
     },
   );
 

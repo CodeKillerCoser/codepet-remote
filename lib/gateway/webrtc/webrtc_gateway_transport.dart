@@ -21,7 +21,7 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     required this.signaling,
     RtcPeerFactory? peerFactory,
     this.connectTimeout = const Duration(seconds: 25),
-    this.requestTimeout = const Duration(seconds: 15),
+    this.requestTimeout = const Duration(seconds: 30),
     // ignore: prefer_initializing_formals
   }) : _peerFactory = peerFactory;
 
@@ -86,7 +86,6 @@ final class WebRtcGatewayTransport implements GatewayTransport {
   Future<void>? _connecting;
   Future<void>? _closing;
   Future<void> _sendTail = Future<void>.value();
-  Timer? _fragmentTimer;
   Completer<void>? _gathered;
   bool _closed = false;
   bool _connected = false;
@@ -312,8 +311,10 @@ final class WebRtcGatewayTransport implements GatewayTransport {
               retryable: true,
               outcomeUnknown: true,
             );
-            // A timed-out partially sent message cannot be followed by another message.
-            _abort(error);
+            _diagnostics.emit('rpc.timeout', {
+              'rpcId': rtcOfferId(id),
+              'method': request['method'],
+            });
             throw error;
           },
         )
@@ -323,7 +324,9 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     _sendTail = _sendTail.then((_) async {
       try {
         if (!_closed && _pending.containsKey(id)) {
-          await _send(bytes).timeout(requestTimeout);
+          // Finish an in-flight message even after its caller times out: CPG1
+          // cannot interleave messages. Heartbeat/transport closure ends stalls.
+          await _send(bytes);
         }
       } catch (error) {
         _abort(_failure(error));
@@ -403,16 +406,8 @@ final class WebRtcGatewayTransport implements GatewayTransport {
         });
       }
       if (envelope == null) {
-        _fragmentTimer ??= Timer(
-          const Duration(seconds: 5),
-          () => _abort(
-            const GatewayConnectionException(
-              'RTC fragment timed out',
-              retryable: true,
-              outcomeUnknown: true,
-            ),
-          ),
-        );
+        // Keep the bounded partial message until complete or connection close.
+        // RPC deadlines must not invalidate framing; heartbeat owns liveness.
         return;
       }
       _diagnostics.emit('message.receive.complete', {
@@ -422,8 +417,6 @@ final class WebRtcGatewayTransport implements GatewayTransport {
       });
       _messageFrames = 0;
       _messageStartedMs = null;
-      _fragmentTimer?.cancel();
-      _fragmentTimer = null;
       if (envelope is RtcClose) {
         _abort(
           GatewayConnectionException(
@@ -451,7 +444,14 @@ final class WebRtcGatewayTransport implements GatewayTransport {
           'bytes': envelope.bytes.length,
           'isError': json.containsKey('error'),
         });
-        _pending.remove(id)?.complete(json);
+        final pending = _pending.remove(id);
+        if (pending == null) {
+          _diagnostics.emit('rpc.response.discarded', {
+            'rpcId': rtcOfferId(id),
+          });
+        } else {
+          pending.complete(json);
+        }
       }
     } catch (error) {
       _abort(_failure(error));
@@ -472,9 +472,7 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     final now = _diagnostics.clock.elapsedMilliseconds;
     _diagnostics.emit('channel.abort', {
       'errorType': error.runtimeType.toString(),
-      'cause': error.message == 'RTC fragment timed out'
-          ? 'fragmentTimeout'
-          : 'transportFailure',
+      'cause': 'transportFailure',
       'pendingRequests': _pending.length,
       'queuedBytes': _queuedBytes,
       'receivedFrames': _receivedFrames,
@@ -506,7 +504,6 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     _diagnostics.emit('channel.close');
     if (signaling is RtcIceSignaling) (signaling as RtcIceSignaling).close();
     _connected = false;
-    _fragmentTimer?.cancel();
     if (_gathered != null && !_gathered!.isCompleted) {
       _gathered!.complete();
     }

@@ -180,7 +180,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     try {
       socket.add(encodedRequest);
       final response = await completer.future.timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 30),
         onTimeout: () {
           throw GatewayConnectionException(
             '$method request timed out',
