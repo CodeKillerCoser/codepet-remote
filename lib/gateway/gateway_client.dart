@@ -58,7 +58,7 @@ final class ProtocolGatewayClient
   final TraceRecorder traceRecorder;
 
   static const _mapper = GeneratedGatewayMapper();
-  static const _conversationHistoryPageLimits = [20, 10, 5, 1];
+  static const _conversationHistoryPageLimits = [5, 1];
   late final GatewayProtocolInstrumentation _instrumentation;
   late final sdk.ProtocolClient _protocol;
   int _nextRequestId = 1;

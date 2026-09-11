@@ -203,7 +203,7 @@ void main() {
     expect(transport.requests[3].params['projectFilter'], {'kind': 'all'});
     expect(transport.requests[3].params['limit'], 25);
     expect(transport.requests[4].method, 'conversation.get');
-    expect(transport.requests[4].params['limit'], 20);
+    expect(transport.requests[4].params['limit'], 5);
     expect(detail.detail.summary.resource!.nativeResourceId, 'conversation-1');
     expect(detail.detail.messages, isEmpty);
 
@@ -777,7 +777,7 @@ void main() {
           request.method == 'conversation.resume' || request.method == 'conversation.get').toList();
       expect(requests.map((request) => request.method),
           ['conversation.resume']);
-      expect(requests.first.params['limit'], 20);
+      expect(requests.first.params['limit'], 5);
       expect(requests.first.params['force'], force ? true : null);
       expect(snapshot.nextCursor, hasOlderPage ? 'older-page' : null);
       await client.close();
@@ -807,7 +807,7 @@ void main() {
     expect(resumed.interaction, isNotNull);
     await resumed.loadHistory!();
     final gets = transport.requests.where((request) => request.method == 'conversation.get');
-    expect(gets.map((request) => request.params['limit']), [10]);
+    expect(gets.map((request) => request.params['limit']), [1]);
     expect(gets.single.params['cursor'], isNull);
     await client.close();
   });
@@ -823,7 +823,7 @@ void main() {
         if (method != 'conversation.get') return null;
         final limit = params['limit'] as int;
         final cursor = params['cursor'] as String?;
-        if (cursor == null && limit > 5) {
+        if (cursor == null && limit > 1) {
           return {
             'jsonrpc': '2.0',
             'id': id,
@@ -872,11 +872,11 @@ void main() {
         .toList(growable: false);
     expect(
       requests.map((request) => request.params['limit']),
-      [20, 10, 5],
+      [5, 1],
     );
     expect(
       requests.map((request) => request.params['cursor']),
-      [null, null, null],
+      [null, null],
     );
     expect(
       snapshot.detail.committedMessages.map((message) => message.content),
@@ -937,7 +937,7 @@ void main() {
         .toList(growable: false);
     expect(
       requests.map((request) => request.params['limit']),
-      [20, 20, 10],
+      [5, 5, 1],
     );
     expect(
       requests.map((request) => request.params['cursor']),
@@ -990,7 +990,7 @@ void main() {
     final requests = transport.requests
         .where((request) => request.method == 'conversation.get')
         .toList(growable: false);
-    expect(requests.map((request) => request.params['limit']), [20]);
+    expect(requests.map((request) => request.params['limit']), [5]);
     await client.close();
   });
 
@@ -1029,11 +1029,11 @@ void main() {
         .toList(growable: false);
     expect(
       requests.map((request) => request.params['limit']),
-      [20, 10, 5, 1],
+      [5, 1],
     );
     expect(
       requests.map((request) => request.params['cursor']),
-      [null, null, null, null],
+      [null, null],
     );
     await client.close();
   });
