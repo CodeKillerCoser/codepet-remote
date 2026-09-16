@@ -77,6 +77,11 @@ abstract interface class ConversationResumeGatewayClient {
   });
 }
 
+/// Releases the harness shared by this conversation's Provider instance.
+abstract interface class ConversationReleaseGatewayClient {
+  Future<void> releaseConversation(ConversationSummary conversation);
+}
+
 class ConversationResumeResult {
   const ConversationResumeResult({
     this.interaction,

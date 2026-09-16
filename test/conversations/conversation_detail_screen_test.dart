@@ -972,6 +972,163 @@ void main() {
     }
   }
 
+  testWidgets('immediate release stops automatic acquisition until explicit resume', (tester) async {
+    final pendingRelease = Completer<void>();
+    final client = _ReleaseDetailClient(onRelease: (_) => pendingRelease.future);
+    final session = await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pump();
+    expect(client.acquireCalls, 1);
+    await tester.tap(find.byKey(const Key('conversation-actions')));
+    await tester.pumpAndSettle();
+    expect(find.text('停止此 Provider 的所有会话任务'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('release-immediately')));
+    await tester.pumpAndSettle();
+    expect(client.releaseCalls, 1);
+    expect(find.text('正在立即释放…'), findsOneWidget);
+    expect(tester.widget<TextButton>(find.byKey(const Key('resume-released'))).onPressed, isNull);
+    pendingRelease.complete();
+    await tester.pump();
+    expect(find.byKey(const Key('interaction-released')), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
+    expect(client.acquireCalls, 1);
+    // Reopening another detail in the same Provider must also stay paused.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(MaterialApp(home: ConversationDetailScreen(
+      session: session, conversation: _idleConversation(),
+    )));
+    await tester.pump();
+    expect(find.byKey(const Key('interaction-released')), findsOneWidget);
+    expect(client.acquireCalls, 1);
+    await tester.tap(find.byKey(const Key('resume-released')));
+    await tester.pumpAndSettle();
+    expect(client.acquireCalls, 3);
+    expect(client.resumeForces, everyElement(isFalse));
+    expect(find.byKey(const Key('interaction-released')), findsNothing);
+    expect(tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled, isTrue);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('immediate release is available during active tasks and failures stay paused', (tester) async {
+    final client = _ReleaseDetailClient(onRelease: (_) async => throw StateError('kill failed'));
+    await _pumpDetail(tester, client);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('conversation-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('release-immediately')));
+    await tester.pumpAndSettle();
+    expect(client.releaseCalls, 1);
+    expect(find.textContaining('立即释放失败'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
+    expect(client.acquireCalls, 1);
+    expect(find.byKey(const Key('force-takeover')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('immediate release can resume a stopped Provider without loaded capabilities', (tester) async {
+    late _ReleaseDetailClient client;
+    const ready = GatewayProvider(
+      id: _detailProviderId, displayName: 'Provider', status: ProviderStatus.ready,
+      capabilities: GatewayCapabilities(revision: 'release-v1',
+        methods: ['conversation.get', 'turn.send', 'conversation.releaseInteraction'],
+        turnSend: TurnSendCapabilities()),
+    );
+    client = _ReleaseDetailClient(onRelease: (_) async {
+      client.provider = GatewayProvider(id: _detailProviderId, displayName: 'Provider',
+        status: ProviderStatus.stopped, capabilities: ready.capabilities, capabilitiesLoaded: false);
+      client.emit(GatewayProviderChangedEvent(eventCursor: 'released', provider: client.provider));
+    }, onAcquire: (_) async {
+      if (client.provider.status == ProviderStatus.stopped) {
+        client.provider = ready;
+        client.emit(GatewayProviderChangedEvent(eventCursor: 'restarted', provider: ready));
+      }
+      return const ConversationInteraction(selection: TurnSendSelection());
+    });
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('conversation-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('release-immediately')));
+    await tester.pumpAndSettle();
+    expect(client.provider.status, ProviderStatus.stopped);
+    expect(tester.widget<TextButton>(find.byKey(const Key('resume-released'))).onPressed, isNotNull);
+    await tester.tap(find.byKey(const Key('resume-released')));
+    await tester.pumpAndSettle();
+    expect(client.provider.status, ProviderStatus.ready);
+    expect(find.byKey(const Key('interaction-released')), findsNothing);
+    expect(tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled, isTrue,
+      reason: 'calls=${client.acquireCalls} get=${client.getCalls} hint=${tester.widget<TextField>(find.byKey(const Key('turn-input'))).decoration?.hintText}');
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  testWidgets('immediate release is hidden without capability', (tester) async {
+    final client = _ReleaseDetailClient()..provider = _detailProvider;
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pump();
+    expect(find.byKey(const Key('conversation-actions')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
+  test('immediate release fences late acquisition across controllers and reconnect', () async {
+    final acquisition = Completer<ConversationInteraction>();
+    final client = _ReleaseDetailClient(onAcquire: (_) => acquisition.future);
+    final session = DeviceSession(device: const PairedDevice(deviceId: 'host', displayName: 'Host',
+      connectionKind: DeviceConnectionKind.demo), clientFactory: () => client, autoReconnect: false);
+    await session.connect();
+    final first = ConversationDetailController(session: session, conversation: _idleConversation());
+    final second = ConversationDetailController(session: session, conversation: ConversationSummary(
+      id: 'second', providerId: _detailProviderId, title: 'Second conversation',
+      status: ConversationStatus.idle, permissionLevel: PermissionLevel.readOnly,
+      createdAt: DateTime.utc(2026), updatedAt: DateTime.utc(2026),
+      resource: const RoutedResourceId(providerId: _detailProviderId, nativeResourceId: 'second'),
+    ));
+    final loading = first.reload();
+    final loadingSecond = second.reload();
+    await Future<void>.delayed(Duration.zero);
+    await first.releaseImmediately();
+    acquisition.complete(const ConversationInteraction(selection: TurnSendSelection()));
+    await Future.wait([loading, loadingSecond]);
+    expect(first.interactionAcquired, isFalse);
+    expect(second.interactionAcquired, isFalse);
+    expect(first.interactionPaused, isTrue);
+    expect(second.interactionPaused, isTrue);
+    final calls = client.acquireCalls;
+    await session.connect();
+    await first.reload();
+    expect(client.acquireCalls, calls);
+    first.dispose();
+    second.dispose();
+    session.dispose();
+    await client.close();
+  });
+
+  test('immediate release wins over an older explicit resume response', () async {
+    final resumed = Completer<ConversationInteraction>();
+    var delayResume = false;
+    final client = _ReleaseDetailClient(onAcquire: (_) => delayResume ? resumed.future :
+      Future.value(const ConversationInteraction(selection: TurnSendSelection())));
+    final session = DeviceSession(device: const PairedDevice(deviceId: 'host', displayName: 'Host',
+      connectionKind: DeviceConnectionKind.demo), clientFactory: () => client, autoReconnect: false);
+    await session.connect();
+    final controller = ConversationDetailController(session: session, conversation: _idleConversation());
+    await controller.reload();
+    await controller.releaseImmediately();
+    delayResume = true;
+    final resuming = controller.resumeReleased();
+    await Future<void>.delayed(Duration.zero);
+    await session.releaseConversation(_idleConversation());
+    resumed.complete(const ConversationInteraction(selection: TurnSendSelection()));
+    await resuming;
+    expect(controller.interactionPaused, isTrue);
+    expect(controller.interactionAcquired, isFalse);
+    controller.dispose();
+    session.dispose();
+    await client.close();
+  });
+
   testWidgets('force takeover is explicit, single flight and enables interaction', (tester) async {
     final forced = Completer<ConversationResumeResult>();
     var calls = 0;
@@ -2132,6 +2289,28 @@ ConversationSummary _idleConversation({
       turnSendSelection: selection,
       resource: _conversation.resource,
     );
+
+class _ReleaseDetailClient extends _DetailClient implements ConversationReleaseGatewayClient, ConversationResumeGatewayClient {
+  _ReleaseDetailClient({this.onRelease, super.onAcquire}) : super(provider: const GatewayProvider(
+    id: _detailProviderId, displayName: 'Provider', status: ProviderStatus.ready,
+    capabilities: GatewayCapabilities(revision: 'release-v1',
+      methods: ['conversation.get', 'turn.send', 'conversation.releaseInteraction'],
+      turnSend: TurnSendCapabilities()),
+  ));
+  final List<bool> resumeForces = [];
+  @override
+  Future<ConversationResumeResult> resumeConversation(ConversationSummary conversation, {bool force = false}) async {
+    resumeForces.add(force);
+    return ConversationResumeResult(interaction: await acquireInteraction(conversation));
+  }
+  final Future<void> Function(ConversationSummary)? onRelease;
+  int releaseCalls = 0;
+  @override
+  Future<void> releaseConversation(ConversationSummary conversation) async {
+    releaseCalls++;
+    await onRelease?.call(conversation);
+  }
+}
 
 class _ResumeDetailClient extends _DetailClient implements ConversationResumeGatewayClient {
   _ResumeDetailClient({required this.onResume});

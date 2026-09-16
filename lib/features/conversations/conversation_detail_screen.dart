@@ -298,6 +298,27 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     return Scaffold(
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
+        actions: [
+          if (_controller.canRelease)
+            PopupMenuButton<String>(
+              key: const Key('conversation-actions'),
+              tooltip: '会话操作',
+              onSelected: (_) => unawaited(_controller.releaseImmediately()),
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'release',
+                  key: Key('release-immediately'),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('立即释放'),
+                      Text('停止此 Provider 的所有会话任务', style: TextStyle(fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+        ],
         leadingWidth: 48,
         titleSpacing: 0,
         toolbarHeight: 64,
@@ -560,6 +581,32 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   }
 
   Widget _buildComposer() {
+    if (_controller.interactionPaused) {
+      return Material(
+        key: const Key('interaction-released'),
+        color: Theme.of(context).colorScheme.surface,
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(_controller.releasing ? '正在立即释放…' :
+                    _controller.resumingReleased ? '正在重新接管…' :
+                    _controller.releaseError ?? '已暂停接管。重新接管后可继续对话。'),
+                TextButton(
+                  key: const Key('resume-released'),
+                  onPressed: _controller.canResumeReleased ? _controller.resumeReleased : null,
+                  child: const Text('重新接管'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     final interactionError = _interactionError;
     if (interactionError != null) {
       return Material(

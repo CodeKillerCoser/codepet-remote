@@ -56,6 +56,11 @@ class DeviceSessionRuntimeLease {
     bool force = false,
   }) => (_client as ConversationResumeGatewayClient).resumeConversation(conversation, force: force);
 
+  bool get supportsConversationRelease => _client is ConversationReleaseGatewayClient;
+
+  Future<void> releaseConversation(ConversationSummary conversation) =>
+      (_client as ConversationReleaseGatewayClient).releaseConversation(conversation);
+
   Future<ConversationPage> searchConversations({
     required String providerId,
     required String searchTerm,
@@ -120,6 +125,51 @@ class DeviceSession extends ApplicationNotifier {
     _reconnectSignalSubscription = reconnectSignals?.listen(
       (_) => _handleReconnectSignal(),
     );
+  }
+
+  // Keep an explicit release paused across navigation and reconnects. Only a user
+  // resume clears it; otherwise an automatic acquisition would undo the release.
+  final Set<String> _pausedInteractionProviders = {};
+  final Set<String> _releasingInteractionProviders = {};
+  final Map<String, int> _interactionRevisions = {};
+
+  bool interactionPaused(String providerId) => _pausedInteractionProviders.contains(providerId);
+  bool interactionReleasing(String providerId) => _releasingInteractionProviders.contains(providerId);
+  int interactionRevision(String providerId) => _interactionRevisions[providerId] ?? 0;
+
+  Future<void> releaseConversation(ConversationSummary conversation) async {
+    final lease = runtimeLease;
+    final provider = providerForConversation(conversation);
+    if (lease == null || !lease.supportsConversationRelease || provider == null ||
+        !provider.methods.contains('conversation.releaseInteraction')) {
+      throw StateError('当前 Provider 不支持立即释放');
+    }
+    final id = provider.id;
+    if (!_releasingInteractionProviders.add(id)) return;
+    pauseProviderInteraction(id);
+    try {
+      await lease.releaseConversation(conversation);
+    } finally {
+      // On a timeout the kill may have succeeded. Stay paused until an explicit
+      // resume, rather than blindly reacquiring and restarting the harness.
+      _releasingInteractionProviders.remove(id);
+      _notifyListenersImmediately();
+    }
+  }
+
+  void pauseProviderInteraction(String providerId) {
+    _pausedInteractionProviders.add(providerId);
+    _interactionRevisions[providerId] = interactionRevision(providerId) + 1;
+    messageCache.releaseProviderInteraction(providerId);
+    _notifyListenersImmediately();
+  }
+
+  bool resumeProviderInteraction(String providerId) {
+    if (interactionReleasing(providerId)) return false;
+    _pausedInteractionProviders.remove(providerId);
+    _interactionRevisions[providerId] = interactionRevision(providerId) + 1;
+    _notifyListenersImmediately();
+    return true;
   }
 
   final messageCache = ConversationMessageCache();

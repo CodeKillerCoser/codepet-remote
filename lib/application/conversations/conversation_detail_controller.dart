@@ -49,6 +49,8 @@ class ConversationDetailController extends ApplicationNotifier {
   String? _sendError;
   String? _interactionError;
   String? _controlError;
+  String? _releaseError;
+  bool _resumingReleased = false;
   String? _accessModeId;
   String? _reasoningEffortId;
   ModelSelection? _modelSelection;
@@ -108,8 +110,81 @@ class ConversationDetailController extends ApplicationNotifier {
     return _conversation;
   }
 
+  String get _interactionProviderId => currentConversation.resource?.providerId ?? currentConversation.providerId;
+  bool get interactionPaused => _session.interactionPaused(_interactionProviderId) ||
+      (_provider?.status == ProviderStatus.stopped &&
+       _provider?.methods.contains('conversation.releaseInteraction') == true);
+  bool get releasing => _session.interactionReleasing(_interactionProviderId);
+  String? get releaseError => _releaseError;
+  bool get canRelease => !_disposed && !releasing && !_resumingReleased &&
+      _session.runtimeLease?.supportsConversationRelease == true &&
+      _provider?.connectionStatus != 'offline' &&
+      _provider?.methods.contains('conversation.releaseInteraction') == true;
+  bool get resumingReleased => _resumingReleased;
+  bool get canResumeReleased => interactionPaused && !releasing && !_resumingReleased &&
+      _session.runtimeLease != null && _provider != null &&
+      _provider?.connectionStatus != 'offline' &&
+      (_provider?.status == ProviderStatus.ready || _provider?.status == ProviderStatus.stopped);
+
+  Future<void> releaseImmediately() async {
+    if (!canRelease) return;
+    final session = _session;
+    final conversation = currentConversation;
+    _releaseError = null;
+    try {
+      await session.releaseConversation(conversation);
+    } catch (error) {
+      if (_disposed || !identical(session, _session) ||
+          conversationRoutingKey(conversation) != conversationRoutingKey(currentConversation)) {
+        return;
+      }
+      _releaseError = '立即释放失败，已暂停自动接管：$error';
+      notifyApplicationListeners();
+    }
+  }
+
+  Future<void> resumeReleased() async {
+    if (!canResumeReleased) return;
+    final session = _session;
+    final lease = session.runtimeLease!;
+    final conversation = currentConversation;
+    final providerId = _interactionProviderId;
+    _resumingReleased = true;
+    session.pauseProviderInteraction(providerId);
+    final revision = session.interactionRevision(providerId);
+    _releaseError = null;
+    notifyApplicationListeners();
+    try {
+      // A released instance is Stopped and its summary can lack loaded capability
+      // details. Explicit resume must reach the Host before ordinary reload can
+      // use the Ready capability binding. Stay paused through status transitions.
+      if (lease.supportsConversationResume) {
+        final result = await lease.resumeConversation(conversation);
+        if (result.interaction == null) {
+          throw result.interactionError ?? StateError('Conversation interaction was not acquired');
+        }
+      } else {
+        await lease.acquireInteraction(conversation);
+      }
+      if (_disposed || !identical(session, _session) || !session.ownsRuntimeLease(lease) ||
+          revision != session.interactionRevision(providerId) ||
+          conversationRoutingKey(conversation) != conversationRoutingKey(currentConversation)) {
+        return;
+      }
+      if (session.resumeProviderInteraction(providerId)) await reload(forceRefresh: true);
+    } catch (error) {
+      if (!_disposed && identical(session, _session) &&
+          conversationRoutingKey(conversation) == conversationRoutingKey(currentConversation)) {
+        _releaseError = '重新接管失败：$error';
+      }
+    } finally {
+      _resumingReleased = false;
+      if (!_disposed) notifyApplicationListeners();
+    }
+  }
+
   bool get canForceTakeover =>
-      !_disposed && !_interactionAcquired && !_interactionRequestInFlight &&
+      !_disposed && !interactionPaused && !_interactionAcquired && !_interactionRequestInFlight &&
       !_sending && !_outcomeUnknown && _interactionError != null &&
       (_lastInteractionFailure == 'conversation_write_conflict' ||
        _lastInteractionFailure == 'force_takeover_failed') &&
@@ -155,6 +230,7 @@ class ConversationDetailController extends ApplicationNotifier {
     required ConversationSummary conversation,
   }) {
     _lastInteractionFailure = null;
+    _releaseError = null;
     _releaseSource();
     if (!identical(_session, session)) {
       _session.removeListener(_sessionChanged);
@@ -167,9 +243,22 @@ class ConversationDetailController extends ApplicationNotifier {
   }
 
   void _sessionChanged() {
+    if (interactionPaused) {
+      _interactionRetryTimer?.cancel();
+      _interactionRetryTimer = null;
+      _interactionAcquired = false;
+      _source?.interactionAcquired = false;
+    }
     final lease = _session.runtimeLease;
     final conversation = currentConversation;
     final provider = _session.providerForConversation(conversation);
+    // Explicit resume owns the transition from Stopped through Starting to Ready.
+    // Do not start an overlapping snapshot load on those status notifications.
+    if (_resumingReleased && _sameLease(_observedLease, lease)) {
+      _provider = provider;
+      notifyApplicationListeners();
+      return;
+    }
     final nextBinding = lease == null || provider == null
         ? null
         : _CapabilityBinding.from(lease, provider);
@@ -319,15 +408,19 @@ class ConversationDetailController extends ApplicationNotifier {
     required int epoch,
     Future<ConversationInteraction> Function()? acquire,
   }) async {
-    if (_interactionRequestInFlight ||
+    if (interactionPaused || _interactionRequestInFlight ||
         !_acceptsRuntime(epoch, lease, binding)) {
       return;
     }
+    final interactionRevision = _session.interactionRevision(_interactionProviderId);
     _interactionRequestInFlight = true;
     notifyApplicationListeners();
     try {
       final interaction = await (acquire?.call() ?? lease.acquireInteraction(conversation));
-      if (!_acceptsRuntime(epoch, lease, binding)) return;
+      if (!_acceptsRuntime(epoch, lease, binding) || interactionPaused ||
+          interactionRevision != _session.interactionRevision(_interactionProviderId)) {
+        return;
+      }
       if (_lastInteractionFailure != null) {
         _session.logger.info(
           'Conversation interaction recovered for device '
@@ -350,7 +443,14 @@ class ConversationDetailController extends ApplicationNotifier {
       }
       notifyApplicationListeners();
     } catch (error, stackTrace) {
-      if (!_acceptsRuntime(epoch, lease, binding)) return;
+      if (!_acceptsRuntime(epoch, lease, binding) || interactionPaused ||
+          interactionRevision != _session.interactionRevision(_interactionProviderId)) {
+        return;
+      }
+      if (error is GatewayProtocolException && error.code == 'interaction_released') {
+        _session.pauseProviderInteraction(_interactionProviderId);
+        return;
+      }
       final failure = error is GatewayProtocolException
           ? error.code
           : error.runtimeType.toString();
@@ -760,7 +860,7 @@ class ConversationDetailController extends ApplicationNotifier {
         provider.isAvailable &&
         provider.methods.contains('turn.send') &&
         provider.capabilities.turnSend != null &&
-        _interactionAcquired &&
+        !interactionPaused && _interactionAcquired &&
         !_staleCapabilities &&
         !_sending &&
         !_outcomeUnknown &&
@@ -773,7 +873,7 @@ class ConversationDetailController extends ApplicationNotifier {
       _detail != null &&
       _provider?.isAvailable == true &&
       _provider?.methods.contains('turn.send') == true &&
-      _interactionAcquired &&
+      !interactionPaused && _interactionAcquired &&
       !_staleCapabilities &&
       !_sending &&
       !conversationBlocksSend &&
@@ -783,7 +883,7 @@ class ConversationDetailController extends ApplicationNotifier {
     final lease = _session.runtimeLease;
     final turn = _detail?.activeTurn;
     final provider = _provider;
-    return lease != null &&
+    return !interactionPaused && lease != null &&
         lease.supportsConversationControl &&
         _session.ownsRuntimeLease(lease) &&
         provider?.isAvailable == true &&
@@ -797,7 +897,7 @@ class ConversationDetailController extends ApplicationNotifier {
     final lease = _session.runtimeLease;
     final approval = pendingApproval;
     final provider = _provider;
-    return lease != null &&
+    return !interactionPaused && lease != null &&
         lease.supportsConversationControl &&
         _session.ownsRuntimeLease(lease) &&
         provider?.isAvailable == true &&
