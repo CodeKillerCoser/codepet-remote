@@ -1199,6 +1199,59 @@ void main() {
     session.dispose();
   });
 
+  test('automatic reconnect stops after five retries and manual connect resets it', () async {
+    final discoverySignals = StreamController<void>.broadcast();
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('limited-retry'),
+      clientFactory: () {
+        factoryCalls++;
+        return _FailingClient();
+      },
+      reconnectDelays: const [Duration.zero],
+      reconnectSignals: discoverySignals.stream,
+    );
+    addTearDown(session.dispose);
+    addTearDown(discoverySignals.close);
+
+    await session.connect();
+    await pumpEventQueue(times: 100);
+    expect(factoryCalls, 6); // Initial connection plus five automatic retries.
+    expect(session.connectionState, DeviceConnectionState.failed);
+
+    discoverySignals.add(null);
+    await pumpEventQueue();
+    expect(factoryCalls, 6);
+
+    await session.connect();
+    await pumpEventQueue(times: 100);
+    expect(factoryCalls, 12);
+  });
+
+  test('discovery retries share the five retry limit', () async {
+    final discoverySignals = StreamController<void>.broadcast();
+    var factoryCalls = 0;
+    final session = DeviceSession(
+      device: _device('limited-discovery-retry'),
+      clientFactory: () {
+        factoryCalls++;
+        return _FailingClient();
+      },
+      reconnectDelays: const [Duration(hours: 1)],
+      reconnectSignals: discoverySignals.stream,
+    );
+    addTearDown(session.dispose);
+    addTearDown(discoverySignals.close);
+
+    await session.connect();
+    for (var attempt = 0; attempt < 7; attempt++) {
+      discoverySignals.add(null);
+      await pumpEventQueue();
+      expect(factoryCalls, attempt < 5 ? attempt + 2 : 6);
+    }
+    expect(session.connectionState, DeviceConnectionState.failed);
+  });
+
   test('fresh discovery wakes a retryable failed session immediately', () async {
     final discoverySignals = StreamController<void>.broadcast();
     final failed = _FailingClient();
