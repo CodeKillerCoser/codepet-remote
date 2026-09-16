@@ -18,6 +18,7 @@ class PairDeviceScreen extends StatefulWidget {
     required this.onPaired,
     this.discoveryService,
     this.connectedSessions = const [],
+    this.onForgetDevice,
     this.initialCandidates = const [],
     this.candidateUpdates,
     this.onRefreshDiscovery,
@@ -27,6 +28,7 @@ class PairDeviceScreen extends StatefulWidget {
   final DevicePairer pairingService;
   final DiscoveredDevicePairer? discoveryService;
   final List<DeviceSession> connectedSessions;
+  final Future<void> Function(DeviceSession session)? onForgetDevice;
   final List<PairingCandidate> initialCandidates;
   final Stream<PairingCandidate>? candidateUpdates;
   final Future<void> Function()? onRefreshDiscovery;
@@ -41,6 +43,16 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
   String? _error;
   final Map<String, PairingCandidate> _hosts = {};
   final Set<DeviceSession> _listenedSessions = {};
+  final Set<DeviceSession> _forgottenSessions = {};
+  List<DeviceSession> get _sessions => widget.connectedSessions
+      .where((session) => !_forgottenSessions.contains(session)).toList();
+
+  Future<void> _forgetDevice(DeviceSession session) async {
+    await widget.onForgetDevice!(session);
+    if (!mounted) return;
+    setState(() => _forgottenSessions.add(session));
+    _syncSessionListeners();
+  }
   StreamSubscription<PairingCandidate>? _hostSubscription;
   Timer? _pairingPoll;
   PairingAttempt? _attempt;
@@ -66,7 +78,7 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
   }
 
   void _syncSessionListeners() {
-    final desired = widget.connectedSessions.toSet();
+    final desired = _sessions.toSet();
     for (final session in _listenedSessions.difference(desired)) {
       session.removeListener(_sessionChanged);
     }
@@ -256,7 +268,7 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final activeDeviceIds = widget.connectedSessions
+    final activeDeviceIds = _sessions
         .where((session) =>
             session.connectionState == DeviceConnectionState.online ||
             session.connectionState == DeviceConnectionState.connecting)
@@ -295,7 +307,10 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
         style: Theme.of(context).textTheme.titleMedium,
       ),
       const SizedBox(height: 10),
-      _ConnectedDevicesTable(sessions: widget.connectedSessions),
+      _ConnectedDevicesTable(
+        sessions: _sessions,
+        onForgetDevice: widget.onForgetDevice == null ? null : _forgetDevice,
+      ),
       const SizedBox(height: 28),
       const Divider(),
       const SizedBox(height: 10),
@@ -343,7 +358,7 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
                   : '${host.host}:${host.port}'),
               trailing: FilledButton(
                 onPressed: _busy ? null : () => _requestHost(host),
-                child: Text(widget.connectedSessions.any((session) =>
+                child: Text(_sessions.any((session) =>
                         session.device.deviceId == host.deviceId)
                     ? '重新配对'
                     : '连接'),
@@ -623,9 +638,10 @@ class _PairingCodeDialogState extends State<_PairingCodeDialog> {
 }
 
 class _ConnectedDevicesTable extends StatelessWidget {
-  const _ConnectedDevicesTable({required this.sessions});
+  const _ConnectedDevicesTable({required this.sessions, this.onForgetDevice});
 
   final List<DeviceSession> sessions;
+  final Future<void> Function(DeviceSession session)? onForgetDevice;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -657,6 +673,7 @@ class _ConnectedDevicesTable extends StatelessWidget {
                     MaterialPageRoute(
                       builder: (_) => DeviceDetailScreen(
                         session: sessions[index],
+                        onForgetDevice: onForgetDevice,
                       ),
                     ),
                   ),

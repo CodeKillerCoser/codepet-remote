@@ -227,16 +227,21 @@ class DeviceRegistry implements DeviceRepository {
       );
       rethrow;
     }
+    // Local forgetting must not wait for an unreachable Host.
+    unawaited(_revokeForgottenCredential(device, credential));
+  }
+
+  Future<void> _revokeForgottenCredential(PairedDevice device, String? credential) async {
     if (credential != null &&
         device.preferredEndpoint != null &&
         device.tlsFingerprint != null) {
-      final gateway = Uri.parse(device.preferredEndpoint!);
-      final revoke = gateway.replace(
-        scheme: 'https',
-        path: '/remote/v1/credentials/current',
-        query: null,
-      );
       try {
+        final gateway = Uri.parse(device.preferredEndpoint!);
+        final revoke = gateway.replace(
+          scheme: 'https',
+          path: '/remote/v1/credentials/current',
+          query: null,
+        );
         await PinnedTlsConnection(
           expectedSha256: device.tlsFingerprint!,
         ).jsonRequest(method: 'DELETE', uri: revoke, bearer: credential);

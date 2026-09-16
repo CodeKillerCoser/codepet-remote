@@ -8,6 +8,54 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('forget from connection details supports cancel, failure and removal', (tester) async {
+    final session = DeviceSession(
+      device: const PairedDevice(
+        deviceId: 'forget-host', displayName: 'Forget Host',
+        connectionKind: DeviceConnectionKind.pairedGateway,
+      ),
+      clientFactory: () => throw StateError('not used'),
+    );
+    addTearDown(session.dispose);
+    var forgetCalls = 0;
+    var shouldFail = true;
+    await tester.pumpWidget(MaterialApp(home: PairDeviceScreen(
+      pairingService: _Pairer(),
+      connectedSessions: [session],
+      onPaired: (_) async {},
+      onForgetDevice: (_) async {
+        forgetCalls++;
+        if (shouldFail) throw StateError('disk unavailable');
+      },
+    )));
+    await tester.tap(find.byKey(const Key('connected-device-forget-host')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('forget-device')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(forgetCalls, 0);
+
+    await tester.tap(find.byKey(const Key('forget-device')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-forget-device')));
+    await tester.pumpAndSettle();
+    expect(forgetCalls, 1);
+    expect(find.text('忘记设备失败，请重试'), findsOneWidget);
+    expect(find.byKey(const Key('device-detail')), findsOneWidget);
+
+    shouldFail = false;
+    await tester.tap(find.byKey(const Key('forget-device')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-forget-device')));
+    await tester.pumpAndSettle();
+    expect(forgetCalls, 2);
+    expect(find.byKey(const Key('device-detail')), findsNothing);
+    expect(find.byKey(const Key('connected-device-forget-host')), findsNothing);
+    expect(find.text('暂无已连接设备'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'shows connected devices separately and refreshes discovered devices',
     (tester) async {
