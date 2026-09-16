@@ -12,6 +12,34 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('forget removes a failed saved device from connection page and registry', (tester) async {
+    final registry = DeviceRegistry(metadata: _Metadata(), credentials: _Credentials());
+    await registry.save([_persistedDevice]);
+    await tester.pumpWidget(CodePetRemoteApp(
+      registry: registry,
+      descriptorProvider: const _DescriptorProvider(),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-overflow-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('连接设备'));
+    await tester.pumpAndSettle();
+    final row = find.byKey(Key('connected-device-${_persistedDevice.deviceId}'));
+    await tester.ensureVisible(row);
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('forget-device')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-forget-device')));
+    await tester.pumpAndSettle();
+    expect(row, findsNothing);
+    expect(await registry.load(), isEmpty);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('还没有设备'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('App owns the continuous Host discovery lifecycle', (tester) async {
     final directory = _HostDirectory();
 

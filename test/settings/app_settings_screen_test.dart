@@ -7,8 +7,6 @@ void main() {
     var exportCalls = 0;
     await tester.pumpWidget(MaterialApp(
       home: AppSettingsScreen(
-        sessions: const [],
-        onForgetDevice: (_) async {},
         exportLogs: () async {
           exportCalls++;
           return '/local/diagnostics/codepet-logs.zip';
@@ -33,8 +31,6 @@ void main() {
       (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: AppSettingsScreen(
-        sessions: const [],
-        onForgetDevice: (_) async {},
         exportLogs: () => Future.error(StateError('disk unavailable')),
       ),
     ));

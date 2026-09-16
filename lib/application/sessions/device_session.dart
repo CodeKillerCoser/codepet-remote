@@ -192,6 +192,7 @@ class DeviceSession extends ApplicationNotifier {
   }
 
   static const int conversationPageSize = 20;
+  static const int _maxReconnectAttempts = 5;
 
   PairedDevice device;
   final GatewayClient Function() clientFactory;
@@ -615,14 +616,13 @@ class DeviceSession extends ApplicationNotifier {
     if (!_canReconnect(generation) || _reconnectTimer != null) return;
     final delayIndex = _reconnectAttempt.clamp(0, reconnectDelays.length - 1);
     final delay = reconnectDelays[delayIndex];
-    _reconnectAttempt++;
     logger.info(
       'Reconnect scheduled for device ${device.deviceId} in '
-      '${delay.inMilliseconds}ms (attempt $_reconnectAttempt)',
+      '${delay.inMilliseconds}ms (attempt ${_reconnectAttempt + 1})',
     );
     _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;
-      if (_canReconnect(generation)) unawaited(_connect());
+      _reconnect(generation);
     });
   }
 
@@ -631,20 +631,22 @@ class DeviceSession extends ApplicationNotifier {
       connectionState == DeviceConnectionState.failed &&
       _reconnectEnabled &&
       _retryableFailure &&
+      _reconnectAttempt < _maxReconnectAttempts &&
       !_disposed;
 
+  void _reconnect(int generation) {
+    if (!_canReconnect(generation)) return;
+    _cancelReconnect();
+    _reconnectAttempt++;
+    unawaited(_connect());
+  }
+
   void _handleReconnectSignal() {
-    if (connectionState != DeviceConnectionState.failed ||
-        !_reconnectEnabled ||
-        !_retryableFailure ||
-        _disposed) {
-      return;
-    }
+    if (!_canReconnect(_runtimeGeneration)) return;
     logger.info(
       'Discovery signal triggered immediate reconnect for device ${device.deviceId}',
     );
-    _cancelReconnect();
-    unawaited(_connect());
+    _reconnect(_runtimeGeneration);
   }
 
   void _cancelReconnect({bool resetAttempt = false}) {

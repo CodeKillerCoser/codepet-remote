@@ -5,19 +5,55 @@ import 'package:flutter/material.dart';
 
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
+import '../../core/domain/paired_device.dart';
 import '../common/identity_icons.dart';
 import 'device_connection_notice.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
-  const DeviceDetailScreen({super.key, required this.session});
+  const DeviceDetailScreen({super.key, required this.session, this.onForgetDevice});
 
   final DeviceSession session;
+  final Future<void> Function(DeviceSession session)? onForgetDevice;
 
   @override
   State<DeviceDetailScreen> createState() => _DeviceDetailScreenState();
 }
 
 class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
+  bool _forgetting = false;
+
+  Future<void> _forget() async {
+    if (_forgetting) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('忘记设备？'),
+        content: const Text('将删除本机保存的配对信息并断开连接，再次连接需要重新配对。Host 不可达时，请在 Host 端撤销访问权限。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          FilledButton(
+            key: const Key('confirm-forget-device'),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('忘记设备'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    setState(() => _forgetting = true);
+    try {
+      await widget.onForgetDevice!(widget.session);
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('忘记设备失败，请重试')),
+      );
+    } finally {
+      if (mounted) setState(() => _forgetting = false);
+    }
+  }
   @override
   void initState() {
     super.initState();
@@ -81,7 +117,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
               Expanded(
                 child: FilledButton.icon(
                   key: const Key('device-reconnect'),
-                  onPressed: connecting ? null : () => unawaited(session.connect()),
+                  onPressed: connecting || _forgetting ? null : () => unawaited(session.connect()),
                   icon: connecting
                       ? const SizedBox.square(
                           dimension: 18,
@@ -94,12 +130,21 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
               const SizedBox(width: 12),
               OutlinedButton.icon(
                 key: const Key('device-disconnect'),
-                onPressed: online ? () => unawaited(session.disconnect()) : null,
+                onPressed: online && !_forgetting ? () => unawaited(session.disconnect()) : null,
                 icon: const Icon(Icons.link_off),
                 label: const Text('断开连接'),
               ),
             ],
           ),
+          if (widget.onForgetDevice != null &&
+              session.device.connectionKind == DeviceConnectionKind.pairedGateway)
+            TextButton.icon(
+              key: const Key('forget-device'),
+              onPressed: _forgetting ? null : _forget,
+              icon: const Icon(Icons.delete_outline),
+              label: Text(_forgetting ? '正在忘记设备…' : '忘记设备'),
+              style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+            ),
           const SizedBox(height: 28),
           Text('Provider', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 10),
