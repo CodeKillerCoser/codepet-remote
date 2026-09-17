@@ -8,12 +8,19 @@ abstract interface class DevicePairer {
   Future<PairedDevice> pair(String rawPayload);
 }
 
+abstract interface class ConfirmingDevicePairer {
+  Future<PairedDevice> pairWithConfirmation(
+    String rawPayload,
+    void Function(String) onConfirmationCode,
+  );
+}
+
 abstract interface class DiscoveredDevicePairer {
   Future<PairingRequestExchange> request(PairingCandidate candidate);
   Future<PairingRequestExchange> refresh(PairingAttempt attempt);
 }
 
-class PairDeviceUseCase implements DevicePairer {
+class PairDeviceUseCase implements DevicePairer, ConfirmingDevicePairer {
   const PairDeviceUseCase({
     required this.repository,
     required this.descriptorProvider,
@@ -27,7 +34,14 @@ class PairDeviceUseCase implements DevicePairer {
   final ApplicationLog logger;
 
   @override
-  Future<PairedDevice> pair(String rawPayload) async {
+  Future<PairedDevice> pair(String rawPayload) =>
+      pairWithConfirmation(rawPayload, (_) {});
+
+  @override
+  Future<PairedDevice> pairWithConfirmation(
+    String rawPayload,
+    void Function(String) onConfirmationCode,
+  ) async {
     logger.info('QR pairing started');
     final totalStopwatch = Stopwatch()..start();
     try {
@@ -38,17 +52,22 @@ class PairDeviceUseCase implements DevicePairer {
       final descriptor = await descriptorProvider.load();
       final descriptorElapsedMs = stageStopwatch.elapsedMilliseconds;
       stageStopwatch.reset();
-      final registration = await gateway.exchange(
-        rawPayload: rawPayload,
-        clientId: clientId,
-        clientDevice: descriptor,
-      );
+      final registration = gateway is PairingConfirmationGateway
+          ? await (gateway as PairingConfirmationGateway)
+                .exchangeWithConfirmation(
+                  rawPayload: rawPayload,
+                  clientId: clientId,
+                  clientDevice: descriptor,
+                  onConfirmationCode: onConfirmationCode,
+                )
+          : await gateway.exchange(
+              rawPayload: rawPayload,
+              clientId: clientId,
+              clientDevice: descriptor,
+            );
       final exchangeElapsedMs = stageStopwatch.elapsedMilliseconds;
       stageStopwatch.reset();
-      await repository.register(
-        registration.device,
-        registration.credential,
-      );
+      await repository.register(registration.device, registration.credential);
       final persistenceElapsedMs = stageStopwatch.elapsedMilliseconds;
       logger.info(
         'QR pairing succeeded for device ${registration.device.deviceId} '

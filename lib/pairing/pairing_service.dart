@@ -1,3 +1,5 @@
+import 'invitation_exchange.dart';
+
 import 'dart:math';
 
 import '../core/domain/paired_device.dart';
@@ -7,6 +9,7 @@ import '../security/pinned_tls.dart';
 import '../diagnostics/app_log.dart';
 import 'pairing_confirmation.dart';
 import 'pairing_models.dart';
+
 import 'package:codepet_lan_channel_sdk/codepet_lan_channel_sdk.dart' as sdk;
 
 const _pairingRequestLocalWait = Duration(minutes: 2, seconds: 5);
@@ -31,14 +34,11 @@ class PinnedPairingExchangeClient implements PairingExchangeClient {
     required JsonMap? body,
     String method = 'POST',
   }) =>
-      PinnedTlsConnection(expectedSha256: expectedFingerprint).jsonRequest(
-        method: method,
-        uri: uri,
-        body: body,
-      );
+      PinnedTlsConnection(expectedSha256: expectedFingerprint)
+          .jsonRequest(method: method, uri: uri, body: body);
 }
 
-class LanPairingGateway implements PairingGateway {
+class LanPairingGateway implements PairingGateway, PairingConfirmationGateway {
   const LanPairingGateway({
     this.exchangeClient = const PinnedPairingExchangeClient(),
   });
@@ -50,18 +50,36 @@ class LanPairingGateway implements PairingGateway {
     required String rawPayload,
     required String clientId,
     required DeviceDescriptor clientDevice,
+  }) => exchangeWithConfirmation(
+    rawPayload: rawPayload,
+    clientId: clientId,
+    clientDevice: clientDevice,
+    onConfirmationCode: (_) {},
+  );
+
+  @override
+  Future<PairingRegistration> exchangeWithConfirmation({
+    required String rawPayload,
+    required String clientId,
+    required DeviceDescriptor clientDevice,
+    required void Function(String) onConfirmationCode,
   }) async {
     final qr = PairingQrPayload.parse(rawPayload);
     _log.info('Exchanging QR pairing request for device ${qr.hostDeviceId}');
-    final json = await exchangeClient.exchange(
-      expectedFingerprint: qr.certSha256,
-      uri: qr.exchangeUrl,
-      body: sdk.PairingExchangeRequest.fromJson({
-        'pairingSecret': qr.pairingSecret,
-        'clientId': clientId,
-        'device': clientDevice.toJson(),
-      }).toJson(),
-    );
+    final json = qr.version == 2
+        ? await InvitationExchange(
+            qr,
+            onConfirmationCode: onConfirmationCode,
+          ).exchange(clientId, clientDevice.toJson())
+        : await exchangeClient.exchange(
+            expectedFingerprint: qr.certSha256,
+            uri: qr.exchangeUrl,
+            body: sdk.PairingExchangeRequest.fromJson({
+              'pairingSecret': qr.pairingSecret,
+              'clientId': clientId,
+              'device': clientDevice.toJson(),
+            }).toJson(),
+          );
     final response = PairingExchangeResponse.fromJson(json);
     if (response.device.deviceId != qr.hostDeviceId ||
         !constantTimeEquals(
@@ -71,8 +89,7 @@ class LanPairingGateway implements PairingGateway {
         !_isGatewayLocator(response.gatewayUrl)) {
       throw const FormatException('Pairing identity or endpoint mismatch');
     }
-    final credentialKey =
-        'gateway-v1-credential:${qr.hostDeviceId}:$clientId';
+    final credentialKey = 'gateway-v1-credential:${qr.hostDeviceId}:$clientId';
     final device = PairedDevice(
       deviceId: qr.hostDeviceId,
       displayName: response.device.descriptor.deviceName,
@@ -86,10 +103,7 @@ class LanPairingGateway implements PairingGateway {
       connectionKind: DeviceConnectionKind.pairedGateway,
     );
     _log.info('QR pairing exchange validated for device ${qr.hostDeviceId}');
-    return PairingRegistration(
-      device: device,
-      credential: response.credential,
-    );
+    return PairingRegistration(device: device, credential: response.credential);
   }
 }
 
@@ -127,12 +141,7 @@ class LanPairingRequestGateway implements PairingRequestGateway {
         clientNonce: clientNonce,
       ).toJson(),
     );
-    return _decode(
-      candidate,
-      clientId,
-      json,
-      clientNonce: clientNonce,
-    );
+    return _decode(candidate, clientId, json, clientNonce: clientNonce);
   }
 
   @override
@@ -208,7 +217,8 @@ class LanPairingRequestGateway implements PairingRequestGateway {
         response.expiresAt,
         isUtc: true,
       ),
-      localPollDeadline: previous?.localPollDeadline ??
+      localPollDeadline:
+          previous?.localPollDeadline ??
           DateTime.now().toUtc().add(_pairingRequestLocalWait),
       confirmationCode: response.confirmationCode,
     );

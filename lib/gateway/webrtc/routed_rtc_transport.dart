@@ -84,7 +84,7 @@ class RoutedRtcTransport
     }
     final state = await pairing.load();
     if (state == null || state['token'] == null) {
-      throw const GatewayConnectionException('请先在同一局域网连接新版 Host，完成公网通道授权。');
+      throw const GatewayConnectionException('尚无公网通道授权，请扫描新版 Host 的配对二维码。');
     }
     if (_closed) throw const GatewayConnectionException('RTC route closed');
     final signaling = CloudRtcSignaling(state);

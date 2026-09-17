@@ -2,10 +2,7 @@ import '../../core/domain/models.dart';
 import '../../core/domain/paired_device.dart';
 
 class PairingRegistration {
-  const PairingRegistration({
-    required this.device,
-    required this.credential,
-  });
+  const PairingRegistration({required this.device, required this.credential});
 
   final PairedDevice device;
   final String credential;
@@ -16,6 +13,15 @@ abstract interface class PairingGateway {
     required String rawPayload,
     required String clientId,
     required DeviceDescriptor clientDevice,
+  });
+}
+
+abstract interface class PairingConfirmationGateway {
+  Future<PairingRegistration> exchangeWithConfirmation({
+    required String rawPayload,
+    required String clientId,
+    required DeviceDescriptor clientDevice,
+    required void Function(String) onConfirmationCode,
   });
 }
 
@@ -59,14 +65,14 @@ class PairingAttempt {
   final String confirmationCode;
 
   PairingAttempt copyWith({PairingRequestState? state}) => PairingAttempt(
-        candidate: candidate,
-        requestId: requestId,
-        clientNonce: clientNonce,
-        state: state ?? this.state,
-        expiresAt: expiresAt,
-        localPollDeadline: localPollDeadline,
-        confirmationCode: confirmationCode,
-      );
+    candidate: candidate,
+    requestId: requestId,
+    clientNonce: clientNonce,
+    state: state ?? this.state,
+    expiresAt: expiresAt,
+    localPollDeadline: localPollDeadline,
+    confirmationCode: confirmationCode,
+  );
 }
 
 class PairingRequestExchange {

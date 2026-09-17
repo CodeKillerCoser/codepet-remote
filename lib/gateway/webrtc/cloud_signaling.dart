@@ -26,6 +26,13 @@ class CloudPairing {
         : Map<String, dynamic>.from(jsonDecode(value) as Map);
   }
 
+  /// The caller has verified the QR-pinned Host signature and invitation binding.
+  Future<void> storeInvitation(Map<String, dynamic> state, List<int> seed) =>
+      storage.write(
+        key: key,
+        value: jsonEncode({...state, 'seed': base64Encode(seed)}),
+      );
+
   Future<void> bootstrap(Uri gateway) async {
     var state = await load();
     if (state == null) {

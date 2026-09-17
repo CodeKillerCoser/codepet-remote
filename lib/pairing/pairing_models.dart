@@ -6,7 +6,18 @@ import '../core/domain/models.dart';
 
 /// App-facing view of the generated LAN admission QR model.
 class PairingQrPayload {
-  const PairingQrPayload({required this.version, required this.hostDeviceId, required this.displayName, required this.httpsBaseUrl, required this.certSha256, required this.pairingId, required this.pairingSecret, required this.expiresAt});
+  const PairingQrPayload({
+    required this.version,
+    required this.hostDeviceId,
+    required this.displayName,
+    required this.httpsBaseUrl,
+    required this.certSha256,
+    required this.pairingId,
+    required this.pairingSecret,
+    required this.expiresAt,
+    this.serviceUrl,
+    this.hostPublicKey,
+  });
 
   factory PairingQrPayload.parse(String source, {DateTime? now}) {
     final sdk.PairingQrPayload generated;
@@ -15,14 +26,55 @@ class PairingQrPayload {
     } on sdk.ProtocolCodecException catch (error) {
       throw FormatException(error.toString());
     }
+    final serviceUrl = generated.serviceUrl == null
+        ? null
+        : Uri.tryParse(generated.serviceUrl!);
+    if (generated.version == 2 &&
+        (serviceUrl == null ||
+            serviceUrl.scheme != 'https' ||
+            serviceUrl.host.isEmpty ||
+            serviceUrl.userInfo.isNotEmpty ||
+            serviceUrl.hasQuery ||
+            serviceUrl.hasFragment ||
+            generated.hostPublicKey == null ||
+            base64Decode(generated.hostPublicKey!).length != 32)) {
+      throw const FormatException('Invalid public pairing invitation');
+    }
     final baseUrl = Uri.tryParse(generated.httpsBaseUrl);
-    if (baseUrl == null || baseUrl.scheme != 'https' || baseUrl.host.isEmpty || baseUrl.userInfo.isNotEmpty || baseUrl.query.isNotEmpty || baseUrl.fragment.isNotEmpty) throw const FormatException('httpsBaseUrl must be a secure HTTPS origin');
-    if (baseUrl.path.isNotEmpty && baseUrl.path != '/') throw const FormatException('httpsBaseUrl must not contain a path');
-    final expiresAt = DateTime.fromMillisecondsSinceEpoch(generated.expiresAt, isUtc: true);
-    if (!expiresAt.isAfter((now ?? DateTime.now()).toUtc())) throw const FormatException('Pairing QR has expired');
-    return PairingQrPayload(version: generated.version, hostDeviceId: generated.hostDeviceId, displayName: generated.displayName, httpsBaseUrl: baseUrl, certSha256: generated.certSha256, pairingId: generated.pairingId, pairingSecret: generated.pairingSecret, expiresAt: expiresAt);
+    if (baseUrl == null ||
+        baseUrl.scheme != 'https' ||
+        baseUrl.host.isEmpty ||
+        baseUrl.userInfo.isNotEmpty ||
+        baseUrl.query.isNotEmpty ||
+        baseUrl.fragment.isNotEmpty) {
+      throw const FormatException('httpsBaseUrl must be a secure HTTPS origin');
+    }
+    if (baseUrl.path.isNotEmpty && baseUrl.path != '/') {
+      throw const FormatException('httpsBaseUrl must not contain a path');
+    }
+    final expiresAt = DateTime.fromMillisecondsSinceEpoch(
+      generated.expiresAt,
+      isUtc: true,
+    );
+    if (!expiresAt.isAfter((now ?? DateTime.now()).toUtc())) {
+      throw const FormatException('Pairing QR has expired');
+    }
+    return PairingQrPayload(
+      version: generated.version,
+      hostDeviceId: generated.hostDeviceId,
+      displayName: generated.displayName,
+      httpsBaseUrl: baseUrl,
+      certSha256: generated.certSha256,
+      pairingId: generated.pairingId,
+      pairingSecret: generated.pairingSecret,
+      expiresAt: expiresAt,
+      serviceUrl: serviceUrl,
+      hostPublicKey: generated.hostPublicKey,
+    );
   }
 
+  final Uri? serviceUrl;
+  final String? hostPublicKey;
   final int version;
   final String hostDeviceId;
   final String displayName;
@@ -32,11 +84,17 @@ class PairingQrPayload {
   final String pairingSecret;
   final DateTime expiresAt;
 
-  Uri get exchangeUrl => httpsBaseUrl.replace(path: '/remote/v1/pairings/${Uri.encodeComponent(pairingId)}/exchange');
+  Uri get exchangeUrl => httpsBaseUrl.replace(
+    path: '/remote/v1/pairings/${Uri.encodeComponent(pairingId)}/exchange',
+  );
 }
 
 class PairingHostIdentity {
-  const PairingHostIdentity({required this.deviceId, required this.descriptor, required this.identityFingerprint});
+  const PairingHostIdentity({
+    required this.deviceId,
+    required this.descriptor,
+    required this.identityFingerprint,
+  });
 
   final String deviceId;
   final DeviceDescriptor descriptor;
@@ -44,7 +102,11 @@ class PairingHostIdentity {
 }
 
 class PairingExchangeResponse {
-  const PairingExchangeResponse({required this.device, required this.gatewayUrl, required this.credential});
+  const PairingExchangeResponse({
+    required this.device,
+    required this.gatewayUrl,
+    required this.credential,
+  });
 
   factory PairingExchangeResponse.fromJson(JsonMap json) {
     final sdk.PairingExchangeResponse generated;
@@ -54,11 +116,20 @@ class PairingExchangeResponse {
       throw FormatException(error.toString());
     }
     final gatewayUrl = Uri.tryParse(generated.gatewayUrl);
-    if (gatewayUrl == null || gatewayUrl.scheme != 'wss' || gatewayUrl.host.isEmpty || gatewayUrl.userInfo.isNotEmpty || gatewayUrl.query.isNotEmpty || gatewayUrl.fragment.isNotEmpty) throw const FormatException('gatewayUrl must use WSS');
+    if (gatewayUrl == null ||
+        gatewayUrl.scheme != 'wss' ||
+        gatewayUrl.host.isEmpty ||
+        gatewayUrl.userInfo.isNotEmpty ||
+        gatewayUrl.query.isNotEmpty ||
+        gatewayUrl.fragment.isNotEmpty) {
+      throw const FormatException('gatewayUrl must use WSS');
+    }
     return PairingExchangeResponse(
       device: PairingHostIdentity(
         deviceId: generated.device.deviceId,
-        descriptor: DeviceDescriptor.fromJson(Map<String, dynamic>.from(generated.device.descriptor.toJson())),
+        descriptor: DeviceDescriptor.fromJson(
+          Map<String, dynamic>.from(generated.device.descriptor.toJson()),
+        ),
         identityFingerprint: generated.device.identityFingerprint,
       ),
       gatewayUrl: gatewayUrl,

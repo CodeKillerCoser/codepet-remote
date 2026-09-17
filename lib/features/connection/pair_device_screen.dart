@@ -39,6 +39,8 @@ class PairDeviceScreen extends StatefulWidget {
 class _PairDeviceScreenState extends State<PairDeviceScreen> {
   bool _busy = false;
   String? _error;
+  String? _qrConfirmationCode;
+  bool _qrPairing = false;
   final Map<String, PairingCandidate> _hosts = {};
   final Set<DeviceSession> _listenedSessions = {};
   StreamSubscription<PairingCandidate>? _hostSubscription;
@@ -88,9 +90,14 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
 
   Future<void> _pair(String value) async {
     if (_busy || value.trim().isEmpty) return;
-    setState(() { _busy = true; _error = null; });
+    setState(() { _busy = true; _error = null; _qrConfirmationCode = null; _attempt = null; _qrPairing = true; });
     try {
-      final device = await widget.pairingService.pair(value.trim());
+      final service = widget.pairingService;
+      final device = service is ConfirmingDevicePairer
+          ? await (service as ConfirmingDevicePairer).pairWithConfirmation(value.trim(), (code) {
+              if (mounted) setState(() => _qrConfirmationCode = code);
+            })
+          : await service.pair(value.trim());
       await widget.onPaired(device);
     } catch (error) {
       if (mounted) setState(() { _error = error.toString(); _busy = false; });
@@ -107,6 +114,7 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
     }
     setState(() {
       _busy = true;
+      _qrPairing = false;
       _error = null;
       _attempt = null;
     });
@@ -268,6 +276,18 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('配对 CodePet Host')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
+      if (_busy && _qrPairing) Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 12),
+          const Text('正在配对，请在 Host 上确认此设备。'),
+          if (_qrConfirmationCode != null) ...[
+            const SizedBox(height: 8),
+            Text(_qrConfirmationCode!, style: Theme.of(context).textTheme.headlineMedium),
+          ],
+        ]),
+      ),
       if (_attempt != null) ...[
         Card(
           color: Theme.of(context).colorScheme.secondaryContainer,
@@ -392,7 +412,7 @@ class _ManualPairingSheet extends StatelessWidget {
                 key: const Key('manual-scan-qr'),
                 leading: const Icon(Icons.qr_code_scanner),
                 title: const Text('扫描二维码'),
-                subtitle: const Text('扫描 Host 显示的 LAN 配对二维码'),
+                subtitle: const Text('扫描 Host 显示的配对二维码'),
                 onTap: () => Navigator.pop(context, _ManualPairingMethod.scanQr),
               ),
               ListTile(
@@ -443,7 +463,7 @@ class _QrScannerScreenState extends State<_QrScannerScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('将 Host 显示的 LAN 配对二维码放入取景框'),
+                const Text('将 Host 显示的配对二维码放入取景框'),
                 const SizedBox(height: 16),
                 Expanded(
                   child: ClipRRect(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:codepet_remote/application/pairing/pair_device.dart';
 import 'package:codepet_remote/application/ports/pairing_gateway.dart';
 import 'package:codepet_remote/application/sessions/device_session.dart';
@@ -8,6 +9,39 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('QR confirmation remains visible on narrow and landscape screens', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final pairer = _ConfirmingPairer();
+    var committed = 0;
+    await tester.pumpWidget(MaterialApp(home: PairDeviceScreen(
+      pairingService: pairer, onPaired: (_) async { committed++; },
+    )));
+    await tester.ensureVisible(find.byKey(const Key('manual-add-device')));
+    await tester.tap(find.byKey(const Key('manual-add-device')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('manual-paste-qr')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('qr-json-field')), 'test-invitation');
+    await tester.tap(find.text('验证并配对'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.ensureVisible(find.text('123456'));
+    expect(find.text('123456'), findsOneWidget);
+    expect(committed, 0);
+    expect(tester.takeException(), isNull);
+    await tester.binding.setSurfaceSize(const Size(640, 360));
+    await tester.pump();
+    await tester.ensureVisible(find.text('123456'));
+    expect(tester.takeException(), isNull);
+    pairer.pending.completeError(StateError('Host rejected'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).first, const Offset(0, 1000));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Host rejected'), findsOneWidget);
+    expect(committed, 0);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets(
     'shows connected devices separately and refreshes discovered devices',
     (tester) async {
@@ -270,6 +304,17 @@ class _Pairer implements DevicePairer {
   @override
   Future<PairedDevice> pair(String rawPayload) =>
       throw UnimplementedError();
+}
+
+class _ConfirmingPairer implements DevicePairer, ConfirmingDevicePairer {
+  final pending = Completer<PairedDevice>();
+  @override
+  Future<PairedDevice> pair(String rawPayload) => throw UnimplementedError();
+  @override
+  Future<PairedDevice> pairWithConfirmation(String rawPayload, void Function(String) onConfirmationCode) {
+    onConfirmationCode('123456');
+    return pending.future;
+  }
 }
 
 class _DiscoveryPairer implements DiscoveredDevicePairer {
