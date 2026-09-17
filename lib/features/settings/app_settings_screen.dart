@@ -2,14 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../application/ports/application_log.dart';
-import '../../application/sessions/device_session.dart';
-import '../../core/domain/paired_device.dart';
 
 class AppSettingsScreen extends StatefulWidget {
   const AppSettingsScreen({
     super.key,
-    required this.sessions,
-    required this.onForgetDevice,
     required this.exportLogs,
     this.logger = const NoopApplicationLog(),
     this.webRtcEnabled = false,
@@ -17,8 +13,6 @@ class AppSettingsScreen extends StatefulWidget {
     this.onWebRtcChanged,
   });
 
-  final List<DeviceSession> sessions;
-  final Future<void> Function(DeviceSession session) onForgetDevice;
   final Future<String> Function() exportLogs;
   final ApplicationLog logger;
   final bool webRtcEnabled;
@@ -150,19 +144,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               onPressed: _share,
               icon: const Icon(Icons.share_outlined),
               label: const Text('分享到微信、钉钉或其他 App'),
-            ),
-          ),
-        const Divider(),
-        for (final session in widget.sessions.where(
-          (item) =>
-              item.device.connectionKind == DeviceConnectionKind.pairedGateway,
-        ))
-          ListTile(
-            title: Text(session.device.effectiveName),
-            subtitle: Text(session.device.deviceId),
-            trailing: TextButton(
-              child: const Text('忘记'),
-              onPressed: () => widget.onForgetDevice(session),
             ),
           ),
       ],

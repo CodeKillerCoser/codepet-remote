@@ -274,6 +274,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
       pairingService: _pairer(),
       discoveryService: _discoveredPairer(),
       connectedSessions: List.unmodifiable(_sessions),
+      onForgetDevice: _forgetDevice,
       initialCandidates: _discoveryEnabled
           ? _hostDirectory
               .currentHosts()
@@ -471,6 +472,22 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     }
   }
 
+  Future<void> _forgetDevice(DeviceSession session) async {
+    await session.disconnect();
+    await _registry.forget(session.device);
+    session.dispose();
+    if (!mounted) return;
+    setState(() {
+      final index = _sessions.indexOf(session);
+      if (index < 0) return;
+      _sessions.removeAt(index);
+      if (index < _selectedIndex) _selectedIndex--;
+      _selectedIndex = _sessions.isEmpty
+          ? 0
+          : _selectedIndex.clamp(0, _sessions.length - 1);
+    });
+  }
+
   void _openSettings() {
     _navigatorKey.currentState!.push<void>(MaterialPageRoute(
       builder: (_) => AppSettingsScreen(
@@ -480,20 +497,8 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
           await ChannelPreferences.saveWebRtcEnabled(enabled);
           _savedWebRtcEnabled = enabled;
         },
-        sessions: List.unmodifiable(_sessions),
         exportLogs: widget.logExporter ?? AppLog.exportLogs,
         logger: _log,
-        onForgetDevice: (session) async {
-          await session.disconnect();
-          await _registry.forget(session.device);
-          if (!mounted) return;
-          setState(() {
-            _sessions.remove(session);
-            _selectedIndex = _sessions.isEmpty
-                ? 0
-                : _selectedIndex.clamp(0, _sessions.length - 1);
-          });
-        },
       ),
     ));
   }

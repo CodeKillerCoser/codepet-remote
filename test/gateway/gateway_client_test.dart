@@ -265,6 +265,43 @@ void main() {
     await client.close();
   });
 
+  test('releases the routed Provider instance and validates the acknowledgement', () async {
+    final description = _providerDescriptionJson();
+    (description['capabilities']['methods'] as List).add('conversation.releaseInteraction');
+    final response = <String, dynamic>{'released': true, 'scope': 'providerInstance'};
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'provider.describe': description,
+      'conversation.releaseInteraction': response,
+    });
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test',
+      clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect();
+    await client.releaseConversation(_domainConversation());
+    expect(transport.requests.last.method, 'conversation.releaseInteraction');
+    expect(transport.requests.last.params, {'conversation': _resourceJson(_domainConversation().resource!)});
+    response['released'] = false;
+    await expectLater(client.releaseConversation(_domainConversation()), throwsFormatException);
+    response['released'] = true;
+    response['scope'] = 'conversation';
+    await expectLater(client.releaseConversation(_domainConversation()), throwsFormatException);
+    await client.close();
+  });
+
+  test('release never sends a request when the Provider lacks the capability', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    });
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test',
+      clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect();
+    await expectLater(client.releaseConversation(_domainConversation()), throwsFormatException);
+    expect(transport.requests.where((r) => r.method == 'conversation.releaseInteraction'), isEmpty);
+    await client.close();
+  });
+
   test('marks only the observed conversation activity as read', () async {
     final transport = _FakeTransport({
       'protocol.handshake': _handshakeJson(),

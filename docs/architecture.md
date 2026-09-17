@@ -72,6 +72,20 @@ Successful acquisition has no renewal timer. Only failed acquisition is retried.
 after navigation or reconnection; capability binding includes capabilitiesLoaded
 so a complete description with the same revision can restart a pending load.
 
+## Immediate interaction release
+
+Providers advertising `conversation.releaseInteraction` expose an immediate release
+in the conversation actions menu. This stops that Provider instance's shared harness
+server, including active tasks in its other conversations; it is not a single-turn
+interrupt. The response acknowledges `released: true` with `scope: providerInstance`.
+
+Before sending the request, the device session pauses automatic interaction acquisition
+for the entire Provider, revokes cached interaction flags, and fences late acquisition
+responses. The pause survives navigation, history refresh, and reconnection. It also
+survives release errors/timeouts, since the server may already have stopped. The user
+can retry release or explicitly select “重新接管” to resume. The Provider must keep
+heartbeat and background reads from silently starting a released harness.
+
 ## Incremental message sources and eviction
 
 Initial load installs one page with its event-window fence. Older-page requests

@@ -16,8 +16,6 @@ void main() {
         MaterialApp(
           home: AppSettingsScreen(
             key: UniqueKey(),
-            sessions: const [],
-            onForgetDevice: (_) async {},
             exportLogs: () async => '',
             activeWebRtcEnabled: active,
             webRtcEnabled: saved,
@@ -60,8 +58,6 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: AppSettingsScreen(
-          sessions: const [],
-          onForgetDevice: (_) async {},
           exportLogs: () async => '',
           onWebRtcChanged: (_) async => throw StateError('disk failed'),
         ),

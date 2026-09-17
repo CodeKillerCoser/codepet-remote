@@ -21,6 +21,7 @@ final class ProtocolGatewayClient
     implements
         GatewayClient,
         ConversationResumeGatewayClient,
+        ConversationReleaseGatewayClient,
         ConversationHistoryGatewayClient,
         ProviderSnapshotGatewayClient,
         ConversationReadGatewayClient,
@@ -802,6 +803,22 @@ final class ProtocolGatewayClient
       unread: response.readState.unread,
       activityVersion: response.readState.activityVersion,
     );
+  }
+
+  @override
+  Future<void> releaseConversation(ConversationSummary conversation) async {
+    final resource = conversation.resource;
+    if (resource == null) {
+      throw const FormatException('Conversation has no routed identity');
+    }
+    await _requireProviderCapability(resource.providerId,
+        method: 'conversation.releaseInteraction');
+    final response = await _call(() => _protocol.conversationReleaseInteraction(
+      sdk.ConversationReleaseInteractionRequest(conversation: _mapper.sdkResourceId(resource)),
+    ));
+    if (!response.released || response.scope != 'providerInstance') {
+      throw const FormatException('Invalid conversation.releaseInteraction result');
+    }
   }
 
   @override

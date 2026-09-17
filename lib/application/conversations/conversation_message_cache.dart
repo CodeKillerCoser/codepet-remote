@@ -166,6 +166,14 @@ class ConversationMessageCache {
     }
   }
 
+  void releaseProviderInteraction(String providerId) {
+    for (final source in _entries.values) {
+      if (source.detail.summary.providerId == providerId) {
+        source.interactionAcquired = false;
+      }
+    }
+  }
+
   void invalidateProvider(String providerId) {
     for (final key in _entries.keys.toList()) {
       if (_entries[key]!.detail.summary.providerId == providerId) {
