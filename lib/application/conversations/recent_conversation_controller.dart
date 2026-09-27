@@ -22,6 +22,8 @@ class RecentConversationController extends ApplicationNotifier {
   String? _capabilityRevision;
   int _requestGeneration = 0;
   bool _disposed = false;
+  bool _active = true;
+  bool _refreshPending = false;
   bool supported = false;
   bool loading = false;
   bool refreshing = false;
@@ -36,7 +38,12 @@ class RecentConversationController extends ApplicationNotifier {
   List<String> anchorCandidates = const [];
 
   bool get canLoadMore => supported && loaded && _nextCursor != null;
-  bool get canAutoLoadMore => canLoadMore && !loading && error == null;
+  bool get canAutoLoadMore => _active && canLoadMore && !loading && error == null;
+
+  void setActive(bool active) {
+    _active = active;
+    if (active && _refreshPending) unawaited(refresh());
+  }
 
   void attach(GatewayClient client, GatewayProvider provider) {
     final available = provider.isAvailable &&
@@ -72,6 +79,7 @@ class RecentConversationController extends ApplicationNotifier {
     _consumedCursors.clear();
     _automaticRecoveries = 0;
     _automaticRecoveryError = null;
+    _refreshPending = false;
     final window = _window;
     _window = null;
     if (window != null) unawaited(window.close());
@@ -83,8 +91,13 @@ class RecentConversationController extends ApplicationNotifier {
       !_disposed && generation == _requestGeneration && identical(client, _client);
 
   Future<void> refresh() async {
+    if (!_active) {
+      _refreshPending = true;
+      return;
+    }
     final client = _client;
     if (!supported || client == null || client is! RecentConversationGateway) return;
+    _refreshPending = false;
     final generation = ++_requestGeneration;
     final restoreCount = conversations.length;
     _nextCursor = null;
@@ -140,6 +153,10 @@ class RecentConversationController extends ApplicationNotifier {
                   !anchorCandidates.any(seen.contains) &&
                   anchorLookahead < anchorLookaheadPages) &&
           page.nextCursor != null) {
+        if (!_active) {
+          _refreshPending = true;
+          return;
+        }
         if (replacement.length >= restoreCount) anchorLookahead++;
         final cursor = page.nextCursor!;
         if (!cursors.add(cursor)) throw const FormatException('最近分页游标重复');
@@ -178,7 +195,7 @@ class RecentConversationController extends ApplicationNotifier {
   Future<void> loadMore() async {
     final client = _client;
     final cursor = _nextCursor;
-    if (!canLoadMore || loading || _automaticRecoveryError != null ||
+    if (!_active || !canLoadMore || loading || _automaticRecoveryError != null ||
         client == null || cursor == null) {
       return;
     }

@@ -15,6 +15,29 @@ void main() {
   });
   tearDown(() async { controller.dispose(); await client.close(); });
 
+  test('inactive refresh preserves cached depth and defers further pages', () async {
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(['a', 'b']));
+    await pumpEventQueue();
+    client.change('r2');
+    controller.setActive(false);
+    client.requests.last.$2.complete(recentPage(['new-a'], revision: 'r2',
+      snapshotCursor: 'e1', nextCursor: 'next'));
+    await pumpEventQueue();
+    expect(client.requests, hasLength(2));
+    expect(controller.conversations.map((item) => item.id), ['a', 'b']);
+    await controller.loadMore();
+    expect(client.requests, hasLength(2));
+    controller.setActive(true);
+    client.requests.last.$2.complete(recentPage(['new-a'], revision: 'r2',
+      snapshotCursor: 'e1', nextCursor: 'next'));
+    await pumpEventQueue();
+    expect(client.requests.last.$1, 'next');
+    client.requests.last.$2.complete(recentPage(['new-b'], revision: 'r2', snapshotCursor: 'e1'));
+    await pumpEventQueue();
+    expect(controller.conversations.map((item) => item.id), ['new-a', 'new-b']);
+  });
+
   test('uses only Host membership/order and deduplicates full routed identity', () async {
     controller.attach(client, recentProvider);
     client.requests.single.$2.complete(recentPage(['z', 'a'], nextCursor: 'next'));

@@ -379,6 +379,7 @@ class DeviceSession extends ApplicationNotifier {
     if (!providers.any((item) => item.id == provider.id)) return;
     if (_selectedProviderId == provider.id) return;
     _selectedProviderId = provider.id;
+    _ensureSelectedProviderLists();
     _loadMoreError = null;
     _notifyListenersImmediately();
   }
@@ -493,6 +494,7 @@ class DeviceSession extends ApplicationNotifier {
             _applyProviderUpdate(provider);
           }
           if (!ids.contains(_selectedProviderId)) _selectedProviderId = snapshot.isEmpty ? null : snapshot.first.id;
+          _ensureSelectedProviderLists();
           _notifyListenersImmediately();
         });
       }
@@ -512,6 +514,7 @@ class DeviceSession extends ApplicationNotifier {
           ? client as ProjectGatewayClient
           : null;
       for (final provider in projectListProviders.where((p) => p.isAvailable)) {
+        if (provider.id != selectedProviderId) continue;
         if (projectClient == null) {
           throw UnsupportedError(
             'Gateway SDK adapter does not implement advertised project methods',
@@ -527,6 +530,7 @@ class DeviceSession extends ApplicationNotifier {
         _projectCursors[provider.id] = page.nextCursor;
       }
       for (final provider in conversationListProviders.where((p) => p.isAvailable)) {
+        if (provider.id != selectedProviderId) continue;
         final scope = _standaloneScope(provider);
         final page = await client.listConversations(
           providerId: provider.id,
@@ -566,9 +570,7 @@ class DeviceSession extends ApplicationNotifier {
         },
       );
       connectionState = DeviceConnectionState.online;
-      for (final provider in handshake?.providers ?? const <GatewayProvider>[]) {
-        _ensureProviderLists(provider);
-      }
+      _ensureSelectedProviderLists();
       _retryableFailure = false;
       _reconnectAttempt = 0;
       logger.info(
@@ -1456,10 +1458,12 @@ class DeviceSession extends ApplicationNotifier {
     if (current == null || turn.updatedAt.isAfter(current.updatedAt)) {
       pending[turn.id] = turn;
     }
+    if (providerId != selectedProviderId) return;
     if (!_conversationRefreshes.add(providerId)) return;
     var continuePending = true;
     try {
       while (true) {
+        if (providerId != selectedProviderId) return;
         final client = _client;
         final generation = _runtimeGeneration;
         if (client == null) return;
@@ -1473,6 +1477,13 @@ class DeviceSession extends ApplicationNotifier {
               ? [_standaloneScopeForProvider(providerId)]
               : loadedScopes;
           for (final scope in scopes) {
+            if (providerId != selectedProviderId) {
+              final deferred = _pendingConversationRefreshTurns.putIfAbsent(providerId, () => {});
+              for (final turn in batch.values) {
+                deferred.putIfAbsent(turn.id, () => turn);
+              }
+              return;
+            }
             final page = await client.listConversations(
               providerId: providerId,
               projectFilter: scope.filter,
@@ -1513,6 +1524,7 @@ class DeviceSession extends ApplicationNotifier {
     } finally {
       _conversationRefreshes.remove(providerId);
       if (continuePending &&
+          providerId == selectedProviderId &&
           connectionState == DeviceConnectionState.online &&
           _client != null &&
           _pendingConversationRefreshTurns[providerId]?.isNotEmpty == true) {
@@ -1524,15 +1536,30 @@ class DeviceSession extends ApplicationNotifier {
 
   final Set<_ConversationListScope> _initialConversationLoads = {};
 
+  void _ensureSelectedProviderLists() {
+    for (final entry in _recentControllers.entries) {
+      entry.value.setActive(entry.key == selectedProviderId);
+    }
+    final provider = selectedProvider;
+    if (provider != null) _ensureProviderLists(provider);
+  }
+
   void _ensureProviderLists(GatewayProvider provider) {
+    if (provider.id != selectedProviderId) return;
     if (connectionState == DeviceConnectionState.online) _ensureRecent(provider);
     if (connectionState != DeviceConnectionState.online || !provider.isAvailable) return;
-    if (provider.methods.contains('project.list') && !_projectCursors.containsKey(provider.id)) {
+    if (provider.methods.contains('project.list') &&
+        (!_projectCursors.containsKey(provider.id) || _pendingProjectRefreshes.contains(provider.id))) {
       if (!_projectRefreshes.contains(provider.id)) _queueProjectRefresh(provider.id);
     }
     final scope = _standaloneScope(provider);
     if (provider.methods.contains('conversation.list') && !_loadedConversationScopes.contains(scope)) {
       unawaited(_loadInitialProviderConversations(provider, scope));
+    } else if (provider.methods.contains('conversation.list')) {
+      final pending = _pendingConversationRefreshTurns[provider.id];
+      if (pending != null && pending.isNotEmpty) {
+        unawaited(_refreshConversationsForEvent(provider.id, pending.values.first));
+      }
     }
   }
 
@@ -1547,6 +1574,10 @@ class DeviceSession extends ApplicationNotifier {
       conversations = mergeRoutedConversations(conversations, page.conversations);
       _conversationCursors[scope] = page.nextCursor;
       _loadedConversationScopes.add(scope);
+      final pending = _pendingConversationRefreshTurns[provider.id];
+      if (pending != null && pending.isNotEmpty) {
+        unawaited(_refreshConversationsForEvent(provider.id, pending.values.first));
+      }
       _notifyListenersImmediately();
     } catch (error, stackTrace) {
       _logBackgroundWarning('provider:${provider.id}', 'Provider conversation loading failed', error, stackTrace);
@@ -1557,14 +1588,16 @@ class DeviceSession extends ApplicationNotifier {
 
   void _queueProjectRefresh(String providerId) {
     _pendingProjectRefreshes.add(providerId);
+    if (providerId != selectedProviderId) return;
     unawaited(_refreshProjectsForEvent(providerId));
   }
 
   Future<void> _refreshProjectsForEvent(String providerId) async {
+    if (providerId != selectedProviderId) return;
     if (!_projectRefreshes.add(providerId)) return;
     var continuePending = true;
     try {
-      while (_pendingProjectRefreshes.remove(providerId)) {
+      while (providerId == selectedProviderId && _pendingProjectRefreshes.remove(providerId)) {
         final gatewayClient = _client;
         final generation = _runtimeGeneration;
         if (gatewayClient == null ||
@@ -1599,7 +1632,7 @@ class DeviceSession extends ApplicationNotifier {
       }
     } finally {
       _projectRefreshes.remove(providerId);
-      if (continuePending && _pendingProjectRefreshes.contains(providerId)) {
+      if (continuePending && providerId == selectedProviderId && _pendingProjectRefreshes.contains(providerId)) {
         unawaited(_refreshProjectsForEvent(providerId));
       }
     }

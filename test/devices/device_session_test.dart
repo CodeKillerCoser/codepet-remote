@@ -507,6 +507,10 @@ void main() {
 
     await session.connect();
 
+    expect(client.listRequests.map((request) => request.route), [_primaryRoute]);
+    session.selectProvider(_secondaryListProvider);
+    await pumpEventQueue();
+    session.selectProvider(_listProvider);
     expect(client.listRequests.map((request) => request.route), [
       _primaryRoute,
       _secondaryRoute,
