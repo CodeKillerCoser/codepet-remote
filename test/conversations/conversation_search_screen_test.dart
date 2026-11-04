@@ -110,7 +110,7 @@ void main() {
     );
     final session = _session(client);
     await session.connect();
-    final homeProjection = List<ConversationSummary>.from(session.conversations);
+    expect(session.conversations.map((item) => item.title), ['首页 A']);
     await tester.pumpWidget(MaterialApp(home: _HomeHarness(session: session)));
 
     expect(find.text('首页 A'), findsOneWidget);
@@ -119,6 +119,13 @@ void main() {
     await tester.pump();
     expect(find.text('首页 A'), findsNothing);
     expect(find.text('首页 B'), findsOneWidget);
+    expect(
+      session.conversations.map((item) => item.title),
+      containsAll(['首页 A', '首页 B']),
+    );
+    // Switching Provider lazily loads its home list. Capture the projection
+    // after that load so the assertions below isolate search side effects.
+    final homeProjection = List<ConversationSummary>.from(session.conversations);
 
     await tester.tap(find.byKey(const Key('home-search')));
     await _pumpAsync(tester);
