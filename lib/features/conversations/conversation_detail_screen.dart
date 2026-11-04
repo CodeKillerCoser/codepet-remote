@@ -750,7 +750,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                             _ChoiceSelector(
                               key: const Key('access-mode-selector'),
                               icon: Icons.shield_outlined,
-                              labelPrefix: '访问',
+                              tooltipLabel: '访问',
                               choices: capabilities!.accessMode!,
                               selectedId: _accessModeId,
                               enabled: selectorEnabled,
@@ -765,7 +765,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                             _ChoiceSelector(
                               key: const Key('reasoning-effort-selector'),
                               icon: Icons.psychology_outlined,
-                              labelPrefix: '推理',
+                              tooltipLabel: '推理',
                               choices: capabilities!.reasoningEffort!,
                               selectedId: _reasoningEffortId,
                               enabled: selectorEnabled,
@@ -1073,7 +1073,7 @@ class _ChoiceSelector extends StatelessWidget {
   const _ChoiceSelector({
     super.key,
     required this.icon,
-    required this.labelPrefix,
+    required this.tooltipLabel,
     required this.choices,
     required this.selectedId,
     required this.enabled,
@@ -1081,7 +1081,7 @@ class _ChoiceSelector extends StatelessWidget {
   });
 
   final IconData icon;
-  final String labelPrefix;
+  final String tooltipLabel;
   final ProviderChoiceSet choices;
   final String? selectedId;
   final bool enabled;
@@ -1095,7 +1095,7 @@ class _ChoiceSelector extends StatelessWidget {
     return PopupMenuButton<String>(
       enabled: canChoose,
       initialValue: selectedId,
-      tooltip: canChoose ? '选择${selected?.displayName ?? '选项'}' : '',
+      tooltip: canChoose ? '选择$tooltipLabel' : '',
       onSelected: onSelected,
       itemBuilder: (context) => [
         for (final option in choices.options)
@@ -1112,8 +1112,8 @@ class _ChoiceSelector extends StatelessWidget {
       ],
       child: _SelectorFace(
         icon: icon,
-        label: '$labelPrefix · ${selected?.displayName ??
-            (available.isEmpty ? '无可用选项' : '请选择')}',
+        label: selected?.displayName ??
+            (available.isEmpty ? '无可用选项' : '请选择'),
         enabled: canChoose,
       ),
     );
@@ -1146,8 +1146,8 @@ class _ModelSelector extends StatelessWidget {
       itemBuilder: _entries,
       child: _SelectorFace(
         icon: Icons.memory_outlined,
-        label: '模型 · ${_selectionLabel ??
-            (available.isEmpty ? '无可用模型' : '请选择模型')}',
+        label: _selectionLabel ??
+            (available.isEmpty ? '无可用模型' : '请选择模型'),
         enabled: canChoose,
       ),
     );
@@ -1249,10 +1249,6 @@ class _SelectorFace extends StatelessWidget {
                     ),
               ),
             ),
-            if (enabled) ...[
-              const SizedBox(width: 2),
-              Icon(Icons.arrow_drop_down, size: 18, color: color),
-            ],
           ],
         ),
       ),

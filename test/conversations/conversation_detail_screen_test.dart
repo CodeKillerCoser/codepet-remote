@@ -896,9 +896,9 @@ void main() {
       tester.getCenter(find.byKey(const Key('access-mode-selector'))).dx,
       lessThan(tester.getCenter(find.byKey(const Key('reasoning-effort-selector'))).dx),
     );
-    expect(find.text('访问 · Read only'), findsOneWidget);
-    expect(find.text('推理 · High'), findsOneWidget);
-    expect(find.text('模型 · Deep'), findsOneWidget);
+    expect(find.text('Read only'), findsOneWidget);
+    expect(find.text('High'), findsOneWidget);
+    expect(find.text('Deep'), findsOneWidget);
     final reasoningPopup = tester.widget<PopupMenuButton<String>>(
       find.descendant(
         of: find.byKey(const Key('reasoning-effort-selector')),
@@ -1364,9 +1364,9 @@ void main() {
       tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
       isTrue,
     );
-    expect(find.text('访问 · Workspace write'), findsOneWidget);
-    expect(find.text('推理 · High'), findsOneWidget);
-    expect(find.text('模型 · Deep'), findsOneWidget);
+    expect(find.text('Workspace write'), findsOneWidget);
+    expect(find.text('High'), findsOneWidget);
+    expect(find.text('Deep'), findsOneWidget);
     expect(client.getCalls, 1);
 
     await tester.pumpWidget(const SizedBox());
@@ -1930,18 +1930,18 @@ void main() {
         ))
         .map((text) => text.data)
         .toList();
-    expect(accessLabels, contains('访问 · New mode'));
+    expect(accessLabels, contains('New mode'));
     expect(
       find.descendant(
         of: find.byKey(const Key('reasoning-effort-selector')),
-        matching: find.text('推理 · New effort'),
+        matching: find.text('New effort'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: find.byKey(const Key('model-selector')),
-        matching: find.text('模型 · New model'),
+        matching: find.text('New model'),
       ),
       findsOneWidget,
     );
