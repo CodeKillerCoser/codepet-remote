@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'app/codepet_remote_app.dart';
 import 'app/channel_preferences.dart';
+import 'app/app_notifications.dart';
 import 'diagnostics/app_log.dart';
 
 Future<void> main() async {
@@ -29,7 +30,13 @@ Future<void> main() async {
       return true;
     };
     final webRtcEnabled = await ChannelPreferences.loadWebRtcEnabled();
-    runApp(CodePetRemoteApp(webRtcEnabled: webRtcEnabled));
+    AppNotifications? notifications;
+    try {
+      notifications = await AppNotifications.create();
+    } catch (error, stack) {
+      log.warning('Notifications unavailable', error: error, stackTrace: stack);
+    }
+    runApp(CodePetRemoteApp(webRtcEnabled: webRtcEnabled, notifications: notifications));
   }, (error, stackTrace) {
     AppLog.named('uncaught').severe(
       'Uncaught asynchronous error',

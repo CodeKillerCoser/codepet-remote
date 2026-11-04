@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../application/ports/application_log.dart';
+import '../../core/domain/notification.dart';
 
 class AppSettingsScreen extends StatefulWidget {
   const AppSettingsScreen({
@@ -11,8 +12,16 @@ class AppSettingsScreen extends StatefulWidget {
     this.webRtcEnabled = false,
     this.activeWebRtcEnabled = false,
     this.onWebRtcChanged,
+    this.notificationPreferences,
+    this.onNotificationsChanged,
+    this.notificationsAllowed,
+    this.openNotificationSettings,
   });
 
+  final NotificationPreferences? notificationPreferences;
+  final Future<NotificationPreferences> Function(NotificationPreferences)? onNotificationsChanged;
+  final Future<bool> Function()? notificationsAllowed;
+  final Future<void> Function()? openNotificationSettings;
   final Future<String> Function() exportLogs;
   final ApplicationLog logger;
   final bool webRtcEnabled;
@@ -23,7 +32,46 @@ class AppSettingsScreen extends StatefulWidget {
   State<AppSettingsScreen> createState() => _AppSettingsScreenState();
 }
 
-class _AppSettingsScreenState extends State<AppSettingsScreen> {
+class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindingObserver {
+  late NotificationPreferences? _notifications = widget.notificationPreferences;
+  bool _savingNotifications = false;
+  bool? _notificationsAllowed;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshPermission();
+  }
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshPermission();
+  }
+  Future<void> _refreshPermission() async {
+    final allowed = await widget.notificationsAllowed?.call();
+    if (mounted) setState(() => _notificationsAllowed = allowed);
+  }
+  Future<void> _changeNotifications(NotificationPreferences value) async {
+    if (_savingNotifications || widget.onNotificationsChanged == null) return;
+    setState(() => _savingNotifications = true);
+    try {
+      final saved = await widget.onNotificationsChanged!(value);
+      if (mounted) setState(() => _notifications = saved);
+      await _refreshPermission();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('无法开启，请检查系统通知权限后重试'),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _savingNotifications = false);
+    }
+  }
   bool _exporting = false;
   String? _exportPath;
   late bool _webRtcEnabled = widget.webRtcEnabled;
@@ -96,6 +144,33 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (_notifications case final preferences?) ...[
+          const ListTile(leading: Icon(Icons.notifications_outlined), title: Text('通知')),
+          if (_notificationsAllowed == false)
+            ListTile(title: const Text('系统通知未开启'),
+              subtitle: const Text('允许系统通知后才能接收任务提醒'),
+              trailing: TextButton(onPressed: widget.openNotificationSettings,
+                child: const Text('去设置'))),
+          SwitchListTile(key: const Key('notification-outcomes'), title: const Text('任务结果'),
+            subtitle: const Text('任务完成或失败时提醒，主动停止不提醒'),
+            value: preferences.outcomes, onChanged: _savingNotifications ? null
+              : (value) => _changeNotifications(preferences.copyWith(outcomes: value))),
+          SwitchListTile(key: const Key('notification-interventions'), title: const Text('需要你处理'),
+            subtitle: const Text('等待授权或补充信息时提醒'),
+            value: preferences.interventions, onChanged: _savingNotifications ? null
+              : (value) => _changeNotifications(preferences.copyWith(interventions: value))),
+          SwitchListTile(key: const Key('notification-preview'), title: const Text('显示内容预览'),
+            subtitle: const Text('在通知中显示会话标题和简短说明，锁屏遵循系统隐私设置'),
+            value: preferences.preview, onChanged: _savingNotifications ? null
+              : (value) => _changeNotifications(preferences.copyWith(preview: value))),
+          SwitchListTile(key: const Key('background-connection'), title: const Text('后台保持连接'),
+            subtitle: const Text('显示常驻连接通知，切换 App 后继续接收事件。深度省电、强行停止或网络中断仍可能导致断线；后台提醒需要连接可用。'),
+            value: preferences.keepConnected, onChanged: _savingNotifications ? null
+              : (value) => _changeNotifications(preferences.copyWith(keepConnected: value))),
+          if (!preferences.keepConnected && (preferences.outcomes || preferences.interventions))
+            const ListTile(subtitle: Text('当前仅在 App 能接收设备事件时提醒。建议同时开启后台保持连接。')),
+          const Divider(),
+        ],
         SwitchListTile(
           key: const Key('webrtc-switch'),
           title: const Text('开启 WebRTC'),
@@ -117,7 +192,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         const ListTile(
           leading: Icon(Icons.security),
           title: Text('Gateway v1'),
-          subtitle: Text('设备凭据保存在 Android Keystore 支持的安全存储中；会话和事件游标不落盘。'),
+          subtitle: Text('设备凭据保存在 Android Keystore 支持的安全存储中；会话正文和事件游标不落盘，通知去重只保存路由标识和处理状态。'),
         ),
         const Divider(),
         ListTile(

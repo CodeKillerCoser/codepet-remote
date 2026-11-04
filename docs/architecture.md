@@ -132,8 +132,10 @@ Detail bindings include capability-loaded state, Provider generation and availab
 Host keeps each authenticated connection independently. Host→Provider SDK pings
 carry that connection set; a Server-mode Provider instance shares one Harness
 Server across every resumed conversation. Leaving detail does not unsubscribe or
-release it. The final client disconnect, or a heartbeat timeout, stops Harness
-including active turns; the Provider plugin remains running. Multiple phones
+release it. In the current Provider SDK, the final client disconnect retains
+in-flight requests, active turns and pending approvals; the Harness is stopped
+once idle. Host-to-Provider heartbeat loss still forces cleanup, as does explicit
+interaction release. The Provider plugin remains running. Multiple phones
 connecting to the same Host therefore share the same Server. New Remote, Host,
 and SDK versions must be deployed together; old clients lack application pings.
 
@@ -164,3 +166,95 @@ application failures at the boundary.
 ## Item metadata and tool text truncation
 
 All Agent item variants accept optional open `_meta` (SDK field `meta`). The mapper preserves it on `GatewayMessage` and through `copyWith`. Provider mappers currently detect oversized text only inside `kind: tool`, retain UTF-8-safe head/tail within 256 KiB per field, and write `_meta.truncations` records with JSON Pointer paths, original/retained byte counts and strategy. The UI derives existing input/output truncation indicators from those records; old per-input/block `truncation` remains a decoding fallback. Unknown metadata stays intact. This policy has no turn/item-count or cumulative page text budget. Remote still fetches all history with an initial 20-turn page, reducing its own request limit only after a final Provider wire overflow. Deploy the regenerated SDK with the Provider because older strict decoders reject the new optional field.
+
+## Android system notifications
+
+`NotificationCoordinator` consumes fenced device-wide events, independently of
+conversation screens and the bounded message cache. `TaskOutcome` is a terminal
+fact; `InterventionRequest` is a pending/resolved/cancelled/expired request with
+an approval/input/decision kind. Current Gateway approvals have structured IDs;
+waiting-user-input summaries produce a generic reminder, not an invented question
+or a new input submission API. Structured input/decision support still needs a
+Host/SDK contract.
+
+The application wires `DeviceSession.onLiveEvent` and the initial conversation
+snapshot into the coordinator. It never forwards output deltas to notification
+storage. Initial snapshots reconcile waiting states but do not announce old
+completions. Terminal events older than ten minutes and interrupted turns do not
+alert. A seven-day, 512-entry ledger persists scoped identities, notification IDs,
+versions and delivery/resolution state, not message bodies or credentials.
+Deduplication is bounded by that retention; it is not an exactly-once guarantee.
+
+Settings are opt-in: task outcomes, intervention requests, content previews and
+background connection. Viewing a conversation suppresses its new system alerts;
+viewing/dismissing a notification never resolves an approval. Pending changes
+update one notification, structured approvals replace generic summaries silently,
+and resolution cancels the notification. Preview is off by default; enabling it
+still marks the notification private on the lock screen. Android channels allow
+independent sound/importance controls. Permission denial leaves the toggle off.
+
+`LocalNotificationAdapter` implements the application port with
+`flutter_local_notifications`. Launch payloads contain only scoped routing IDs.
+The app validates the paired device and Provider, reconnects if needed, fetches the
+current conversation and navigates without submitting an approval. The detail
+screen refreshes history before locating a notification target; if an older
+result is outside the loaded history page it offers the existing history path.
+
+`CodePetApplication` owns one Flutter engine, including the mDNS bridge, across
+Activity recreation. A user-enabled `connectedDevice` foreground service keeps
+the process eligible to receive direct-device events while the UI is backgrounded.
+It has a low-importance persistent notification and is not sticky: OS/user
+termination does not silently restart sessions. It is started only while the
+Activity is resumed, or while that service already exists. This does not bypass
+Doze, network loss, force-stop or vendor battery restrictions and is not remote
+push. The service is stopped when the setting is disabled or all devices are
+forgotten.
+
+### Remaining Host/push work
+
+The current Host repository (`CodeKillerCoser/codepet`, inspected at `b84689f`)
+already retains active execution and pending approvals after the last Remote
+connection disappears. `sdk/rust/codepet-provider-sdk/src/runtime/activity.rs`
+tracks these independently of connection presence; `runtime/heartbeat.rs` stops
+only when idle while the Host still owns the instance. Host heartbeat loss,
+instance removal and explicit release retain forced cleanup semantics. The
+Codex vertical tests include offline execution and offline approval retention.
+The companion Host SDK implementation
+replaces heartbeat lifecycle control with a single activity-based idle scheduler.
+Heartbeat handlers never call instance start/stop. Unfinished turns, approvals,
+waiting input, admitted requests and uncertain send outcomes prevent automatic
+release. Once business activity ends, a separate idle window (default five
+minutes) allows release whether the phone is online or offline. Host startup and
+history reads can start a fresh Server; startup does not resume all old
+conversations. Explicit release and true process/IPC shutdown retain their
+existing semantics. The companion Host/Provider changes must be built and
+installed; updating this Android App alone does not deploy them.
+The SDK runtime test selection was run during the notification change: 21 passed, 2 ignored.
+The Codex binary vertical tests were inspected but not rerun. Older Host
+installations may still stop tasks on final disconnect and should be
+upgraded. No fake client or heartbeat is introduced by this Remote change.
+
+This is process-lifetime retention, not durable task recovery across Host/Provider
+restart. This App change does not add a push backend or a durable Host outbox.
+A subsequent push adapter needs authenticated per-installation subscriptions,
+revocation on unpair, token rotation, a durable Host outbox with retry/expiry,
+minimal or encrypted notification payloads, and the same scoped event/request
+identities for deduplicating direct and push delivery. The existing cloud RTC
+signaling service is not a notification push provider. Authoritative pending
+request enumeration/reconciliation is also needed to recover interventions in
+unloaded conversations after an offline interval; the current app can reconcile
+only received events and loaded conversation snapshots.
+
+### Validation
+
+Pure Dart tests exercise replay/restart deduplication, cross-device identities,
+permission denial, delivery failure, stale pending events, resolution, and privacy.
+Widget tests cover settings and stale approval navigation. The Android integration
+test verifies real channels, notification posting/cancellation and foreground
+service start/stop. Run `python3 tool/run_notification_probe.py --device emulator-5580` on an isolated
+emulator (`--adb /path/to/adb` if needed). The driver allows the permission prompt,
+taps the intervention notice, backgrounds the app with Activity destruction
+enabled, and taps the subsequent outcome notification. It restores the emulator
+setting afterward.
+This verifies Activity recreation with the retained engine. It does not simulate
+process-death cold launch, Doze survival, or delivery from an offline Host.

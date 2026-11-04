@@ -9,10 +9,29 @@ import 'package:codepet_remote/application/ports/gateway_client.dart';
 import 'package:codepet_remote/application/sync/gateway_event_window.dart';
 import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter/material.dart';
+import 'package:codepet_remote/core/domain/notification.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 void main() {
+  testWidgets('notification for a resolved approval opens context without resolving again', (tester) async {
+    final client = _DetailClient();
+    final session = await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(MaterialApp(home: ConversationDetailScreen(
+      session: session, conversation: _idleConversation(),
+      notificationTarget: const NotificationTarget(deviceId: 'host', providerId: 'provider',
+        conversationId: 'conversation', requestId: 'resolved-request'),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('此提醒对应的授权未在当前页面找到，请以当前会话状态为准'), findsOneWidget);
+    expect(find.byKey(const Key('approval-approve')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+    await tester.pumpAndSettle();
+  });
+
   test('manual history paging preserves concurrent output, retries and rejects cursor loops', () async {
     final client = _DetailClient(onGet: (conversation) async => ConversationSnapshot(
       detail: ConversationDetail(summary: conversation, committedMessages: [

@@ -3,6 +3,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'channel_preferences.dart';
+import 'app_notifications.dart';
+import '../core/domain/notification.dart';
+import '../features/conversations/conversation_detail_screen.dart';
 
 import '../core/domain/paired_device.dart';
 import '../devices/device_registry.dart';
@@ -42,8 +45,10 @@ class CodePetRemoteApp extends StatefulWidget {
     this.hostDirectory,
     this.logExporter,
     this.webRtcEnabled = false,
+    this.notifications,
   });
 
+  final AppNotifications? notifications;
   final bool includeDemoDevices;
   final bool webRtcEnabled;
   final DeviceRepository? registry;
@@ -73,6 +78,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   void initState() {
     super.initState();
     _savedWebRtcEnabled = widget.webRtcEnabled;
+    widget.notifications?.onOpen = (target) => unawaited(_openNotification(target));
     _registry = widget.registry ?? DeviceRegistry(
       metadata: PreferencesMetadataStore(),
       credentials: const SecureCredentialStore(),
@@ -130,6 +136,12 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
       }
     }
     if (mounted) setState(() => _loading = false);
+    _syncNotificationSessions();
+    final notificationTarget = widget.notifications?.pendingTarget;
+    if (notificationTarget != null) {
+      widget.notifications!.pendingTarget = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_openNotification(notificationTarget)));
+    }
     for (final session in _sessions.where((item) => item.device.autoConnect || item.device.connectionKind == DeviceConnectionKind.demo)) {
       unawaited(session.connect());
     }
@@ -139,6 +151,8 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     final sessionLog = AppLog.named('session.$id');
     final traceRecorder = AppTraceRecorder(logger: sessionLog);
     _sessions.add(DeviceSession(
+      onLiveEvent: (event) => _notificationEvent(id, name, event),
+      onConversationSnapshot: (items) => _notificationSnapshot(id, name, items),
       device: PairedDevice(deviceId: id, displayName: name, connectionKind: DeviceConnectionKind.demo, preferredEndpoint: 'demo://$profile'),
       clientFactory: () => DemoGatewayClient(profileId: profile),
       logger: sessionLog,
@@ -205,6 +219,8 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     final traceRecorder = AppTraceRecorder(logger: sessionLog);
     return DeviceSession(
       device: device,
+      onLiveEvent: (event) => _notificationEvent(device.deviceId, device.displayName, event),
+      onConversationSnapshot: (items) => _notificationSnapshot(device.deviceId, device.displayName, items),
       logger: sessionLog,
       traceRecorder: traceRecorder,
       clientFactory: () {
@@ -344,6 +360,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
       return;
     }
     setState(() => _selectedIndex = index);
+    _syncNotificationSessions();
     unawaited(session.connect());
   }
 
@@ -475,6 +492,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   Future<void> _forgetDevice(DeviceSession session) async {
     await session.disconnect();
     await _registry.forget(session.device);
+    await widget.notifications?.coordinator.forgetDevice(session.device.deviceId);
     session.dispose();
     if (!mounted) return;
     setState(() {
@@ -486,11 +504,121 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
           ? 0
           : _selectedIndex.clamp(0, _sessions.length - 1);
     });
+    _syncNotificationSessions();
+  }
+
+  void _notificationSnapshot(String id, String name, List<ConversationSummary> items) {
+    final notifications = widget.notifications;
+    if (notifications != null) unawaited(notifications.coordinator.snapshot(id, name, items));
+  }
+
+  void _notificationEvent(String id, String name, GatewayEvent event) {
+    final notifications = widget.notifications;
+    if (notifications == null ||
+        (event is! TurnUpsertedEvent && event is! ApprovalChangedEvent &&
+         event is! ConversationUpsertedEvent)) {
+      return;
+    }
+    if (event is TurnUpsertedEvent && !event.turn.status.isTerminal) return;
+    String? conversationId;
+    String? providerId;
+    if (event is TurnUpsertedEvent) {
+      conversationId = event.turn.conversationId;
+      providerId = event.turn.providerId;
+    } else if (event is ApprovalChangedEvent) {
+      conversationId = event.conversationId;
+      providerId = event.approval.resource?.providerId;
+    }
+    ConversationSummary? summary;
+    for (final session in _sessions.where((item) => item.device.deviceId == id)) {
+      for (final item in session.conversations) {
+        if ((item.id == conversationId || item.resource?.key == conversationId) &&
+            (providerId == null || item.providerId == providerId || item.resource?.providerId == providerId)) {
+          summary = item;
+          break;
+        }
+      }
+    }
+    unawaited(notifications.coordinator.event(id, name, event, summary));
+  }
+
+  void _syncNotificationSessions() {
+    final notifications = widget.notifications;
+    if (notifications == null) return;
+    notifications.hasSessions = _sessions.isNotEmpty;
+    unawaited(notifications.syncConnectionService().catchError((Object error) {
+      _log.warning('Unable to keep background connection', error: error);
+    }));
+  }
+
+  bool _openingNotification = false;
+  Future<void> _openNotification(NotificationTarget target) async {
+    if (!mounted) return;
+    if (_loading || _openingNotification) {
+      widget.notifications?.pendingTarget = target;
+      return;
+    }
+    _openingNotification = true;
+    try {
+      final index = _sessions.indexWhere((item) => item.device.deviceId == target.deviceId);
+      if (index < 0) throw StateError('设备已移除，请重新配对');
+      final session = _sessions[index];
+      setState(() => _selectedIndex = index);
+      if (session.connectionState == DeviceConnectionState.connecting) {
+        // The initial auto-connect owns this attempt. Wait without starting a
+        // competing connection or accepting a lease from a replaced session.
+        for (var i = 0; i < 150 && session.connectionState == DeviceConnectionState.connecting; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+          if (!mounted || !_sessions.contains(session)) return;
+        }
+      } else if (session.runtimeLease == null) {
+        await session.connect();
+      }
+      final lease = session.runtimeLease;
+      if (lease == null) throw StateError('设备未连接，请连接后重试');
+      if (!session.handshake!.providers.any((provider) => provider.id == target.providerId)) {
+        throw StateError('对应的 Provider 已不可用');
+      }
+      final now = DateTime.now();
+      final snapshot = await lease.getConversation(ConversationSummary(
+        id: target.conversationId, providerId: target.providerId, title: '会话',
+        status: ConversationStatus.idle, permissionLevel: PermissionLevel.readOnly,
+        createdAt: now, updatedAt: now,
+        resource: RoutedResourceId(providerId: target.providerId, nativeResourceId: target.conversationId),
+      ));
+      if (!mounted || !_sessions.contains(session) || !session.ownsRuntimeLease(lease)) return;
+      await widget.notifications?.coordinator.acknowledge(target);
+      _navigatorKey.currentState!.popUntil((route) => route.isFirst);
+      unawaited(_navigatorKey.currentState!.push<void>(MaterialPageRoute(
+        settings: RouteSettings(arguments: target),
+        builder: (_) => ConversationDetailScreen(session: session, conversation: snapshot.detail.summary,
+          notificationTarget: target),
+      )));
+    } catch (error) {
+      _log.warning('Unable to open notification conversation', error: error);
+      if (mounted && _navigatorKey.currentContext != null) {
+        ScaffoldMessenger.of(_navigatorKey.currentContext!).showSnackBar(SnackBar(
+          content: const Text('暂时无法打开此会话，请检查设备连接后重试'),
+          action: SnackBarAction(label: '重试', onPressed: () => unawaited(_openNotification(target))),
+        ));
+      }
+    } finally {
+      _openingNotification = false;
+      final next = widget.notifications?.pendingTarget;
+      if (mounted && next != null) {
+        widget.notifications!.pendingTarget = null;
+        unawaited(_openNotification(next));
+      }
+    }
   }
 
   void _openSettings() {
     _navigatorKey.currentState!.push<void>(MaterialPageRoute(
       builder: (_) => AppSettingsScreen(
+        notificationPreferences: widget.notifications?.coordinator.preferences,
+        onNotificationsChanged: widget.notifications?.changePreferences,
+        notificationsAllowed: widget.notifications?.adapter.isAllowed,
+        openNotificationSettings: widget.notifications?.adapter.openSettings,
         webRtcEnabled: _savedWebRtcEnabled,
         activeWebRtcEnabled: widget.webRtcEnabled,
         onWebRtcChanged: (enabled) async {
@@ -505,6 +633,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
 
   @override
   void dispose() {
+    widget.notifications?.dispose();
     for (final session in _sessions) {
       session.dispose();
     }
@@ -516,6 +645,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   @override
   Widget build(BuildContext context) => MaterialApp(
     navigatorKey: _navigatorKey,
+    navigatorObservers: [if (widget.notifications != null) widget.notifications!.observer],
     title: 'CodePet Remote', debugShowCheckedModeBanner: false,
     builder: (context, child) => AppToastHost(child: child!),
     theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF326B66)), useMaterial3: true, scaffoldBackgroundColor: const Color(0xFFF7F9F8), inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder())),

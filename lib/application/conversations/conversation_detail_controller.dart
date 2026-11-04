@@ -84,6 +84,7 @@ class ConversationDetailController extends ApplicationNotifier {
   bool get interactionAcquired => _interactionAcquired;
   bool get outcomeUnknown => _outcomeUnknown;
   bool get staleCapabilities => _staleCapabilities;
+  bool get hasLoadedHistory => _source?.initialized == true;
   bool get loadingEarlier => _source?.loadingEarlier ?? false;
   bool get hasEarlier => _source?.nextCursor != null;
   String? get historyError => _source?.historyError;

@@ -1780,7 +1780,7 @@ String? _newStandaloneWorkspace(String? parent) {
 }
 
 void _openConversation(BuildContext context, DeviceSession session, ConversationSummary conversation) {
-  Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => ConversationDetailScreen(session: session, conversation: conversation)));
+  Navigator.of(context).push<void>(MaterialPageRoute(settings: ConversationDetailScreen.routeSettings(session, conversation), builder: (_) => ConversationDetailScreen(session: session, conversation: conversation)));
 }
 
 String _deviceStateLabel(DeviceConnectionState state) => switch (state) {

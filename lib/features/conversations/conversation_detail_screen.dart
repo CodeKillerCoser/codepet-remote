@@ -6,6 +6,7 @@ import '../../application/conversations/conversation_detail_controller.dart';
 import '../../application/conversations/conversation_timeline.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
+import '../../core/domain/notification.dart';
 import '../common/identity_icons.dart';
 import '../common/floating_detail_panel.dart';
 import '../connection/device_connection_notice.dart';
@@ -21,8 +22,14 @@ class ConversationDetailScreen extends StatefulWidget {
     super.key,
     required this.session,
     required this.conversation,
+    this.notificationTarget,
   });
 
+  static RouteSettings routeSettings(DeviceSession session, ConversationSummary conversation) => RouteSettings(
+    arguments: NotificationTarget(deviceId: session.device.deviceId,
+      providerId: conversation.resource?.providerId ?? conversation.providerId,
+      conversationId: conversation.resource?.nativeResourceId ?? conversation.id));
+  final NotificationTarget? notificationTarget;
   final DeviceSession session;
   final ConversationSummary conversation;
 
@@ -37,6 +44,10 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   final TextEditingController _draftController = TextEditingController();
   late ConversationDetailController _controller;
   List<ConversationTimelineBlock> _timeline = const [];
+  final GlobalKey _notificationAnchor = GlobalKey();
+  String? _notificationBlockId;
+  bool _notificationLocated = false;
+  String? _notificationHint;
   bool _metadataExpanded = false;
   int _hiddenMessageCount = 0;
   String? _centerBlockId;
@@ -66,7 +77,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       session: widget.session,
       conversation: widget.conversation,
     )..addListener(_controllerChanged);
-    unawaited(_controller.reload());
+    unawaited(_controller.reload(forceRefresh: widget.notificationTarget != null));
   }
 
   @override
@@ -83,6 +94,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     _timeline = const [];
     _centerBlockId = null;
     _hiddenMessageCount = 0;
+    _notificationLocated = false;
+    _notificationBlockId = null;
+    _notificationHint = null;
     _controller
       ..removeListener(_controllerChanged)
       ..dispose();
@@ -90,7 +104,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       session: widget.session,
       conversation: widget.conversation,
     )..addListener(_controllerChanged);
-    unawaited(_controller.reload());
+    unawaited(_controller.reload(forceRefresh: widget.notificationTarget != null));
   }
 
   @override
@@ -167,6 +181,43 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     } else {
       _scheduleScrollStateUpdate();
     }
+    if (_controller.hasLoadedHistory) _locateNotification();
+  }
+
+  void _locateNotification() {
+    final target = widget.notificationTarget;
+    if (target == null || _notificationLocated || _detail == null) return;
+    _notificationLocated = true;
+    final requestId = target.requestId;
+    if (requestId != null && _pendingApproval?.id != requestId) {
+      setState(() => _notificationHint = '此提醒对应的授权未在当前页面找到，请以当前会话状态为准');
+    }
+    ConversationTimelineBlock? match;
+    for (final block in _timeline) {
+      final requestMatches = requestId != null && (block.sourceItemIds.contains(requestId) ||
+        (block is CommandBlock && block.approval?.id == requestId));
+      if (requestMatches || (requestId == null && block.turnId == target.turnId)) match = block;
+    }
+    if (match == null) {
+      if (requestId == null && target.turnId != null) {
+        setState(() => _notificationHint = '已打开对应会话；更早的任务结果可通过“显示更早消息”查看');
+      }
+      return;
+    }
+    setState(() {
+      _notificationBlockId = match!.id;
+      _hiddenMessageCount = 0;
+    });
+    // Let the normal initial scroll finish before locating the requested item.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final anchor = _notificationAnchor.currentContext;
+        if (mounted && anchor != null) {
+          unawaited(Scrollable.ensureVisible(anchor, alignment: 0.4));
+        }
+      });
+      WidgetsBinding.instance.scheduleFrame();
+    });
   }
 
   Future<void> _bindRuntime() => _controller.reload(forceRefresh: true);
@@ -529,7 +580,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                     Builder(builder: (context) {
                       final block = timeline[centerBlockIndex - index - 1];
                       return Padding(
-                        key: Key('message-${block.id}'),
+                        key: block.id == _notificationBlockId ? _notificationAnchor : Key('message-${block.id}'),
                         padding: const EdgeInsets.only(bottom: 10),
                         child: ConversationTimelineBlockView(
                           key: ValueKey(block.id),
@@ -558,7 +609,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                               final block =
                                   timeline[centerBlockIndex + index];
                               return Padding(
-                                key: Key('message-${block.id}'),
+                                key: block.id == _notificationBlockId ? _notificationAnchor : Key('message-${block.id}'),
                                 padding: EdgeInsets.only(
                                   bottom: index == centerBlockCount - 1
                                       ? 0
@@ -672,6 +723,11 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             children: [
               if (_detail != null && _timelineProjector.fileChanges(_detail!).count > 0)
                 FileChangeSummaryView(summary: _timelineProjector.fileChanges(_detail!)),
+              if (_notificationHint != null) ...[
+                Text(_notificationHint!, key: const Key('notification-status-hint'),
+                  style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 6),
+              ],
               if (_pendingApproval != null) ...[
                 _ApprovalActions(
                   approval: _pendingApproval!,

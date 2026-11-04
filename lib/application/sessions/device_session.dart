@@ -111,6 +111,8 @@ class DeviceSession extends ApplicationNotifier {
     required this.device,
     required this.clientFactory,
     this.autoReconnect = true,
+    this.onLiveEvent,
+    this.onConversationSnapshot,
     this.reconnectDelays = const [
       Duration(seconds: 1),
       Duration(seconds: 2),
@@ -200,6 +202,8 @@ class DeviceSession extends ApplicationNotifier {
   final List<Duration> reconnectDelays;
   final ApplicationLog logger;
   final TraceRecorder traceRecorder;
+  final void Function(GatewayEvent event)? onLiveEvent;
+  final void Function(List<ConversationSummary> conversations)? onConversationSnapshot;
   GatewayClient? _client;
   GatewayEventWindow? _eventWindow;
   Timer? _reconnectTimer;
@@ -569,6 +573,7 @@ class DeviceSession extends ApplicationNotifier {
           );
         },
       );
+      onConversationSnapshot?.call(conversations);
       connectionState = DeviceConnectionState.online;
       _ensureSelectedProviderLists();
       _retryableFailure = false;
@@ -1213,6 +1218,7 @@ class DeviceSession extends ApplicationNotifier {
   }
 
   void _applyEvent(GatewayEvent event) {
+    onLiveEvent?.call(event);
     if (event is GatewayProviderChangedEvent) {
       _applyProviderUpdate(event.provider);
       return;
