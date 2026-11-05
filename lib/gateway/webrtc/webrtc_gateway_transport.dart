@@ -11,6 +11,7 @@ import '../transport.dart';
 import 'framing.dart';
 import 'rtc_diagnostics.dart';
 import 'signaling.dart';
+import 'path_policy.dart';
 
 typedef RtcPeerFactory = Future<RTCPeerConnection> Function();
 
@@ -22,17 +23,35 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     RtcPeerFactory? peerFactory,
     this.connectTimeout = const Duration(seconds: 25),
     this.requestTimeout = const Duration(seconds: 30),
+    this.pathPolicy = RtcPathPolicy.auto,
+    RtcDiagnostics? diagnostics,
     // ignore: prefer_initializing_formals
-  }) : _peerFactory = peerFactory;
+  }) : _peerFactory = peerFactory,
+       _diagnostics =
+           diagnostics ?? RtcDiagnostics(pathPolicy: pathPolicy.wireName);
 
   final RtcSignaling signaling;
   final RtcPeerFactory? _peerFactory;
   final Duration connectTimeout;
   final Duration requestTimeout;
+  final RtcPathPolicy pathPolicy;
   final _events = StreamController<JsonMap>.broadcast();
   final _pending = <String, Completer<Object?>>{};
   final _decoder = RtcDecoder();
-  final _diagnostics = RtcDiagnostics();
+  final RtcDiagnostics _diagnostics;
+  String _stage = "created";
+  int _stageStartedMs = 0;
+  void _enter(String stage) {
+    _diagnostics.emit("connect.stage", {
+      "stage": stage,
+      "previousStage": _stage,
+      "previousStageMs":
+          _diagnostics.clock.elapsedMilliseconds - _stageStartedMs,
+    });
+    _stage = stage;
+    _stageStartedMs = _diagnostics.clock.elapsedMilliseconds;
+  }
+
   Timer? _statsTimer;
   bool _sampling = false;
   int _statsSamples = 0;
@@ -96,7 +115,8 @@ final class WebRtcGatewayTransport implements GatewayTransport {
 
   /// Report only the selected ICE route; configured TURN servers are not proof.
   Future<String> selectedPathKind() async {
-    final reports = await _peer?.getStats() ?? [];
+    final reports =
+        await _peer?.getStats().timeout(const Duration(seconds: 1)) ?? [];
     final byId = {for (final report in reports) report.id: report};
     for (final report in reports) {
       if (report.type != 'transport') continue;
@@ -108,7 +128,15 @@ final class WebRtcGatewayTransport implements GatewayTransport {
           remote?.values['candidateType'] == 'relay') {
         return 'relay';
       }
-      if (local != null && remote != null) return 'direct';
+      if (local != null && remote != null) {
+        final address = local.values['address'] ?? local.values['ip'];
+        final ip = address is String ? InternetAddress.tryParse(address) : null;
+        return ip == null
+            ? 'direct'
+            : ip.type == InternetAddressType.IPv6
+            ? 'ipv6-direct'
+            : 'ipv4-direct';
+      }
     }
     return 'unknown';
   }
@@ -121,7 +149,9 @@ final class WebRtcGatewayTransport implements GatewayTransport {
       await _open().timeout(connectTimeout);
     } catch (error) {
       _diagnostics.emit('connect.failed', {
-        'errorType': error.runtimeType.toString(),
+        ...rtcFailure(error),
+        'stage': _stage,
+        'stageMs': _diagnostics.clock.elapsedMilliseconds - _stageStartedMs,
       });
       await close();
       throw _failure(error, unknown: false);
@@ -131,10 +161,12 @@ final class WebRtcGatewayTransport implements GatewayTransport {
   Future<void> _open() async {
     _diagnostics.emit('connect.start');
     _checkNotClosed();
+    _enter("iceConfiguration");
     final config = signaling is RtcIceSignaling
         ? await (signaling as RtcIceSignaling).configuration()
         : <String, dynamic>{'iceServers': <Object>[]};
     _checkNotClosed();
+    _enter("peerCreation");
     final peer = await (_peerFactory?.call() ?? createPeerConnection(config));
     if (_closed) {
       await peer.close();
@@ -213,12 +245,14 @@ final class WebRtcGatewayTransport implements GatewayTransport {
       }
     };
     // flutter_webrtc otherwise defaults both receive-media constraints to true.
+    _enter("candidateGathering");
     final offer = await peer.createOffer({
       'mandatory': {'OfferToReceiveAudio': false, 'OfferToReceiveVideo': false},
       'optional': <Object>[],
     });
     _checkNotClosed();
     await peer.setLocalDescription(offer);
+    _checkNotClosed();
     if (await peer.getIceGatheringState() !=
         RTCIceGatheringState.RTCIceGatheringStateComplete) {
       await gathered.future;
@@ -229,26 +263,31 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     if (description?.sdp == null) {
       throw const FormatException('Missing RTC offer');
     }
-    _diagnostics.offerId = rtcOfferId(description!.sdp!);
-    _diagnostics.description('localOffer', description.sdp!);
+    final offerSdp = pathPolicy.filterSdp(description!.sdp!);
+    _diagnostics.offerId = rtcOfferId(offerSdp);
+    _diagnostics.description('localOffer', offerSdp);
+    _enter('signaling');
     _diagnostics.emit('signaling.offer.start');
-    final answer = await signaling.answer({
-      'type': 'offer',
-      'sdp': description.sdp,
-    });
+    final answer = await signaling.answer({'type': 'offer', 'sdp': offerSdp});
     _checkNotClosed();
     if (answer['type'] != 'answer' || answer['sdp'] is! String) {
       throw const FormatException('Invalid RTC answer');
     }
     _diagnostics.emit('signaling.answer.received');
     _diagnostics.description('remoteAnswer', answer['sdp'] as String);
+    _enter("remoteDescription");
     await peer.setRemoteDescription(
-      RTCSessionDescription(answer['sdp'] as String, 'answer'),
+      RTCSessionDescription(
+        pathPolicy.filterSdp(answer['sdp'] as String),
+        'answer',
+      ),
     );
+    _enter("channelOpen");
     while (channel.state != RTCDataChannelState.RTCDataChannelOpen) {
       _checkNotClosed();
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
+    _enter("connected");
     _connected = true;
     _diagnostics.emit('channel.open');
     unawaited(_sampleStats('open'));

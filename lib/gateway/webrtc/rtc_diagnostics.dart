@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../../diagnostics/app_log.dart';
+import '../../application/errors/application_failures.dart';
 
 String rtcOfferId(String sdp) =>
     sha256.convert(utf8.encode(sdp)).toString().substring(0, 24);
@@ -127,12 +129,14 @@ Map<String, Object?> rtcStat(StatsReport report, String salt) => {
 };
 
 final class RtcDiagnostics {
-  RtcDiagnostics()
+  RtcDiagnostics({this.raceId, this.pathPolicy})
     : connectionId =
           'remote-${DateTime.now().microsecondsSinceEpoch}-${_sequence++}';
   static int _sequence = 0;
   final String connectionId;
   String? offerId;
+  String? raceId;
+  final String? pathPolicy;
   final clock = Stopwatch()..start();
   void emit(String event, [Map<String, Object?> fields = const {}]) {
     AppLog.named('gateway.rtc.diagnostic').info(
@@ -140,6 +144,9 @@ final class RtcDiagnostics {
         'schema': 'codepet.rtc.v1',
         'event': event,
         'connectionId': connectionId,
+        'timestampUnixMs': DateTime.now().millisecondsSinceEpoch,
+        if (raceId != null) 'raceId': raceId,
+        if (pathPolicy != null) 'pathPolicy': pathPolicy,
         if (offerId != null) 'offerId': offerId,
         'elapsedMs': clock.elapsedMilliseconds,
         ...fields,
@@ -163,4 +170,47 @@ final class RtcDiagnostics {
           .toList(),
     });
   }
+}
+
+/// Classify errors without copying native messages, URLs, tokens or SDP.
+Map<String, Object?> rtcFailure(Object error) {
+  var cause = 'unknown';
+  int? status;
+  if (error is TimeoutException) {
+    cause = 'timeout';
+  } else if (error is HandshakeException) {
+    cause = 'tlsHandshake';
+  } else if (error is SocketException) {
+    cause = 'socket';
+  } else if (error is FormatException) {
+    cause = switch (error.message) {
+      'Cloud peer signature rejected' => 'peerSignatureRejected',
+      'Cloud answer binding rejected' => 'answerBindingRejected',
+      _ => 'invalidDataOrSignature',
+    };
+  } else if (error is GatewayConnectionException) {
+    cause = 'gatewayConnection';
+    if (error.message == '尚无公网通道授权，请扫描新版 Host 的配对二维码。') {
+      cause = 'cloudAuthorizationMissing';
+    }
+    if (error.message.startsWith('No ICE candidates for ')) {
+      cause = 'noCandidates';
+    }
+    if (error.message == 'Cloud answer timed out') cause = 'answerTimeout';
+    if (error.message == 'RTC peer closed') cause = 'peerClosed';
+    if (error.message == 'RTC channel closed') cause = 'channelClosed';
+    final match = RegExp(r'^Cloud signaling status (\d{3})$')
+        .firstMatch(error.message);
+    if (match != null) {
+      cause = 'httpStatus';
+      status = int.parse(match[1]!);
+    }
+  }
+  return {
+    'cause': cause,
+    'errorType': error.runtimeType.toString(),
+    'retryable': isRetryableGatewayFailure(error),
+    'status': ?status,
+    if (error is SocketException) 'osErrorCode': error.osError?.errorCode,
+  };
 }

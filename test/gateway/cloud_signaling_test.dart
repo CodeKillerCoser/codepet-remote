@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:codepet_remote/gateway/webrtc/cloud_signaling.dart';
+import 'package:codepet_remote/gateway/webrtc/path_policy.dart';
 
 void main() {
   test(
@@ -36,6 +37,32 @@ void main() {
       }
 
       final envelope = await sign(body);
+      final directAnswer = await sign({...body, 'pathPolicy': 'ipv6-direct'});
+      expect(
+        (await CloudRtcSignaling.verifyAnswer(
+          directAnswer,
+          state,
+          'attempt',
+          'digest',
+          expectedPolicy: RtcPathPolicy.ipv6Direct,
+        ))['sdp'],
+        'test',
+      );
+      for (final rejected in [
+        envelope,
+        await sign({...body, 'pathPolicy': 'relay'}),
+      ]) {
+        await expectLater(
+          CloudRtcSignaling.verifyAnswer(
+            rejected,
+            state,
+            'attempt',
+            'digest',
+            expectedPolicy: RtcPathPolicy.ipv6Direct,
+          ),
+          throwsFormatException,
+        );
+      }
       expect(
         (await CloudRtcSignaling.verifyAnswer(
           envelope,

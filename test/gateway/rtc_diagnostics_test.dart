@@ -1,10 +1,38 @@
 import 'dart:convert';
+import 'dart:async';
+
+import 'package:codepet_remote/application/errors/application_failures.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:codepet_remote/gateway/webrtc/rtc_diagnostics.dart';
 
 void main() {
+  test(
+    'failure summaries classify causes without copying exception contents',
+    () {
+      expect(rtcFailure(TimeoutException('private SDP'))['cause'], 'timeout');
+      expect(
+        rtcFailure(
+          const GatewayConnectionException('Cloud signaling status 401'),
+        )['status'],
+        401,
+      );
+      expect(
+        rtcFailure(
+          const FormatException('Cloud peer signature rejected'),
+        )['cause'],
+        'peerSignatureRejected',
+      );
+      for (final error in [
+        const FormatException('private SDP'),
+        const GatewayConnectionException('Bearer private-token'),
+      ]) {
+        expect(jsonEncode(rtcFailure(error)), isNot(contains('private')));
+      }
+    },
+  );
+
   test('candidate summaries retain network clues without SDP secrets', () {
     final value = rtcCandidate(
       'candidate:a 1 udp 123 198.18.0.1 40000 typ host ufrag secret network-id 2',

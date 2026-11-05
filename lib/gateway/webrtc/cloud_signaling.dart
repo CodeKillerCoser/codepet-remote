@@ -10,6 +10,7 @@ import '../../application/errors/application_failures.dart';
 import '../../security/pinned_tls.dart';
 import 'signaling.dart';
 import 'rtc_diagnostics.dart';
+import 'path_policy.dart';
 
 /// A new key is pinned only over the existing LAN TLS/bearer boundary.
 class CloudPairing {
@@ -77,14 +78,22 @@ class CloudPairing {
 }
 
 class CloudRtcSignaling implements RtcIceSignaling {
-  CloudRtcSignaling(this.state, {this.forceRelay = false});
+  CloudRtcSignaling(
+    this.state, {
+    this.forceRelay = false,
+    this.pathPolicy = RtcPathPolicy.auto,
+    RtcDiagnostics? diagnostics,
+  }) : _diagnostics =
+           diagnostics ?? RtcDiagnostics(pathPolicy: pathPolicy.wireName);
   final Map<String, dynamic> state;
   final bool forceRelay;
+  final RtcPathPolicy pathPolicy;
+  String? _attempt;
   final HttpClient _http = HttpClient()
     ..connectionTimeout = const Duration(seconds: 10);
   bool _closed = false;
   int? iceExpires;
-  final _diagnostics = RtcDiagnostics();
+  final RtcDiagnostics _diagnostics;
 
   Future<Map<String, dynamic>> _request(
     String method,
@@ -134,10 +143,13 @@ class CloudRtcSignaling implements RtcIceSignaling {
 
   @override
   Future<Map<String, dynamic>> configuration() async {
+    if (pathPolicy == RtcPathPolicy.ipv6Direct) {
+      return pathPolicy.configuration([]);
+    }
     final value = await _request('GET', '/v1/ice');
     iceExpires = value['expires'] as int;
     return {
-      'iceServers': value['iceServers'],
+      ...pathPolicy.configuration(value['iceServers'] as List),
       if (forceRelay) 'iceTransportPolicy': 'relay',
     };
   }
@@ -163,10 +175,12 @@ class CloudRtcSignaling implements RtcIceSignaling {
         'client': state['client'],
         'attempt': attempt,
         'expires': expires,
+        if (pathPolicy != RtcPathPolicy.auto) 'pathPolicy': pathPolicy.wireName,
         'description': offer,
       }),
     );
     final signature = await algorithm.sign(payload, keyPair: key);
+    _attempt = attempt;
     await _request('POST', '/v1/offers', {
       'attempt': attempt,
       'envelope': {
@@ -183,7 +197,11 @@ class CloudRtcSignaling implements RtcIceSignaling {
           state,
           attempt,
           hashes.sha256.convert(payload).toString(),
-        );
+          expectedPolicy: pathPolicy,
+        ).then((answer) {
+          _diagnostics.emit('signal.answer.verified', {'attempt': attempt});
+          return answer;
+        });
       }
       await Future<void>.delayed(const Duration(seconds: 1));
     }
@@ -197,8 +215,9 @@ class CloudRtcSignaling implements RtcIceSignaling {
     Map<String, dynamic> envelope,
     Map<String, dynamic> state,
     String attempt,
-    String offerHash,
-  ) async {
+    String offerHash, {
+    RtcPathPolicy expectedPolicy = RtcPathPolicy.auto,
+  }) async {
     final payload = base64Decode(envelope['payload'] as String);
     if (payload.length > 65536) throw const FormatException('Answer too large');
     final valid = await Ed25519().verify(
@@ -217,6 +236,8 @@ class CloudRtcSignaling implements RtcIceSignaling {
     );
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     if (value['v'] != 1 ||
+        (expectedPolicy != RtcPathPolicy.auto &&
+            value['pathPolicy'] != expectedPolicy.wireName) ||
         value['kind'] != 'answer' ||
         value['host'] != state['host'] ||
         value['client'] != state['client'] ||
@@ -232,7 +253,23 @@ class CloudRtcSignaling implements RtcIceSignaling {
 
   @override
   void close() {
+    if (_closed) return;
+    // Begin cancellation before closing the HTTP client; bounded and best effort.
+    final attempt = _attempt;
+    if (attempt != null) {
+      unawaited(
+        _request('DELETE', '/v1/offers?attempt=$attempt')
+            .timeout(const Duration(seconds: 2))
+            .then<void>((_) {}, onError: (Object _) {})
+            .whenComplete(() => _http.close(force: true)),
+      );
+    } else {
+      _http.close(force: true);
+    }
     _closed = true;
-    _http.close(force: true);
+    _diagnostics.emit('signal.close', {
+      'attempt': attempt,
+      'cancelRequested': attempt != null,
+    });
   }
 }
