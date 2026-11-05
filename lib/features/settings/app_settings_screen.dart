@@ -73,6 +73,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
     }
   }
   bool _exporting = false;
+  bool _sharing = false;
   String? _exportPath;
   late bool _webRtcEnabled = widget.webRtcEnabled;
   bool _savingChannel = false;
@@ -94,14 +95,15 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
   }
 
   Future<void> _export() async {
-    if (_exporting) return;
+    if (_exporting || _sharing) return;
     setState(() => _exporting = true);
     try {
       final path = await widget.exportLogs();
       if (!mounted) return;
       setState(() => _exportPath = path);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('日志压缩包已生成')));
+      // Open the chooser immediately: an action appended below this tile may
+      // be outside the viewport after the archive path makes the tile taller.
+      await _share();
     } catch (error) {
       widget.logger.warning(
         'Diagnostics export failed from settings',
@@ -117,10 +119,12 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
 
   Future<void> _share() async {
     final path = _exportPath;
-    if (path == null) return;
+    if (path == null || _sharing) return;
+    setState(() => _sharing = true);
     try {
       final renderBox = context.findRenderObject() as RenderBox?;
-      await SharePlus.instance.share(
+      widget.logger.info('Diagnostics share sheet requested');
+      final result = await SharePlus.instance.share(
         ShareParams(
           subject: 'CodePet Remote 诊断日志',
           text: 'CodePet Remote 诊断日志压缩包',
@@ -130,11 +134,14 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
               : renderBox.localToGlobal(Offset.zero) & renderBox.size,
         ),
       );
+      widget.logger.info('Diagnostics share sheet result: ${result.status.name}');
     } catch (error) {
       widget.logger.warning('Diagnostics share sheet failed', error: error);
       if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('无法打开系统分享：$error')));
+          .showSnackBar(const SnackBar(content: Text('日志已导出，但无法打开系统分享，请点击分享按钮重试')));
+    } finally {
+      if (mounted) setState(() => _sharing = false);
     }
   }
 
@@ -198,29 +205,28 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
         ListTile(
           key: const Key('export-logs'),
           leading: const Icon(Icons.folder_zip_outlined),
-          title: const Text('导出诊断日志'),
+          title: const Text('导出并分享诊断日志'),
           subtitle: Text(
             _exportPath ?? '日志保留 7 天，单文件 2 MB，最多 5 个文件',
             key: const Key('export-log-path'),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
-          trailing: _exporting
+          trailing: _exporting || _sharing
               ? const SizedBox.square(
                   dimension: 24,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.chevron_right),
-          onTap: _exporting ? null : _export,
+              : _exportPath == null
+                  ? const Icon(Icons.share_outlined)
+                  : IconButton(
+                      key: const Key('share-logs'),
+                      tooltip: '再次分享日志',
+                      onPressed: _share,
+                      icon: const Icon(Icons.share_outlined),
+                    ),
+          onTap: _exporting || _sharing ? null : _export,
         ),
-        if (_exportPath != null)
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              key: const Key('share-logs'),
-              onPressed: _share,
-              icon: const Icon(Icons.share_outlined),
-              label: const Text('分享到微信、钉钉或其他 App'),
-            ),
-          ),
       ],
     ),
   );
