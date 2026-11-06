@@ -41,6 +41,7 @@ class RoutedRtcTransport
     required String credential,
     required String certSha256,
     CodePetHostDirectory? hostDirectory,
+    String? signalingService,
   }) {
     final diagnostics = RtcDiagnostics();
     diagnostics.raceId = diagnostics.connectionId;
@@ -63,6 +64,7 @@ class RoutedRtcTransport
         if (state == null || state['token'] == null) {
           throw const GatewayConnectionException('尚无公网通道授权，请扫描新版 Host 的配对二维码。');
         }
+        validateSignalingServiceBinding(state, signalingService);
         return [
           for (final policy in [
             RtcPathPolicy.ipv6Direct,

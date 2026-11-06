@@ -107,15 +107,26 @@ void main() {
     var exports = 0;
     await tester.pumpWidget(MaterialApp(home: AppSettingsScreen(
       notificationPreferences: const NotificationPreferences(),
-      notificationsAllowed: () async => false,
+            onSignalingServiceChanged: (_) async {},
+            notificationsAllowed: () async => false,
       exportLogs: () async {
         exports++;
         return '/data/user/0/com.codepet.remote/cache/diagnostics/codepet-logs-20261106.zip';
       },
-    )));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.byKey(const Key('export-logs')), 200);
-    await tester.tap(find.byKey(const Key('export-logs')));
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+        find.byKey(const Key('export-logs')),
+        200,
+        scrollable: find.byWidgetPredicate(
+          (widget) =>
+              widget is Scrollable &&
+              widget.axisDirection == AxisDirection.down,
+        ),
+      );
+      await tester.tap(find.byKey(const Key('export-logs')));
     await tester.pumpAndSettle();
     expect(shareCalls, hasLength(1));
     expect(find.byKey(const Key('share-logs')).hitTestable(), findsOneWidget);

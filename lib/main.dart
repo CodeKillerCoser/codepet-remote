@@ -30,14 +30,22 @@ Future<void> main() async {
       return true;
     };
     final webRtcEnabled = await ChannelPreferences.loadWebRtcEnabled();
-    AppNotifications? notifications;
+      final signalingService = await ChannelPreferences.loadSignalingService();
+      AppNotifications? notifications;
     try {
       notifications = await AppNotifications.create();
     } catch (error, stack) {
-      log.warning('Notifications unavailable', error: error, stackTrace: stack);
-    }
-    runApp(CodePetRemoteApp(webRtcEnabled: webRtcEnabled, notifications: notifications));
-  }, (error, stackTrace) {
+        log.warning(
+          'Notifications unavailable', error: error, stackTrace: stack,
+        );
+      }
+      runApp(
+        CodePetRemoteApp(
+          webRtcEnabled: webRtcEnabled, notifications: notifications,
+          signalingService: signalingService,
+        ),
+      );
+    }, (error, stackTrace) {
     AppLog.named('uncaught').severe(
       'Uncaught asynchronous error',
       error: error,

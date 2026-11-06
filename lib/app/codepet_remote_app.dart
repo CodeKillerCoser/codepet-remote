@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'channel_preferences.dart';
+import '../gateway/webrtc/device_registration.dart';
 import 'app_notifications.dart';
 import '../core/domain/notification.dart';
 import '../features/conversations/conversation_detail_screen.dart';
@@ -45,12 +46,14 @@ class CodePetRemoteApp extends StatefulWidget {
     this.hostDirectory,
     this.logExporter,
     this.webRtcEnabled = false,
+    this.signalingService,
     this.notifications,
   });
 
   final AppNotifications? notifications;
   final bool includeDemoDevices;
   final bool webRtcEnabled;
+  final String? signalingService;
   final DeviceRepository? registry;
   final DeviceDescriptorProvider? descriptorProvider;
   final RestoredGatewayClientBuilder? gatewayClientBuilder;
@@ -73,17 +76,26 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   int _selectedIndex = 0;
   bool _loading = true;
   late bool _savedWebRtcEnabled;
+  late String? _savedSignalingService;
+  late final SignalingDeviceRegistration _signalRegistration;
+  Timer? _signalRegistrationRetry;
 
   @override
   void initState() {
     super.initState();
     _savedWebRtcEnabled = widget.webRtcEnabled;
+    _savedSignalingService = widget.signalingService;
     widget.notifications?.onOpen = (target) => unawaited(_openNotification(target));
     _registry = widget.registry ?? DeviceRegistry(
       metadata: PreferencesMetadataStore(),
       credentials: const SecureCredentialStore(),
       logger: _log,
     );
+    _signalRegistration = SignalingDeviceRegistration(
+      deviceId: _registry.loadOrCreateClientId,
+    );
+    unawaited(_retrySignalingRegistration());
+    _scheduleSignalingRegistrationRetry();
     _descriptorProvider =
         widget.descriptorProvider ?? LocalDeviceDescriptorProvider(logger: _log);
     _hostDirectory = widget.hostDirectory ??
@@ -239,7 +251,8 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         }
         return ProtocolGatewayClient(
           transport: widget.webRtcEnabled ? RoutedRtcTransport(
-            deviceId: device.deviceId, preferredGatewayUri: preferredGateway,
+                  signalingService: _savedSignalingService,
+                  deviceId: device.deviceId, preferredGatewayUri: preferredGateway,
             debugAndroidEmulatorGatewayUri: debugAndroidEmulatorGatewayUri,
             credential: restoredCredential, certSha256: device.tlsFingerprint!,
             hostDirectory: _discoveryEnabled ? _hostDirectory : null,
@@ -318,8 +331,8 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   DevicePairer _pairer() => PairDeviceUseCase(
         repository: _registry,
         descriptorProvider: _descriptorProvider,
-        gateway: const LanPairingGateway(),
-        logger: AppLog.named('pairing'),
+        gateway: LanPairingGateway(signalingService: _savedSignalingService),
+    logger: AppLog.named('pairing'),
       );
 
   DiscoveredDevicePairer _discoveredPairer() =>
@@ -621,7 +634,15 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         openNotificationSettings: widget.notifications?.adapter.openSettings,
         webRtcEnabled: _savedWebRtcEnabled,
         activeWebRtcEnabled: widget.webRtcEnabled,
-        onWebRtcChanged: (enabled) async {
+          signalingService: _savedSignalingService,
+          onSignalingServiceChanged: (address) async {
+            await ChannelPreferences.saveSignalingService(address);
+            _savedSignalingService = address;
+            _scheduleSignalingRegistrationRetry();
+            if (address != null)
+              await _signalRegistration.register(address, force: true);
+          },
+          onWebRtcChanged: (enabled) async {
           await ChannelPreferences.saveWebRtcEnabled(enabled);
           _savedWebRtcEnabled = enabled;
         },
@@ -633,6 +654,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
 
   @override
   void dispose() {
+    _signalRegistrationRetry?.cancel();
     widget.notifications?.dispose();
     for (final session in _sessions) {
       session.dispose();
@@ -640,6 +662,26 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     unawaited(_pairingAdvertisementSubscription?.cancel());
     if (_discoveryEnabled) unawaited(_hostDirectory.stop());
     super.dispose();
+  }
+
+  Future<void> _retrySignalingRegistration() async {
+    final service = _savedSignalingService;
+    if (service == null) return;
+    try {
+      await _signalRegistration.register(service);
+    } catch (_) {
+      /* The adapter records a sanitized diagnostic for background retries. */
+    }
+  }
+
+  void _scheduleSignalingRegistrationRetry() {
+    _signalRegistrationRetry?.cancel();
+    _signalRegistrationRetry = _savedSignalingService == null
+        ? null
+        : Timer.periodic(
+            const Duration(seconds: 30),
+            (_) => unawaited(_retrySignalingRegistration()),
+          );
   }
 
   @override

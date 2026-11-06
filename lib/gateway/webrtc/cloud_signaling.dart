@@ -7,6 +7,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../application/errors/application_failures.dart';
+import '../../core/domain/signaling_service.dart';
 import '../../security/pinned_tls.dart';
 import 'signaling.dart';
 import 'rtc_diagnostics.dart';
@@ -74,6 +75,21 @@ class CloudPairing {
       key: key,
       value: jsonEncode({...response, 'seed': state['seed']}),
     );
+  }
+}
+
+/// Never forward an existing service's bearer to a different configured origin.
+void validateSignalingServiceBinding(
+  Map<String, dynamic> state,
+  String? selected,
+) {
+  if (selected == null) return;
+  final expected = normalizeSignalingService(selected);
+  final actual = normalizeSignalingService(
+    state['serviceUrl'] as String? ?? '',
+  );
+  if (expected != null && expected != actual) {
+    throw const GatewayConnectionException('信令服务已更改，请让电脑使用相同服务并重新配对。');
   }
 }
 

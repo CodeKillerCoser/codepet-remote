@@ -96,3 +96,13 @@ VPS 上信令/coturn 已启动，IP 证书自动续期模拟通过，原有 xray
 每次连接使用 raceId 关联四路尝试；每条 RTC 路径的 transport 与 signaling 共用 connectionId，通过 offerId/attempt 对齐 Host/VPS。诊断记录每路开始、预算、失败阶段、耗时、选中结果与正常取消原因；鉴权、无候选、HTTP、TLS 和超时有受控原因分类，不输出异常原文或完整 SDP。
 
 真实文件写入及日志 ZIP 导出回归已验证关联字段和取消结果。实机失败后请尽快从设置导出日志，并记录复现时间、网络和 VPN 状态；日志容量约 10 MiB，反复测试可能覆盖较早记录。两端必须安装包含本轮改动的新构建；库未暴露的底层 ICE 错误码仍不可从应用日志获得。
+
+## 信令服务地址与自动登记（2026-11-06）
+
+App 设置可填 IP、域名、`地址:端口` 或完整 HTTPS URL。无协议默认 HTTPS/8443；完整 HTTPS URL 使用指定端口或 443。保存立即发起设备登记，空值沿用配对二维码/Host 提供的地址。公开地址存入 `gateway_signaling_service_v1`；设备 seed 和每个服务独立 token 存安全存储。
+
+`SignalingDeviceRegistration` 复用 DeviceRegistry clientId，先持久化秘密，再签名请求 `/v1/devices/register`，验证返回的协议、身份和角色。失败每 30 秒重试，重启再次登记；成功后本进程缓存结果。更换服务保留设备身份、生成独立 token。登记仅标识本安装，不授予 Host、TURN 或 RPC 权限，仍须配对确认。Google OAuth 后续接入。
+
+服务选择必须与公网授权/新版二维码的服务地址一致；不得向不同服务转发旧 bearer。Host 换服务后双方设置相同地址并重新连接/配对；已有健康连接保持，下次连接使用新设置。同一域名迁移 VPS 且保留服务授权数据库可保留身份。服务端启用自动登记后无需用户手工维护 JSON 或预先创建 token。
+
+验证：`flutter test --no-pub test/settings test/gateway test/pairing test/app` 共 154 项通过，覆盖地址规范化、窄屏/失败保存、日志分享入口、持久化、丢响应重试、签名及响应绑定、跨服务凭据隔离。新登记模块分析通过。真实手机移动网络仍需新 Release 验收。

@@ -1,4 +1,5 @@
 import 'invitation_exchange.dart';
+import '../gateway/webrtc/cloud_signaling.dart';
 
 import 'dart:math';
 
@@ -41,9 +42,11 @@ class PinnedPairingExchangeClient implements PairingExchangeClient {
 class LanPairingGateway implements PairingGateway, PairingConfirmationGateway {
   const LanPairingGateway({
     this.exchangeClient = const PinnedPairingExchangeClient(),
+    this.signalingService,
   });
 
   final PairingExchangeClient exchangeClient;
+  final String? signalingService;
 
   @override
   Future<PairingRegistration> exchange({
@@ -65,6 +68,11 @@ class LanPairingGateway implements PairingGateway, PairingConfirmationGateway {
     required void Function(String) onConfirmationCode,
   }) async {
     final qr = PairingQrPayload.parse(rawPayload);
+    if (qr.version == 2) {
+      validateSignalingServiceBinding({
+        'serviceUrl': qr.serviceUrl.toString(),
+      }, signalingService);
+    }
     _log.info('Exchanging QR pairing request for device ${qr.hostDeviceId}');
     final json = qr.version == 2
         ? await InvitationExchange(

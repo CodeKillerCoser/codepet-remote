@@ -3,6 +3,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../application/ports/application_log.dart';
 import '../../core/domain/notification.dart';
+import 'signaling_service_settings.dart';
 
 class AppSettingsScreen extends StatefulWidget {
   const AppSettingsScreen({
@@ -16,12 +17,16 @@ class AppSettingsScreen extends StatefulWidget {
     this.onNotificationsChanged,
     this.notificationsAllowed,
     this.openNotificationSettings,
+    this.signalingService,
+    this.onSignalingServiceChanged,
   });
 
   final NotificationPreferences? notificationPreferences;
   final Future<NotificationPreferences> Function(NotificationPreferences)? onNotificationsChanged;
   final Future<bool> Function()? notificationsAllowed;
   final Future<void> Function()? openNotificationSettings;
+  final String? signalingService;
+  final Future<void> Function(String?)? onSignalingServiceChanged;
   final Future<String> Function() exportLogs;
   final ApplicationLog logger;
   final bool webRtcEnabled;
@@ -196,6 +201,13 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
               : null,
         ),
         const Divider(),
+        if (widget.onSignalingServiceChanged case final save?) ...[
+          SignalingServiceSettings(
+            value: widget.signalingService,
+            onSave: save,
+          ),
+          const Divider(),
+        ],
         const ListTile(
           leading: Icon(Icons.security),
           title: Text('Gateway v1'),
