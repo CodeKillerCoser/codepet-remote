@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:logging/logging.dart';
 
 import '../../diagnostics/app_log.dart';
 import '../../application/errors/application_failures.dart';
@@ -139,10 +140,9 @@ final class RtcDiagnostics {
   final String? pathPolicy;
   final clock = Stopwatch()..start();
   void emit(String event, [Map<String, Object?> fields = const {}]) {
-    AppLog.named('gateway.rtc.diagnostic').info(
-      jsonEncode({
+    AppLog.named('gateway.rtc.diagnostic').event(
+      event, {
         'schema': 'codepet.rtc.v1',
-        'event': event,
         'connectionId': connectionId,
         'timestampUnixMs': DateTime.now().millisecondsSinceEpoch,
         if (raceId != null) 'raceId': raceId,
@@ -150,7 +150,11 @@ final class RtcDiagnostics {
         if (offerId != null) 'offerId': offerId,
         'elapsedMs': clock.elapsedMilliseconds,
         ...fields,
-      }),
+      },
+      level: event.endsWith('.failed') || fields['outcome'] == 'failed'
+          ? Level.WARNING
+          : const {'ice.stats', 'ice.localCandidate'}.contains(event)
+              ? Level.FINE : Level.INFO,
     );
   }
 

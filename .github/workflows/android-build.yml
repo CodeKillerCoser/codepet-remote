@@ -65,7 +65,7 @@ jobs:
             printf '%s' "$CODEPET_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$CODEPET_RELEASE_STORE_FILE"
             unset CODEPET_RELEASE_KEYSTORE_BASE64
           fi
-          flutter build apk --"$BUILD_MODE"
+          flutter build apk --"$BUILD_MODE" --dart-define="CODEPET_BUILD_REVISION=$GITHUB_SHA"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

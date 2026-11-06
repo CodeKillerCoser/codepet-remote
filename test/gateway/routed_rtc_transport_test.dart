@@ -77,14 +77,13 @@ void main() {
           await File(zipPath).readAsBytes(),
         );
         final log = utf8.decode(
-          archive.files.firstWhere((f) => f.name == 'codepet.log').content
+          archive.files.firstWhere((f) => f.name == 'raw/codepet.jsonl').content
               as List<int>,
         );
         final entries = const LineSplitter()
             .convert(log)
             .map((line) => jsonDecode(line) as Map)
             .where((e) => e['logger'] == 'gateway.rtc.diagnostic')
-            .map((e) => jsonDecode(e['message'] as String) as Map)
             .toList();
         final start = entries.firstWhere((e) => e['event'] == 'race.start');
         expect(entries.every((e) => e['raceId'] == start['raceId']), isTrue);

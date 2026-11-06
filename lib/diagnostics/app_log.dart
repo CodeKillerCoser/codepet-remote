@@ -23,8 +23,8 @@ class AppLog implements ApplicationLog {
     _subscription = Logger.root.onRecord.listen((record) {
       final target = _store;
       if (target == null) return;
-      final structured = record.object is _StructuredLogMessage
-          ? record.object as _StructuredLogMessage
+      final structured = record.object is StructuredLogEvent
+          ? record.object as StructuredLogEvent
           : null;
       final payload = <String, Object?>{
         'timestamp': record.time.toUtc().toIso8601String(),
@@ -33,7 +33,7 @@ class AppLog implements ApplicationLog {
         if (structured == null)
           'message': _redact(record.message.toString())
         else ...{
-          'recordType': 'trace',
+          'recordType': structured.event == 'span' ? 'trace' : 'event',
           'event': structured.event,
           ..._redactFields(structured.fields),
         },
@@ -53,6 +53,12 @@ class AppLog implements ApplicationLog {
       }));
     });
     named('app').info('Local diagnostics initialized');
+    named('app').event('app.start', {
+      'buildRevision': const String.fromEnvironment('CODEPET_BUILD_REVISION', defaultValue: 'unknown'),
+      'buildMode': kReleaseMode ? 'release' : kProfileMode ? 'profile' : 'debug',
+      'platform': defaultTargetPlatform.name,
+      'utcOffsetMinutes': DateTime.now().timeZoneOffset.inMinutes,
+    });
   }
 
   static Future<String> exportLogs() async {
@@ -95,7 +101,10 @@ class AppLog implements ApplicationLog {
 
   @override
   void structured(String event, Map<String, Object?> fields) =>
-      _logger.fine(_StructuredLogMessage(event, fields));
+      _logger.fine(StructuredLogEvent(event, fields));
+
+  void event(String event, Map<String, Object?> fields, {Level level = Level.INFO}) =>
+      _logger.log(level, StructuredLogEvent(event, fields));
 
   @override
   void warning(
@@ -114,11 +123,14 @@ class AppLog implements ApplicationLog {
       _logger.severe(message, error, stackTrace);
 }
 
-final class _StructuredLogMessage {
-  const _StructuredLogMessage(this.event, this.fields);
+final class StructuredLogEvent {
+  const StructuredLogEvent(this.event, this.fields);
 
   final String event;
   final Map<String, Object?> fields;
+
+  @override
+  String toString() => event;
 }
 
 Map<String, Object?> _redactFields(Map<String, Object?> fields) => {

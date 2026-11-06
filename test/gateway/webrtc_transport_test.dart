@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:logging/logging.dart';
+import 'package:codepet_remote/diagnostics/app_log.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 import 'package:codepet_remote/application/errors/application_failures.dart';
@@ -196,7 +197,8 @@ void main() {
       final records = <Map<String, dynamic>>[];
       final logger = Logger('gateway.rtc.diagnostic');
       final logSubscription = logger.onRecord.listen((record) {
-        records.add(jsonDecode(record.message) as Map<String, dynamic>);
+        final event = record.object as StructuredLogEvent;
+        records.add({'event': event.event, ...event.fields});
       });
       addTearDown(logSubscription.cancel);
       final peer = FakePeer()..channel.autoReply = false;
@@ -461,6 +463,11 @@ void main() {
   );
 
   test('closing during native peer creation cleans up the late peer', () async {
+    final events = <String>[];
+    final log = Logger('gateway.rtc.diagnostic').onRecord.listen((record) {
+      events.add((record.object as StructuredLogEvent).event);
+    });
+    addTearDown(log.cancel);
     final native = Completer<RTCPeerConnection>();
     final peer = FakePeer();
     final transport = WebRtcGatewayTransport(
@@ -475,6 +482,8 @@ void main() {
     native.complete(peer);
     await connection;
     expect(peer.disposed, isTrue);
+    expect(events, contains('connect.cancelled'));
+    expect(events, isNot(contains('connect.failed')));
   });
 
   test('a malformed incoming frame aborts the connection', () async {

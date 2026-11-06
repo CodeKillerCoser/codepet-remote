@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:path_provider/path_provider.dart';
+import 'diagnostic_report.dart';
 
 class LocalLogStore {
   LocalLogStore._({
@@ -84,19 +85,36 @@ class LocalLogStore {
   Future<void> flush() => _pending;
 
   Future<String> exportZip() async {
-    await flush();
-    await _pruneExpired();
-    final files = await _logFiles();
+    // Snapshot on the writer queue: rotation cannot rename a shard while it is read.
+    final snapshot = _pending.then((_) async {
+      await _pruneExpired();
+      return {
+        for (final file in await _logFiles())
+          file.uri.pathSegments.last: await file.readAsBytes(),
+      };
+    });
+    _pending = snapshot.then<void>((_) {}).catchError((Object _) {});
+    final files = await snapshot;
     final archive = Archive();
-    for (final file in files) {
+    final sources = <String, String>{};
+    for (final file in files.entries) {
+      final bytes = file.value;
+      final name = file.key;
+      sources[name] = utf8.decode(bytes, allowMalformed: true);
       archive.addFile(ArchiveFile.bytes(
-        file.uri.pathSegments.last,
-        await file.readAsBytes(),
+        'raw/${name.replaceFirst(RegExp(r'\.log$'), '.jsonl')}',
+        bytes,
       ));
     }
+    final report = DiagnosticReport(sources);
+    archive.addFile(ArchiveFile.string('codepet.log', report.timeline));
+    archive.addFile(ArchiveFile.string('connection-summary.txt', report.summary));
     archive.addFile(ArchiveFile.string(
       'README.txt',
       'CodePet Remote diagnostic logs\n'
+          '先看 connection-summary.txt（连接结果），再看 codepet.log（文本时间线）。\n'
+          'raw/*.jsonl 为脱敏后的结构化原始记录，含完整 ICE 统计；不要将候选缺失直接等同于 NAT 故障。\n'
+          '时间均为 UTC；北京时间加 8 小时。\n'
           'Created: ${DateTime.now().toUtc().toIso8601String()}\n'
           'Retention: ${retention.inDays} days\n'
           'Maximum files: $maxFileCount\n'

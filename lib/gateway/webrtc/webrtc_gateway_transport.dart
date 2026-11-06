@@ -107,6 +107,7 @@ final class WebRtcGatewayTransport implements GatewayTransport {
   Future<void> _sendTail = Future<void>.value();
   Completer<void>? _gathered;
   bool _closed = false;
+  bool _aborted = false;
   bool _connected = false;
   int _queuedBytes = 0;
 
@@ -148,8 +149,9 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     try {
       await _open().timeout(connectTimeout);
     } catch (error) {
-      _diagnostics.emit('connect.failed', {
-        ...rtcFailure(error),
+      final cancelled = _closed && !_aborted;
+      _diagnostics.emit(cancelled ? 'connect.cancelled' : 'connect.failed', {
+        if (cancelled) 'reason': 'closed' else ...rtcFailure(error),
         'stage': _stage,
         'stageMs': _diagnostics.clock.elapsedMilliseconds - _stageStartedMs,
       });
@@ -508,6 +510,7 @@ final class WebRtcGatewayTransport implements GatewayTransport {
 
   void _abort(GatewayConnectionException error) {
     if (_closed) return;
+    _aborted = true;
     final now = _diagnostics.clock.elapsedMilliseconds;
     _diagnostics.emit('channel.abort', {
       'errorType': error.runtimeType.toString(),

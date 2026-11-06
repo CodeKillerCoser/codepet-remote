@@ -81,7 +81,7 @@ void main() {
     final names = archive.files.map((file) => file.name).toSet();
 
     expect(await exported.exists(), isTrue);
-    expect(names, containsAll(['codepet.log', 'codepet.1.log', 'README.txt']));
+    expect(names, containsAll(['codepet.log', 'connection-summary.txt', 'raw/codepet.jsonl', 'raw/codepet.1.jsonl', 'README.txt']));
     final readme = archive.files.singleWhere(
       (file) => file.name == 'README.txt',
     );
