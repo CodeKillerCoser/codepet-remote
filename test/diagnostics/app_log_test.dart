@@ -5,7 +5,7 @@ import 'package:codepet_remote/diagnostics/local_log_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('persists structured logs while redacting known secrets', () async {
+  test('persists source-located text while redacting known secrets', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'codepet-app-log-test-',
     );
@@ -15,9 +15,7 @@ void main() {
         await temporaryDirectory.delete(recursive: true);
       }
     });
-    final store = await LocalLogStore.open(
-      rootDirectory: temporaryDirectory,
-    );
+    final store = await LocalLogStore.open(rootDirectory: temporaryDirectory);
     await AppLog.initialize(store: store);
 
     AppLog.named('test').warning(
@@ -26,16 +24,20 @@ void main() {
     );
     await AppLog.flush();
 
-    final contents = await File(
-      '${store.logDirectory.path}/codepet.log',
-    ).readAsString();
-    expect(contents, contains('"logger":"test"'));
+    final contents = await File('${store.logDirectory.path}/codepet.log')
+        .readAsString();
+    expect(contents, contains('[test]'));
+    expect(contents, contains('pid=$pid thread='));
+    expect(contents, matches(RegExp(r'thread=\d+ WARN')));
+    expect(contents, matches(RegExp(r'app_log_test.dart:\d+ \[test\]')));
+    expect(contents, isNot(contains('app_log.dart:')));
+    expect(contents, isNot(contains('{"timestamp"')));
     expect(contents, contains('[REDACTED]'));
     expect(contents, isNot(contains('secret-token')));
     expect(contents, isNot(contains('private-value')));
   });
 
-  test('persists trace fields as mergeable JSONL', () async {
+  test('persists trace correlation fields in the same text format', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'codepet-trace-log-test-',
     );
@@ -61,8 +63,8 @@ void main() {
     final lines = await File('${store.logDirectory.path}/codepet.log')
         .readAsLines();
     final traceLine = lines.singleWhere((line) => line.contains('traceId'));
-    expect(traceLine, contains('"recordType":"trace"'));
-    expect(traceLine, contains('"schema":"codepet.trace.v1"'));
+    expect(traceLine, contains('[trace] span'));
+    expect(traceLine, contains('traceId=0123456789abcdef0123456789abcdef'));
     expect(traceLine, contains('Bearer [REDACTED]'));
     expect(traceLine, isNot(contains('secret-token')));
   });

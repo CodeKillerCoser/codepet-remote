@@ -3,7 +3,8 @@ import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:path_provider/path_provider.dart';
-import 'diagnostic_report.dart';
+
+import 'log_line.dart';
 
 class LocalLogStore {
   LocalLogStore._({
@@ -24,17 +25,14 @@ class LocalLogStore {
   Future<void> _pending = Future<void>.value();
   DateTime _nextRetentionCheck = DateTime.fromMillisecondsSinceEpoch(0);
 
-  Directory get logDirectory => Directory(
-        '${rootDirectory.path}${Platform.pathSeparator}logs',
-      );
+  Directory get logDirectory =>
+      Directory('${rootDirectory.path}${Platform.pathSeparator}logs');
 
-  Directory get exportDirectory => Directory(
-        '${rootDirectory.path}${Platform.pathSeparator}exports',
-      );
+  Directory get exportDirectory =>
+      Directory('${rootDirectory.path}${Platform.pathSeparator}exports');
 
-  File get _activeFile => File(
-        '${logDirectory.path}${Platform.pathSeparator}codepet.log',
-      );
+  File get _activeFile =>
+      File('${logDirectory.path}${Platform.pathSeparator}codepet.log');
 
   static Future<LocalLogStore> open({
     Directory? rootDirectory,
@@ -48,7 +46,8 @@ class LocalLogStore {
     if (maxFileCount <= 0) {
       throw ArgumentError.value(maxFileCount, 'maxFileCount');
     }
-    final root = rootDirectory ??
+    final root =
+        rootDirectory ??
         Directory(
           '${(await getApplicationSupportDirectory()).path}'
           '${Platform.pathSeparator}diagnostics',
@@ -62,21 +61,19 @@ class LocalLogStore {
     await store.logDirectory.create(recursive: true);
     await store.exportDirectory.create(recursive: true);
     await store._pruneExpired();
+    await store._convertLegacyLogs();
     return store;
   }
 
-  Future<void> writeLine(String line) {
+  Future<void> writeRecord(Map<String, dynamic> record) {
+    final line = formatLogLine(record);
     final bytes = utf8.encode('$line\n');
     final operation = _pending.then((_) async {
       if (DateTime.now().isAfter(_nextRetentionCheck)) {
         await _pruneExpired();
       }
       await _rotateIfNeeded(bytes.length);
-      await _activeFile.writeAsBytes(
-        bytes,
-        mode: FileMode.append,
-        flush: true,
-      );
+      await _activeFile.writeAsBytes(bytes, mode: FileMode.append, flush: true);
     });
     _pending = operation.catchError((Object _) {});
     return operation;
@@ -96,31 +93,27 @@ class LocalLogStore {
     _pending = snapshot.then<void>((_) {}).catchError((Object _) {});
     final files = await snapshot;
     final archive = Archive();
-    final sources = <String, String>{};
     for (final file in files.entries) {
-      final bytes = file.value;
-      final name = file.key;
-      sources[name] = utf8.decode(bytes, allowMalformed: true);
-      archive.addFile(ArchiveFile.bytes(
-        'raw/${name.replaceFirst(RegExp(r'\.log$'), '.jsonl')}',
-        bytes,
-      ));
+      archive.addFile(ArchiveFile.bytes(file.key, file.value));
     }
-    final report = DiagnosticReport(sources);
-    archive.addFile(ArchiveFile.string('codepet.log', report.timeline));
-    archive.addFile(ArchiveFile.string('connection-summary.txt', report.summary));
-    archive.addFile(ArchiveFile.string(
-      'README.txt',
-      'CodePet Remote diagnostic logs\n'
-          '先看 connection-summary.txt（连接结果），再看 codepet.log（文本时间线）。\n'
-          'raw/*.jsonl 为脱敏后的结构化原始记录，含完整 ICE 统计；不要将候选缺失直接等同于 NAT 故障。\n'
-          '时间均为 UTC；北京时间加 8 小时。\n'
-          'Created: ${DateTime.now().toUtc().toIso8601String()}\n'
-          'Retention: ${retention.inDays} days\n'
-          'Maximum files: $maxFileCount\n'
-          'Maximum file size: $maxFileBytes bytes\n',
-    ));
-    final timestamp = DateTime.now().toUtc().toIso8601String()
+    archive.addFile(
+      ArchiveFile.string(
+        'README.txt',
+        'CodePet Remote diagnostic logs\n'
+            'codepet.log 为当前日志，codepet.N.log 为轮转历史（N 越大越旧）。\n'
+            '格式：年月日 时分秒.毫秒+时区 pid thread 级别 文件:行号 [模块] 内容。\n'
+            'thread 为产生日志的系统线程 ID；isolate 单独记录；缺失字段用 -。\n'
+            '仅存储和导出文本日志；旧日志缺失的字段无法补回。\n'
+            '时间均为 UTC；北京时间加 8 小时。\n'
+            'Created: ${DateTime.now().toUtc().toIso8601String()}\n'
+            'Retention: ${retention.inDays} days\n'
+            'Maximum files: $maxFileCount\n'
+            'Maximum file size: $maxFileBytes bytes\n',
+      ),
+    );
+    final timestamp = DateTime.now()
+        .toUtc()
+        .toIso8601String()
         .replaceAll(':', '-')
         .replaceAll('.', '-');
     final target = File(
@@ -130,6 +123,22 @@ class LocalLogStore {
     await target.writeAsBytes(ZipEncoder().encode(archive), flush: true);
     await _pruneOldExports();
     return target.path;
+  }
+
+  Future<void> _convertLegacyLogs() async {
+    for (final file in await _logFiles()) {
+      final contents = utf8.decode(
+        await file.readAsBytes(),
+        allowMalformed: true,
+      );
+      if (!contents.trimLeft().startsWith('{')) continue;
+      final modified = (await file.stat()).modified;
+      final converted = normalizeLegacyLog(contents);
+      final temporary = File('${file.path}.migrating');
+      await temporary.writeAsString(converted, flush: true);
+      await temporary.setLastModified(modified);
+      await temporary.rename(file.path);
+    }
   }
 
   Future<void> _rotateIfNeeded(int incomingBytes) async {
@@ -151,9 +160,8 @@ class LocalLogStore {
     await active.rename(_rotatedFile(1).path);
   }
 
-  File _rotatedFile(int index) => File(
-        '${logDirectory.path}${Platform.pathSeparator}codepet.$index.log',
-      );
+  File _rotatedFile(int index) =>
+      File('${logDirectory.path}${Platform.pathSeparator}codepet.$index.log');
 
   Future<List<File>> _logFiles() async {
     if (!await logDirectory.exists()) return const [];

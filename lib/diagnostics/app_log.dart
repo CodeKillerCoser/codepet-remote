@@ -1,11 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:logging/logging.dart';
 
 import '../application/ports/application_log.dart';
 import 'local_log_store.dart';
+import 'log_context.dart';
+import 'log_line.dart';
 
 class AppLog implements ApplicationLog {
   AppLog._(this._logger);
@@ -23,6 +24,9 @@ class AppLog implements ApplicationLog {
     _subscription = Logger.root.onRecord.listen((record) {
       final target = _store;
       if (target == null) return;
+      final entry = record.object is _LogEntry
+          ? record.object as _LogEntry
+          : null;
       final structured = record.object is StructuredLogEvent
           ? record.object as StructuredLogEvent
           : null;
@@ -40,22 +44,31 @@ class AppLog implements ApplicationLog {
         if (record.error != null) 'error': _redact(record.error.toString()),
         if (record.stackTrace != null)
           'stackTrace': _redact(record.stackTrace.toString()),
+        // Authoritative provenance cannot be overridden by event fields.
+        ...(structured?.context ??
+            entry?.context ??
+            LogContext.capture(StackTrace.current)),
       };
-      final line = jsonEncode(payload);
       if (kDebugMode) {
-        debugPrint(
-          '${record.level.name} ${record.loggerName}: '
-          '${structured?.event ?? _redact(record.message.toString())}',
-        );
+        debugPrint(formatLogLine(payload));
       }
-      unawaited(target.writeLine(line).catchError((Object error) {
-        debugPrint('Unable to persist application log: $error');
-      }));
+      unawaited(
+        target.writeRecord(payload).catchError((Object error) {
+          debugPrint('Unable to persist application log: $error');
+        }),
+      );
     });
     named('app').info('Local diagnostics initialized');
     named('app').event('app.start', {
-      'buildRevision': const String.fromEnvironment('CODEPET_BUILD_REVISION', defaultValue: 'unknown'),
-      'buildMode': kReleaseMode ? 'release' : kProfileMode ? 'profile' : 'debug',
+      'buildRevision': const String.fromEnvironment(
+        'CODEPET_BUILD_REVISION',
+        defaultValue: 'unknown',
+      ),
+      'buildMode': kReleaseMode
+          ? 'release'
+          : kProfileMode
+          ? 'profile'
+          : 'debug',
       'platform': defaultTargetPlatform.name,
       'utcOffsetMinutes': DateTime.now().timeZoneOffset.inMinutes,
     });
@@ -72,11 +85,8 @@ class AppLog implements ApplicationLog {
       named('diagnostics').info('Log export created');
       return path;
     } catch (error, stackTrace) {
-      named('diagnostics').warning(
-        'Log export failed',
-        error: error,
-        stackTrace: stackTrace,
-      );
+      named('diagnostics')
+          .warning('Log export failed', error: error, stackTrace: stackTrace);
       rethrow;
     }
   }
@@ -94,56 +104,81 @@ class AppLog implements ApplicationLog {
   }
 
   @override
-  void fine(String message) => _logger.fine(message);
+  void fine(String message) => _write(Level.FINE, message);
 
   @override
-  void info(String message) => _logger.info(message);
+  void info(String message) => _write(Level.INFO, message);
 
   @override
   void structured(String event, Map<String, Object?> fields) =>
-      _logger.fine(StructuredLogEvent(event, fields));
+      _write(Level.FINE, StructuredLogEvent(event, fields));
 
-  void event(String event, Map<String, Object?> fields, {Level level = Level.INFO}) =>
-      _logger.log(level, StructuredLogEvent(event, fields));
-
-  @override
-  void warning(
-    String message, {
-    Object? error,
-    StackTrace? stackTrace,
-  }) =>
-      _logger.warning(message, error, stackTrace);
+  void event(
+    String event,
+    Map<String, Object?> fields, {
+    Level level = Level.INFO,
+  }) => _write(level, StructuredLogEvent(event, fields));
 
   @override
-  void severe(
-    String message, {
+  void warning(String message, {Object? error, StackTrace? stackTrace}) =>
+      _write(Level.WARNING, message, error, stackTrace);
+
+  @override
+  void severe(String message, {Object? error, StackTrace? stackTrace}) =>
+      _write(Level.SEVERE, message, error, stackTrace);
+
+  void _write(
+    Level level,
+    Object value, [
     Object? error,
     StackTrace? stackTrace,
-  }) =>
-      _logger.severe(message, error, stackTrace);
+  ]) {
+    if (!_logger.isLoggable(level)) return;
+    final context = LogContext.capture(StackTrace.current);
+    _logger.log(
+      level,
+      value is StructuredLogEvent
+          ? StructuredLogEvent(value.event, value.fields, context: context)
+          : _LogEntry(value, context),
+      error,
+      stackTrace,
+    );
+  }
+}
+
+final class _LogEntry {
+  const _LogEntry(this.value, this.context);
+  final Object value;
+  final Map<String, Object?> context;
+  @override
+  String toString() => value.toString();
 }
 
 final class StructuredLogEvent {
-  const StructuredLogEvent(this.event, this.fields);
+  const StructuredLogEvent(this.event, this.fields, {this.context = const {}});
 
   final String event;
   final Map<String, Object?> fields;
+  final Map<String, Object?> context;
 
   @override
   String toString() => event;
 }
 
 Map<String, Object?> _redactFields(Map<String, Object?> fields) => {
-      for (final entry in fields.entries)
-        entry.key: switch (entry.value) {
-          final String value => _redact(value),
-          final Map<String, Object?> value => _redactFields(value),
-          _ => entry.value,
-        },
-    };
+  for (final entry in fields.entries)
+    entry.key: switch (entry.value) {
+      final String value => _redact(value),
+      final Map<String, Object?> value => _redactFields(value),
+      _ => entry.value,
+    },
+};
 
 String _redact(String value) => value
-    .replaceAll(RegExp(r'Bearer\s+[^\s,}]+', caseSensitive: false), 'Bearer [REDACTED]')
+    .replaceAll(
+      RegExp(r'Bearer\s+[^\s,}]+', caseSensitive: false),
+      'Bearer [REDACTED]',
+    )
     .replaceAll(
       RegExp(
         r'("(?:credential|pairingSecret|clientNonce)"\s*:\s*")[^"]*(")',

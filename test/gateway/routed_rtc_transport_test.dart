@@ -77,32 +77,50 @@ void main() {
           await File(zipPath).readAsBytes(),
         );
         final log = utf8.decode(
-          archive.files.firstWhere((f) => f.name == 'raw/codepet.jsonl').content
+          archive.files.firstWhere((f) => f.name == 'codepet.log').content
               as List<int>,
         );
         final entries = const LineSplitter()
             .convert(log)
-            .map((line) => jsonDecode(line) as Map)
-            .where((e) => e['logger'] == 'gateway.rtc.diagnostic')
+            .where((line) => line.contains('[gateway.rtc.diagnostic]'))
             .toList();
-        final start = entries.firstWhere((e) => e['event'] == 'race.start');
-        expect(entries.every((e) => e['raceId'] == start['raceId']), isTrue);
-        expect(entries.every((e) => e['timestampUnixMs'] is int), isTrue);
+        final raceIds = entries
+            .map(
+              (line) => RegExp(r'raceId=([^ |]+)').firstMatch(line)?.group(1),
+            )
+            .toSet();
+        expect(raceIds, hasLength(1));
+        expect(raceIds.single, isNotNull);
         expect(
-          entries.where((e) => e['event'] == 'race.path.start'),
+          entries.every(
+            (line) =>
+                RegExp(r'^\d{4}-\d{2}-\d{2} .*pid=\d+ thread=\d+ ')
+                    .hasMatch(line),
+          ),
+          isTrue,
+        );
+        expect(
+          entries.where((line) => line.contains('] race.path.start ')),
           hasLength(2),
         );
         expect(
-          entries.singleWhere((e) => e['event'] == 'race.selected')['path'],
-          'relay',
+          entries.singleWhere((line) => line.contains('] race.selected ')),
+          contains('path=relay'),
         );
         final loser = entries.singleWhere(
-          (e) => e['event'] == 'race.path.result',
+          (line) => line.contains('] race.path.result '),
         );
-        expect(loser['path'], 'lan');
-        expect(loser['outcome'], 'cancelled');
-        expect(loser['reason'], 'anotherPathSelected');
-        expect(entries.where((e) => e['event'] == 'race.failed'), isEmpty);
+        expect(loser, contains('path=lan'));
+        expect(loser, contains('outcome=cancelled'));
+        expect(loser, contains('reason=anotherPathSelected'));
+        expect(
+          entries.where((line) => line.contains('] race.failed ')),
+          isEmpty,
+        );
+        expect(
+          archive.files.any((file) => file.name.endsWith('.jsonl')),
+          isFalse,
+        );
       } finally {
         await route.close();
         await AppLog.resetForTesting();
