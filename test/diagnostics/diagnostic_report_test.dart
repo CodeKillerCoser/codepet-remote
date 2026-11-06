@@ -4,6 +4,16 @@ import 'package:codepet_remote/diagnostics/diagnostic_report.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('control characters cannot turn the text report into binary or inject log lines', () {
+    final report = DiagnosticReport({'codepet.log': jsonEncode({
+      'timestamp':'2026-11-06T13:11:00Z','level':'WARNING','logger':'test',
+      'message':'broken\u0000value\nforged\u001b[31m',
+    })});
+    expect(report.timeline.contains('\u0000'), isFalse);
+    expect(report.timeline.contains('\u001b'), isFalse);
+    expect(report.timeline, contains('broken value forged [31m'));
+    expect(report.summary.contains('\u0000'), isFalse);
+  });
   Map<String, Object?> event(
     String time,
     String name, [

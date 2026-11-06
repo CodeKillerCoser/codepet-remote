@@ -40,7 +40,7 @@ class DiagnosticReport {
   final unreadable = <String>[];
 
   static String clean(Object? value) =>
-      '$value'.replaceAll(RegExp(r'[\r\n\t]'), ' ');
+      '$value'.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ');
   static const paths = {
     'lan': '局域网',
     'ipv6-direct': 'IPv6 直连',
