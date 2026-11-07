@@ -9,6 +9,26 @@ permissions:
   contents: read
 
 jobs:
+  connection-engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/codepet_connection_engine
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.13.2
+      - run: dart pub get
+      - run: dart format --output=none --set-exit-if-changed lib test tool
+      - run: dart analyze --fatal-infos
+      - run: dart test
+      - run: dart run tool/stress.dart 10000 16 | tee engine-stress.txt
+      - uses: actions/upload-artifact@v6
+        with:
+          name: connection-engine-stress
+          path: packages/codepet_connection_engine/engine-stress.txt
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -23,6 +43,8 @@ jobs:
           flutter-version: 3.47.2
           cache: true
       - run: flutter pub get
+      - run: dart pub get
+        working-directory: packages/codepet_connection_engine
       - run: flutter analyze
       - run: flutter test
       - run: flutter build apk --debug

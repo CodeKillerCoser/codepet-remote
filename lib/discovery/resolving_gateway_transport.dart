@@ -23,7 +23,7 @@ Uri? debugAndroidEmulatorGatewayCandidate(Uri preferredGatewayUri) {
 
 class ResolvingPinnedGatewayTransport
     implements GatewayTransport, EndpointAwareGatewayTransport,
-        EndpointPersistenceAwareGatewayTransport, MetricsGatewayTransport {
+        EndpointPersistenceAwareGatewayTransport, MetricsGatewayTransport, ChannelControlGatewayTransport {
   static const stableGatewayPort = 47622;
   static const defaultConnectTimeout = Duration(seconds: 8);
 
@@ -34,6 +34,7 @@ class ResolvingPinnedGatewayTransport
     required this.credential,
     required this.certSha256,
     this.connectTimeout = defaultConnectTimeout,
+    bool enableChannelControl = false,
     CodePetDiscovery? discovery,
     this.hostDirectory,
     GatewayTransport Function(Uri gatewayUri, String credential, String certSha256)? transportFactory,
@@ -44,6 +45,7 @@ class ResolvingPinnedGatewayTransport
                   credential,
                   certSha256,
                   connectTimeout,
+                  enableChannelControl,
                 ));
 
   final String deviceId;
@@ -57,6 +59,7 @@ class ResolvingPinnedGatewayTransport
   final GatewayTransport Function(Uri gatewayUri, String credential, String certSha256) transportFactory;
   final StreamController<JsonMap> _events = StreamController<JsonMap>.broadcast();
   GatewayTransport? _active;
+  @override bool get supportsChannelControl => _active is ChannelControlGatewayTransport && (_active as ChannelControlGatewayTransport).supportsChannelControl;
   @override
   ConnectionTraffic? get connectionTraffic {
     final active = _active;
@@ -221,6 +224,7 @@ class ResolvingPinnedGatewayTransport
       final subscription = transport.events.listen(
         _events.add,
         onError: _events.addError,
+        onDone: () { if (!_events.isClosed) unawaited(_events.close()); },
       );
       _connectingCandidate = null;
       _active = transport;
@@ -307,11 +311,13 @@ GatewayTransport _pinnedTransport(
   String credential,
   String certSha256,
   Duration connectTimeout,
+  bool enableChannelControl,
 ) => PinnedWebSocketGatewayTransport(
       gatewayUri: gatewayUri,
       credential: credential,
       certSha256: certSha256,
       connectTimeout: connectTimeout,
+      enableChannelControl: enableChannelControl,
     );
 
 bool isTrustedDiscoveryCandidate(

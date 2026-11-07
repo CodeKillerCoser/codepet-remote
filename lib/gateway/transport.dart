@@ -33,3 +33,15 @@ abstract interface class EndpointPersistenceAwareGatewayTransport {
 abstract interface class MetricsGatewayTransport {
   ConnectionTraffic? get connectionTraffic;
 }
+
+/// Capability negotiated by the native transport, outside Gateway business DTOs.
+abstract interface class ChannelControlGatewayTransport {
+  bool get supportsChannelControl;
+}
+
+/// Optional lifecycle owner. Callers supply new input; no scene enters policy.
+abstract interface class ManagedGatewayTransport {
+  Stream<bool> get availability;
+  void reconcile({bool? optimize});
+  void reportUnhealthy();
+}

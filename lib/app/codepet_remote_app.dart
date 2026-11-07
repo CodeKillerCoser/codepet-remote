@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:codepet_connection_engine/codepet_connection_engine.dart' as ce;
+import '../gateway/connection/device_connection_routes.dart';
 
 import 'package:flutter/material.dart';
 import 'channel_preferences.dart';
+import 'connection_environment_observer.dart';
 import '../gateway/webrtc/device_registration.dart';
 import 'app_notifications.dart';
 import '../core/domain/notification.dart';
@@ -73,6 +76,8 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   StreamSubscription<DiscoveredCodePetHost>? _pairingAdvertisementSubscription;
   final Set<String> _handledPairingInvitations = {};
   final List<DeviceSession> _sessions = [];
+  ConnectionEnvironmentObserver? _connectionEnvironment;
+  final _connectionBudget = ce.CandidateBudget(limit: 8);
   int _selectedIndex = 0;
   bool _loading = true;
   late bool _savedWebRtcEnabled;
@@ -119,6 +124,9 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
         },
       );
     }
+    _connectionEnvironment = ConnectionEnvironmentObserver((optimize) {
+      for (final session in _sessions) { session.reconcileConnection(optimize: optimize); }
+    });
     unawaited(_loadDevices());
   }
 
@@ -250,19 +258,11 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
           );
         }
         return ProtocolGatewayClient(
-          transport: widget.webRtcEnabled ? RoutedRtcTransport(
-                  signalingService: _savedSignalingService,
-                  deviceId: device.deviceId, preferredGatewayUri: preferredGateway,
+          transport: createDeviceConnection(
+            signalingService: _savedSignalingService, webRtcEnabled: _savedWebRtcEnabled,
+            budget: _connectionBudget, deviceId: device.deviceId, preferredGatewayUri: preferredGateway,
             debugAndroidEmulatorGatewayUri: debugAndroidEmulatorGatewayUri,
             credential: restoredCredential, certSha256: device.tlsFingerprint!,
-            hostDirectory: _discoveryEnabled ? _hostDirectory : null,
-          ) : ResolvingPinnedGatewayTransport(
-            deviceId: device.deviceId,
-            preferredGatewayUri: preferredGateway,
-            debugAndroidEmulatorGatewayUri:
-                debugAndroidEmulatorGatewayUri,
-            credential: restoredCredential,
-            certSha256: device.tlsFingerprint!,
             hostDirectory: _discoveryEnabled ? _hostDirectory : null,
           ),
           clientId: device.clientId!, clientDevice: clientDevice, expectedDeviceId: device.deviceId, expectedIdentityFingerprint: device.tlsFingerprint!,
@@ -655,6 +655,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
 
   @override
   void dispose() {
+    _connectionEnvironment?.dispose();
     _signalRegistrationRetry?.cancel();
     widget.notifications?.dispose();
     for (final session in _sessions) {

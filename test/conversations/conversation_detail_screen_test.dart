@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:codepet_remote/core/domain/connection_traffic.dart';
+
 import 'package:codepet_remote/application/conversations/conversation_detail_controller.dart';
 import 'package:codepet_remote/core/domain/paired_device.dart';
 import 'package:codepet_remote/application/sessions/device_session.dart';
@@ -14,6 +16,36 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 void main() {
+  testWidgets('conversation header shows its device traffic on a narrow screen', (tester) async {
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = _TrafficDetailClient();
+    await _pumpDetail(tester, client, conversation: _idleConversation());
+    await tester.pumpAndSettle();
+    final traffic = find.byKey(const Key('conversation-connection-traffic'));
+    expect(find.descendant(of: find.byType(AppBar), matching: traffic), findsOneWidget);
+    expect(tester.getTopLeft(traffic).dy, greaterThan(tester.getTopLeft(find.byKey(const Key('conversation-device-context'))).dy));
+    expect(find.text('IPv6 直连'), findsOneWidget);
+    expect(find.text('累计 3.0 KiB'), findsOneWidget);
+    expect(find.text('↑ 1.0 KiB/s'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.byKey(const Key('conversation-title-metadata-toggle')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    client.connectionTraffic = const ConnectionTraffic(channel: 'relay', receivedBytes: 8192);
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('中继'), findsOneWidget);
+    expect(find.text('累计 8.0 KiB'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await client.close();
+  });
+
   testWidgets('notification for a resolved approval opens context without resolving again', (tester) async {
     final client = _DetailClient();
     final session = await _pumpDetail(tester, client, conversation: _idleConversation());
@@ -157,7 +189,7 @@ void main() {
       tester
           .widget<Text>(find.byKey(const Key('conversation-device-context')))
           .data,
-      'Test · TestOS 1',
+      'Test',
     );
     final appBar = tester.widget<AppBar>(find.byType(AppBar));
     expect(appBar.leadingWidth, 48);
@@ -2496,5 +2528,12 @@ TurnSendReceipt _receipt(_SendCall call) {
       isStreaming: false,
     ),
     effectiveSelection: call.selection,
+  );
+}
+
+class _TrafficDetailClient extends _DetailClient implements ConnectionMetricsGatewayClient {
+  @override
+  ConnectionTraffic? connectionTraffic = const ConnectionTraffic(
+    channel: 'ipv6-direct', sentBytes: 1024, receivedBytes: 2048, sentBytesPerSecond: 1024,
   );
 }

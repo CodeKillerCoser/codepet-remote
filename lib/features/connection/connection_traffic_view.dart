@@ -83,10 +83,14 @@ class _ConnectionTrafficViewState extends State<ConnectionTrafficView> {
                   Text(
                     '↓ ${formatTrafficBytes(traffic.receivedBytesPerSecond)}/s',
                   ),
+                  if (widget.compact)
+                    Text('累计 ${formatTrafficBytes(traffic.totalBytes)}'),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text('本次连接 ${formatTrafficBytes(traffic.totalBytes)}'),
+              if (!widget.compact) ...[
+                const SizedBox(height: 4),
+                Text('本次连接 ${formatTrafficBytes(traffic.totalBytes)}'),
+              ],
               if (!widget.compact)
                 Text(
                   '上传 ${formatTrafficBytes(traffic.sentBytes)} · 下载 ${formatTrafficBytes(traffic.receivedBytes)}',

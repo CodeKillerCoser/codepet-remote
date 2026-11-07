@@ -12,7 +12,7 @@ import 'transport.dart';
 
 final AppLog _log = AppLog.named('gateway.websocket');
 
-class PinnedWebSocketGatewayTransport implements GatewayTransport, MetricsGatewayTransport {
+class PinnedWebSocketGatewayTransport implements GatewayTransport, MetricsGatewayTransport, ChannelControlGatewayTransport {
   final _traffic = ConnectionTrafficMeter(channel: 'lan');
   @override
   ConnectionTraffic get connectionTraffic => _traffic.snapshot;
@@ -26,8 +26,11 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport, MetricsGatewa
     required this.credential,
     required this.certSha256,
     this.connectTimeout = const Duration(seconds: 8),
+    this.enableChannelControl = false,
     this.keepAliveInterval = const Duration(seconds: 20),
   });
+  final bool enableChannelControl;
+  @override bool get supportsChannelControl => _socket?.protocol == 'codepet-control-v1';
   final Uri gatewayUri;
   final String credential;
   final String certSha256;
@@ -75,6 +78,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport, MetricsGatewa
     final connection = WebSocket.connect(
       gatewayUri.toString(),
       headers: {'Authorization': 'Bearer $credential'},
+      protocols: enableChannelControl ? ['codepet-control-v1'] : null,
       customClient: client,
       compression: compressionOptions,
     );
@@ -166,7 +170,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport, MetricsGatewa
       );
     }
     final id = request['id'];
-    final method = request['method'];
+    final method = request['method'] ?? (supportsChannelControl && request['channelControl'] == 1 ? request['operation'] : null);
     if (id is! String || id.isEmpty || method is! String || method.isEmpty) {
       throw const FormatException('Generated Gateway request envelope is invalid');
     }

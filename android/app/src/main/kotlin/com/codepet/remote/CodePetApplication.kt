@@ -18,6 +18,7 @@ class CodePetApplication : Application() {
         flutterEngine = engine
         MdnsBridge(this, engine)
         NetworkDiagnosticsBridge(this, engine)
+        NetworkChangesBridge(this, engine)
         MethodChannel(engine.dartExecutor.binaryMessenger,
             "com.codepet.remote/background_connection").setMethodCallHandler { call, result ->
             if (call.method != "setEnabled") {

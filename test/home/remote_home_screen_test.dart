@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:codepet_remote/core/domain/connection_traffic.dart';
+
 import 'package:codepet_remote/core/domain/paired_device.dart';
 import 'package:codepet_remote/application/sessions/device_session.dart';
 import 'package:codepet_remote/features/home/remote_home_screen.dart';
@@ -14,6 +16,38 @@ import 'package:flutter_test/flutter_test.dart';
 final _testNow = DateTime.now().toUtc();
 
 void main() {
+  testWidgets('traffic stays above scrolling content and follows selected device', (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final first = _TrafficClient(const ConnectionTraffic(channel: 'ipv6-direct', sentBytes: 1024));
+    final second = _TrafficClient(const ConnectionTraffic(channel: 'relay', receivedBytes: 4096));
+    final sessions = [_sessionForClient('first', first), _sessionForClient('second', second)];
+    for (final session in sessions) { await session.connect(); }
+    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: sessions)));
+    await tester.pumpAndSettle();
+    final traffic = find.byKey(const Key('home-connection-traffic'));
+    final content = find.byKey(const Key('home-content-scroll'));
+    expect(find.descendant(of: content, matching: traffic), findsNothing);
+    final position = tester.getTopLeft(traffic);
+    await tester.drag(content, const Offset(0, -350));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(traffic), position);
+    expect(find.text('IPv6 直连'), findsOneWidget);
+    expect(find.text('累计 1.0 KiB'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('home-device-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('device-second')));
+    await tester.pumpAndSettle();
+    expect(find.text('中继'), findsOneWidget);
+    expect(find.text('累计 4.0 KiB'), findsOneWidget);
+    expect(find.text('IPv6 直连'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    for (final session in sessions) { session.dispose(); }
+  });
+
   testWidgets('connection failure after scrolling keeps recovery actions usable', (tester) async {
     tester.view.physicalSize = const Size(360, 800);
     tester.view.devicePixelRatio = 1;
@@ -1097,4 +1131,10 @@ Future<void> _pumpAnimatedUi(WidgetTester tester) async {
   for (var frame = 0; frame < 10; frame++) {
     await tester.pump(const Duration(milliseconds: 100));
   }
+}
+
+class _TrafficClient extends _EventClient implements ConnectionMetricsGatewayClient {
+  _TrafficClient(this.connectionTraffic);
+  @override
+  final ConnectionTraffic connectionTraffic;
 }

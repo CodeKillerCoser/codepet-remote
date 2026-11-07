@@ -164,6 +164,14 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     onSelectProvider: session.selectProvider,
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: ConnectionTrafficView(
+                    key: const Key('home-connection-traffic'),
+                    read: () => session.connectionTraffic,
+                    compact: true,
+                  ),
+                ),
                 const Divider(height: 1),
                 Expanded(
                   child: ListView(
@@ -172,7 +180,6 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
                     children: [
-                      ConnectionTrafficView(read: () => session.connectionTraffic, compact: true),
                       if (DeviceConnectionNotice.shouldShow(
                         session,
                         includeConnecting: true,

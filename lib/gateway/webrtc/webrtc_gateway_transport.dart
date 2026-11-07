@@ -19,7 +19,7 @@ typedef RtcPeerFactory = Future<RTCPeerConnection> Function();
 
 /// Carries unchanged Gateway JSON-RPC over a reliable, ordered DataChannel.
 final class WebRtcGatewayTransport
-    implements GatewayTransport, MetricsGatewayTransport {
+    implements GatewayTransport, MetricsGatewayTransport, ChannelControlGatewayTransport {
   final _traffic = ConnectionTrafficMeter(channel: 'unknown');
   @override
   ConnectionTraffic get connectionTraffic => _traffic.snapshot;
@@ -29,6 +29,7 @@ final class WebRtcGatewayTransport
     RtcPeerFactory? peerFactory,
     this.connectTimeout = const Duration(seconds: 25),
     this.requestTimeout = const Duration(seconds: 30),
+    this.enableChannelControl = false,
     this.pathPolicy = RtcPathPolicy.auto,
     RtcDiagnostics? diagnostics,
     // ignore: prefer_initializing_formals
@@ -36,6 +37,8 @@ final class WebRtcGatewayTransport
        _diagnostics =
            diagnostics ?? RtcDiagnostics(pathPolicy: pathPolicy.wireName);
 
+  final bool enableChannelControl;
+  @override bool supportsChannelControl = false;
   final RtcSignaling signaling;
   final RtcPeerFactory? _peerFactory;
   final Duration connectTimeout;
@@ -313,7 +316,7 @@ final class WebRtcGatewayTransport
       pathPolicy,
     );
     final offerSdp =
-        '${pathPolicy.filterSdp(description.sdp!, allowEmpty: trickle != null).trimRight()}\r\n$rtcCompressionSdp\r\n';
+        '${pathPolicy.filterSdp(description.sdp!, allowEmpty: trickle != null).trimRight()}\r\n$rtcCompressionSdp\r\n${enableChannelControl ? 'a=x-codepet-channel-control:1\r\n' : ''}';
     _diagnostics.offerId = rtcOfferId(offerSdp);
     _diagnostics.description('localOffer', offerSdp);
     _enter('signaling');
@@ -330,6 +333,7 @@ final class WebRtcGatewayTransport
       answer['sdp'] as String,
       pathPolicy,
     );
+    supportsChannelControl = enableChannelControl && (answer['sdp'] as String).split(RegExp(r'\r?\n')).contains('a=x-codepet-channel-control:1');
     _enter("remoteDescription");
     _decoder.allowCompression = _compression = rtcSupportsCompression(
       answer['sdp'] as String,
@@ -380,7 +384,7 @@ final class WebRtcGatewayTransport
     final id = request['id'];
     if (id is! String ||
         id.isEmpty ||
-        request['method'] is! String ||
+        (request['method'] is! String && !(supportsChannelControl && request['channelControl'] == 1 && request['operation'] is String)) ||
         _pending.containsKey(id)) {
       return Future.error(
         const FormatException('Invalid or duplicate Gateway request id'),

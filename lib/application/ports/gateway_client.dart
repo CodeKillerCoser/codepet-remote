@@ -164,3 +164,10 @@ abstract interface class ProviderSnapshotGatewayClient {
 abstract interface class ConnectionMetricsGatewayClient {
   ConnectionTraffic? get connectionTraffic;
 }
+
+/// Optional infrastructure lifecycle owner. Business controllers only forward hints.
+abstract interface class ManagedConnectionGatewayClient {
+  bool get managesConnection;
+  Stream<bool> get connectionAvailability;
+  void reconcileConnection({bool? optimize});
+}

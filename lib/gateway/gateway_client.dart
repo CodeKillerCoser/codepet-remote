@@ -21,6 +21,7 @@ final AppLog _log = AppLog.named('gateway.protocol');
 final class ProtocolGatewayClient
     implements
         GatewayClient,
+        ManagedConnectionGatewayClient,
         ConnectionMetricsGatewayClient,
         ConversationResumeGatewayClient,
         ConversationReleaseGatewayClient,
@@ -50,6 +51,13 @@ final class ProtocolGatewayClient
   }
 
   final GatewayTransport transport;
+  @override bool get managesConnection => transport is ManagedGatewayTransport;
+  @override Stream<bool> get connectionAvailability => transport is ManagedGatewayTransport
+    ? (transport as ManagedGatewayTransport).availability : const Stream.empty();
+  @override void reconcileConnection({bool? optimize}) {
+    if (transport is ManagedGatewayTransport) (transport as ManagedGatewayTransport).reconcile(optimize: optimize);
+  }
+
   @override
   ConnectionTraffic? get connectionTraffic {
     final source = transport;
@@ -243,6 +251,16 @@ final class ProtocolGatewayClient
     if (endpoint != null && shouldPersistEndpoint) {
       await onValidatedEndpoint?.call(endpoint);
     }
+    _startHeartbeat();
+    return GatewayHandshake(
+      protocolVersion: sdk.protocolVersion,
+      providers: providers,
+      eventCursor: generated.eventCursor,
+      deviceDescriptor: descriptor,
+    );
+  }
+
+  void _startHeartbeat() {
     _heartbeat = sdk.GatewayHeartbeatClient(
       client: _protocol,
       beforePing: () => _pingVersions = Map.of(_providerVersions),
@@ -260,15 +278,15 @@ final class ProtocolGatewayClient
         _providerIds = fresh.keys.toSet();
         _providerSnapshots.add(fresh.values.toList(growable: false));
       },
-      onFailure: (error, stack) => _events.addError(
-        GatewayConnectionException('Gateway heartbeat failed: $error', retryable: true), stack),
+      onFailure: (error, stack) {
+        if (transport is ManagedGatewayTransport) {
+          (transport as ManagedGatewayTransport).reportUnhealthy();
+          _startHeartbeat();
+        } else {
+          _events.addError(GatewayConnectionException('Gateway heartbeat failed: $error', retryable: true), stack);
+        }
+      },
     )..start();
-    return GatewayHandshake(
-      protocolVersion: sdk.protocolVersion,
-      providers: providers,
-      eventCursor: generated.eventCursor,
-      deviceDescriptor: descriptor,
-    );
   }
 
   GatewayProvider _mergeProviderSummary(GatewayProvider incoming) {

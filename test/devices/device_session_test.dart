@@ -9,6 +9,30 @@ import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('managed client owns recovery; triggers never rebuild a healthy business session', () async {
+    final client = _ManagedClient();
+    var created = 0;
+    final session = DeviceSession(device: _device('engine'), clientFactory: () { created++; return client; });
+    await session.connect();
+    await session.connect();
+    expect(created, 1);
+    expect(client.hints, 1);
+    client.availability.add(false);
+    await Future<void>.delayed(Duration.zero);
+    expect(session.connectionState, DeviceConnectionState.connecting);
+    session.reconcileConnection(optimize: false);
+    expect(client.hints, 2);
+    expect(client.optimize, false);
+    client.availability.add(true);
+    await Future<void>.delayed(Duration.zero);
+    expect(session.connectionState, DeviceConnectionState.online);
+    expect(created, 1);
+    await session.disconnect();
+    session.reconcileConnection();
+    expect(client.hints, 2);
+    session.dispose();
+  });
+
   test('sorts recent conversations without treating cwd as project identity', () {
     final old = _conversation('old', '/repo/a', 1000);
     final recent = _conversation('recent', '/repo/a', 3000);
@@ -1953,4 +1977,15 @@ class _DelayedCleanupFailingClient extends _FailingClient {
     if (!closeStarted.isCompleted) closeStarted.complete();
     await _finishClose.future;
   }
+}
+
+class _ManagedClient extends _FakeClient implements ManagedConnectionGatewayClient {
+  _ManagedClient() : super(const []);
+  final availability = StreamController<bool>.broadcast();
+  int hints = 0;
+  bool? optimize;
+  @override bool get managesConnection => true;
+  @override Stream<bool> get connectionAvailability => availability.stream;
+  @override void reconcileConnection({bool? optimize}) { hints++; this.optimize = optimize; }
+  @override Future<void> close() async { await super.close(); await availability.close(); }
 }

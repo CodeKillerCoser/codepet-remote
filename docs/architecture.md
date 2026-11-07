@@ -31,6 +31,29 @@ forbidden import fails CI.
 
 ## Application ownership
 
+### Connection status in page headers
+
+The home page keeps `ConnectionTrafficView` above `home-content-scroll`, with
+the fixed Provider controls. Its reader belongs to the selected `DeviceSession`;
+changing devices replaces the source immediately. Conversation titles show the
+device name beneath the title, followed by the channel, upload/download rates
+and cumulative bytes from that conversation's session. This is device connection
+traffic, not traffic attributed to an individual conversation. Totals reset with
+the connection; rates retain the existing three-second averaging window.
+
+Compact metrics wrap at narrow widths without horizontal scrolling. The
+conversation toolbar reserves space for metrics and follows text scaling. Only
+the metrics widget refreshes every second; it does not rebuild the conversation
+timeline or home list. Missing metrics are hidden rather than showing stale
+values. The full device details view retains separate upload/download totals.
+
+2026-11-07 validation: home and conversation widget tests cover a fixed header
+while scrolling, switching devices, 320-pixel width, enlarged text, metadata
+actions and live metric updates. The affected suite passed 88 tests; full
+`flutter test --no-pub` passed 442 tests and `flutter analyze --no-pub` was clean.
+Widget render inspection verifies geometry, not native Android font rendering;
+an updated installed APK has not yet been validated on the user's phone.
+
 - `DeviceSession` owns one Host runtime, reconnection, list projection, and a
   generation-fenced runtime lease. The lease exposes use-case operations, not
   the underlying Gateway client.
@@ -258,3 +281,36 @@ enabled, and taps the subsequent outcome notification. It restores the emulator
 setting afterward.
 This verifies Activity recreation with the retained engine. It does not simulate
 process-death cold launch, Doze survival, or delivery from an offline Host.
+
+## Independent connection engine
+
+`packages/codepet_connection_engine` owns selection, recovery, health and traffic
+accounting without Flutter or business dependencies. It has its own Dart tests,
+load harness and CI job; see its README for repeatable commands. Candidate IO and
+Gateway handover live in `lib/gateway/connection`. The engine only receives target
+revisions, cancellation, prepared connections and an activation result.
+
+`createDeviceConnection` is the App composition path for both LAN-only and
+LAN/WebRTC operation. `EngineGatewayTransport` validates each candidate before
+activation, drains in-flight calls for a healthy upgrade, commits Host ownership,
+and resumes the opaque event cursor. Requests are never replayed. SDK heartbeat
+and engine probes share one in-flight ping and cached validated pong; the bridge
+rewrites sequences per physical socket. Slow WSS/ongoing bulk transfers retain a
+bounded 60-second application grace instead of turning the short probe deadline
+into a frame transmission deadline. Transport close events trigger recovery;
+ordinary RPC timeouts do not.
+
+Android network/link/default-route callbacks and foreground restoration update
+inputs via one observer. Background input stops healthy-path optimization but
+keeps health and recovery. System VPN routing is preserved. `DeviceSession`
+forwards connection/reconnection hints and reflects availability while retaining
+its event window; legacy injected clients keep their previous bounded retry
+behavior. Replay gaps explicitly fail the business projection and rebuild its
+snapshot, rather than dropping events silently.
+
+Channel-control v1 is negotiated via the WSS subprotocol or RTC SDP capability,
+then carried outside Gateway business DTOs. DTOs are generated in
+`sdk/channel-control`; the canonical source is CodePet's
+`protocol/channel/control/v1`. A legacy Host is used without control frames and
+without proactive healthy upgrades. Host commits one active connection per
+credential/logical session and filters desktop metrics by this ownership.

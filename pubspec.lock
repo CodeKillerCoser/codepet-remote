@@ -88,6 +88,20 @@ packages:
       relative: true
     source: path
     version: "0.1.0"
+  codepet_channel_control_sdk:
+    dependency: "direct main"
+    description:
+      path: "sdk/channel-control/codepet-channel-control-sdk"
+      relative: true
+    source: path
+    version: "0.1.0"
+  codepet_connection_engine:
+    dependency: "direct main"
+    description:
+      path: "packages/codepet_connection_engine"
+      relative: true
+    source: path
+    version: "0.1.0"
   codepet_core_sdk:
     dependency: "direct main"
     description:

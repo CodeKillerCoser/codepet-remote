@@ -443,10 +443,16 @@ class DeviceSession extends ApplicationNotifier {
     _reconnectEnabled = autoReconnect;
     _retryableFailure = false;
     _cancelReconnect(resetAttempt: true);
+    final current = _client;
+    if (current is ManagedConnectionGatewayClient && (current as ManagedConnectionGatewayClient).managesConnection) {
+      (current as ManagedConnectionGatewayClient).reconcileConnection();
+      return Future<void>.value();
+    }
     return _connect();
   }
 
   StreamSubscription<List<GatewayProvider>>? _providerStatusSubscription;
+  StreamSubscription<bool>? _availabilitySubscription;
 
   Future<void> _connect() async {
     if (connectionState == DeviceConnectionState.connecting) return;
@@ -457,6 +463,8 @@ class DeviceSession extends ApplicationNotifier {
       '(attempt ${_reconnectAttempt + 1})',
     );
     final stopwatch = Stopwatch()..start();
+    final oldAvailabilitySubscription = _availabilitySubscription;
+    _availabilitySubscription = null;
     final oldProviderSubscription = _providerStatusSubscription;
     _providerStatusSubscription = null;
     final oldWindow = _eventWindow;
@@ -470,6 +478,7 @@ class DeviceSession extends ApplicationNotifier {
     connectionState = DeviceConnectionState.connecting;
     error = null;
     _notifyListenersImmediately();
+    await oldAvailabilitySubscription?.cancel();
     await oldProviderSubscription?.cancel();
     try {
       await oldWindow?.close();
@@ -581,6 +590,14 @@ class DeviceSession extends ApplicationNotifier {
       );
       onConversationSnapshot?.call(conversations);
       connectionState = DeviceConnectionState.online;
+      if (client is ManagedConnectionGatewayClient && (client as ManagedConnectionGatewayClient).managesConnection) {
+        _availabilitySubscription = (client as ManagedConnectionGatewayClient).connectionAvailability.listen((available) {
+          if (!_ownsRuntime(generation, client)) return;
+          connectionState = available ? DeviceConnectionState.online : DeviceConnectionState.connecting;
+          _isReconnectAttempt = !available;
+          _notifyListenersImmediately();
+        });
+      }
       _ensureSelectedProviderLists();
       _retryableFailure = false;
       _reconnectAttempt = 0;
@@ -654,7 +671,19 @@ class DeviceSession extends ApplicationNotifier {
     unawaited(_connect());
   }
 
+  void reconcileConnection({bool? optimize}) {
+    if (_disposed || !_reconnectEnabled) return;
+    final client = _client;
+    if (client is ManagedConnectionGatewayClient && (client as ManagedConnectionGatewayClient).managesConnection) {
+      (client as ManagedConnectionGatewayClient).reconcileConnection(optimize: optimize);
+      return;
+    }
+    // Compatibility for injected/legacy clients without a transport owner.
+    if (_canReconnect(_runtimeGeneration)) _reconnect(_runtimeGeneration);
+  }
+
   void _handleReconnectSignal() {
+    reconcileConnection();
     if (!_canReconnect(_runtimeGeneration)) return;
     logger.info(
       'Discovery signal triggered immediate reconnect for device ${device.deviceId}',
@@ -1653,6 +1682,8 @@ class DeviceSession extends ApplicationNotifier {
   Future<void> disconnect() async {
     logger.info('Disconnect requested for device ${device.deviceId}');
     _reconnectEnabled = false;
+    unawaited(_availabilitySubscription?.cancel());
+    _availabilitySubscription = null;
     _retryableFailure = false;
     _cancelReconnect(resetAttempt: true);
     final window = _eventWindow;
@@ -1726,6 +1757,8 @@ class DeviceSession extends ApplicationNotifier {
     }
     _recentControllers.clear();
     _reconnectEnabled = false;
+    unawaited(_availabilitySubscription?.cancel());
+    _availabilitySubscription = null;
     _retryableFailure = false;
     _cancelReconnect(resetAttempt: true);
     unawaited(_reconnectSignalSubscription?.cancel());

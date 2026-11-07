@@ -10,6 +10,7 @@ import '../../core/domain/notification.dart';
 import '../common/identity_icons.dart';
 import '../common/floating_detail_panel.dart';
 import '../connection/device_connection_notice.dart';
+import '../connection/connection_traffic_view.dart';
 import 'widgets/conversation_timeline_view.dart';
 
 const int _messagePageSize = 40;
@@ -372,7 +373,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         ],
         leadingWidth: 48,
         titleSpacing: 0,
-        toolbarHeight: 64,
+        toolbarHeight: widget.session.connectionTraffic == null
+            ? 64
+            : 112 * MediaQuery.textScalerOf(context).scale(1),
         title: _ConversationTitle(
           summary: summary,
           status: displayStatus,
@@ -991,7 +994,7 @@ class _ConversationTitle extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        '${session.displayDeviceName} · ${session.displaySystemLabel}',
+                        session.displayDeviceName,
                         key: const Key('conversation-device-context'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -1020,6 +1023,11 @@ class _ConversationTitle extends StatelessWidget {
                           ),
                     ),
                   ],
+                ),
+                ConnectionTrafficView(
+                  key: const Key('conversation-connection-traffic'),
+                  read: () => session.connectionTraffic,
+                  compact: true,
                 ),
               ],
             ),
