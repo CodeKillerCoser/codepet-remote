@@ -22,14 +22,20 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final client = _TrafficDetailClient();
-    await _pumpDetail(tester, client, conversation: _idleConversation());
+    final session = await _pumpDetail(tester, client, conversation: _idleConversation());
+    unawaited(Navigator.of(tester.element(find.byType(ConversationDetailScreen))).push(
+      MaterialPageRoute<void>(builder: (_) => ConversationDetailScreen(
+        session: session, conversation: _idleConversation(),
+      )),
+    ));
     await tester.pumpAndSettle();
+    expect(find.byType(BackButton).hitTestable(), findsOneWidget);
     final traffic = find.byKey(const Key('conversation-connection-traffic'));
     expect(find.descendant(of: find.byType(AppBar), matching: traffic), findsOneWidget);
     expect(tester.getTopLeft(traffic).dy, greaterThan(tester.getTopLeft(find.byKey(const Key('conversation-device-context'))).dy));
     expect(find.text('IPv6 直连'), findsOneWidget);
-    expect(find.text('累计 3.0 KiB'), findsOneWidget);
-    expect(find.text('↑ 1.0 KiB/s'), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('traffic-total')), matching: find.text('3.0')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('traffic-upload')), matching: find.text('1.0')), findsOneWidget);
     expect(tester.takeException(), isNull);
     tester.platformDispatcher.textScaleFactorTestValue = 1.5;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
@@ -41,7 +47,7 @@ void main() {
     client.connectionTraffic = const ConnectionTraffic(channel: 'relay', receivedBytes: 8192);
     await tester.pump(const Duration(seconds: 1));
     expect(find.text('中继'), findsOneWidget);
-    expect(find.text('累计 8.0 KiB'), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('traffic-total')), matching: find.text('8.0')), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await client.close();
   });

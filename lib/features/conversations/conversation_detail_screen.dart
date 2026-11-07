@@ -375,7 +375,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         titleSpacing: 0,
         toolbarHeight: widget.session.connectionTraffic == null
             ? 64
-            : 112 * MediaQuery.textScalerOf(context).scale(1),
+            : 88 * MediaQuery.textScalerOf(context).scale(1),
         title: _ConversationTitle(
           summary: summary,
           status: displayStatus,
@@ -967,83 +967,84 @@ class _ConversationTitle extends StatelessWidget {
       ConversationStatus.waitingApproval => colorScheme.tertiary,
       ConversationStatus.waitingUserInput => colorScheme.primary,
       ConversationStatus.error => colorScheme.error,
-      ConversationStatus.idle || ConversationStatus.archived =>
-        colorScheme.outline,
+      ConversationStatus.idle ||
+      ConversationStatus.archived => colorScheme.outline,
     };
     return InkWell(
       key: const Key('conversation-title-metadata-toggle'),
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          providerIcon,
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  summary.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 1),
-                Row(
-                  key: const Key('conversation-title-status'),
+          Row(
+            children: [
+              providerIcon,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        session.displayDeviceName,
-                        key: const Key('conversation-device-context'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context)
-                            .textTheme
-                            .labelSmall
-                            ?.copyWith(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: statusColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 5),
                     Text(
-                      _statusLabel(status),
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
+                      summary.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 1),
+                    Row(
+                      key: const Key('conversation-title-status'),
+                      children: [
+                        Expanded(
+                          child: Text(
+                            session.displayDeviceName,
+                            key: const Key('conversation-device-context'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(color: colorScheme.onSurfaceVariant),
                           ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: statusColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          _statusLabel(status),
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: colorScheme.onSurfaceVariant),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-                ConnectionTrafficView(
-                  key: const Key('conversation-connection-traffic'),
-                  read: () => session.connectionTraffic,
-                  compact: true,
+              ),
+              AnimatedRotation(
+                key: const Key('conversation-title-metadata-arrow'),
+                turns: expanded ? 0.5 : 0,
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                child: Icon(
+                  Icons.expand_more,
+                  size: 20,
+                  semanticLabel: expanded ? '收起会话信息' : '展开会话信息',
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+            ],
           ),
-          AnimatedRotation(
-            key: const Key('conversation-title-metadata-arrow'),
-            turns: expanded ? 0.5 : 0,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            child: Icon(
-              Icons.expand_more,
-              size: 20,
-              semanticLabel: expanded ? '收起会话信息' : '展开会话信息',
-            ),
+          ConnectionTrafficView(
+            key: const Key('conversation-connection-traffic'),
+            read: () => session.connectionTraffic,
+            compact: true,
           ),
-          const SizedBox(width: 8),
         ],
       ),
     );

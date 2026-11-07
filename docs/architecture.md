@@ -41,11 +41,29 @@ and cumulative bytes from that conversation's session. This is device connection
 traffic, not traffic attributed to an individual conversation. Totals reset with
 the connection; rates retain the existing three-second averaging window.
 
-Compact metrics wrap at narrow widths without horizontal scrolling. The
-conversation toolbar reserves space for metrics and follows text scaling. Only
-the metrics widget refreshes every second; it does not rebuild the conversation
-timeline or home list. Missing metrics are hidden rather than showing stale
-values. The full device details view retains separate upload/download totals.
+Compact metrics align to the leading edge and share one line where space allows.
+The channel, upload/download icons and total have small fixed gaps; the visible
+total omits the “累计” prefix, while accessibility labels retain the meaning and
+direction. Numeric and unit slots reserve widths measured from the active font
+and text scaler, with tabular digits and right-aligned values. Changing digits
+or B/KiB/MiB units cannot shift neighboring metrics or change wrapping. Compact
+values use at most four numeric characters (one decimal below 100, integers
+above); full device details retain their existing precision and separate totals.
+
+Conversation metrics use the entire title region below the Provider/title row,
+so the Provider icon and expand arrow do not reduce their available width. The
+toolbar uses 88 logical pixels with metrics and follows text scaling. Narrow
+widths and enlarged text wrap without horizontal scrolling or forced shrinking.
+Only the metrics widget refreshes every second; it does not rebuild the timeline
+or home list. Missing metrics are hidden rather than showing stale values.
+
+2026-11-07 compact-layout validation: 82 related widget tests passed, including
+metric geometry across unit boundaries, 320-pixel enlarged text, actual back
+navigation, metadata actions, fixed home header and device switching. Local
+Flutter renders with Roboto, a CJK fallback and Material icons were inspected at
+320/360/393 pixels: the tested default-font headers fit on one line, while large
+text at 320 pixels wraps without clipping. These are widget renders, not a
+physical Android installation check.
 
 2026-11-07 validation: home and conversation widget tests cover a fixed header
 while scrolling, switching devices, 320-pixel width, enlarged text, metadata
