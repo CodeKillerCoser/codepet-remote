@@ -6,6 +6,7 @@ import '../../application/errors/application_failures.dart';
 import '../../discovery/codepet_discovery.dart';
 import '../../discovery/resolving_gateway_transport.dart';
 import '../webrtc/cloud_signaling.dart';
+import '../webrtc/ice_configuration_cache.dart';
 import '../webrtc/path_policy.dart';
 import '../webrtc/rtc_diagnostics.dart';
 import '../webrtc/webrtc_gateway_transport.dart';
@@ -24,6 +25,7 @@ EngineGatewayTransport createDeviceConnection({
   required ce.CandidateBudget budget,
 }) {
   final pairing = CloudPairing(deviceId, credential, certSha256);
+  final iceCache = IceConfigurationCache();
   Future<Map<String, dynamic>?>? loading;
   Future<Map<String, dynamic>?> load() =>
       loading ??= pairing.load().whenComplete(() => loading = null);
@@ -65,6 +67,7 @@ EngineGatewayTransport createDeviceConnection({
           state,
           pathPolicy: policy,
           diagnostics: diagnostics,
+          iceCache: iceCache,
         ),
         pathPolicy: policy,
         diagnostics: diagnostics,

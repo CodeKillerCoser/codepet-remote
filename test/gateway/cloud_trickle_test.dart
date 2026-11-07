@@ -94,7 +94,7 @@ void main() {
         if (path == '/v1/ice') {
           return {
             'trickleIce': true,
-            'expires': DateTime.now().millisecondsSinceEpoch ~/ 1000 + 60,
+            'expires': DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600,
             'iceServers': [],
           };
         }

@@ -1,5 +1,19 @@
 # WebRTC 通道开发状态
 
+## 2026-11-08 连接资源与凭据复用
+
+当前业务入口为 `createDeviceConnection` → `EngineGatewayTransport` → 独立连接引擎；下面 11 月 6 日的 `RoutedRtcTransport` 竞速描述保留作历史背景。当前引擎并行探测 LAN / IPv6 / IPv4 / relay，支持健康检查、择优迁移及网络变化重连。
+
+排查证据：旧 `WebRtcGatewayTransport._close` 吞掉 channel.close / peer.close / peer.dispose 的错误，因此引擎无法区分已释放和释放失败；关闭发生在原生创建期间时，close 提前返回。IPv4 与 relay 各自调用 `/v1/ice`，同一轮重复领取相同身份的凭据。不能单凭这些源码缺口断言历史 VPS 滞留分配全部由此产生，引入版本未确认。
+
+- 原生创建和清理由同一 transport 拥有。关闭等待正在创建的对象，迟到对象在交还前释放；每个关闭步骤有 2 秒上限，失败继续尝试 dispose。最终 dispose 成功可确认 peer 及子 channel 释放；前面步骤错误保留 `cleanup.failed` 和 `cleanup.recovered` 日志。不能确认释放则 close 保留失败结果，既有引擎隔离名额，防止重试无限创建 peer。因创建超时而隔离的名额不会仅凭迟到结果自动恢复，进程重启可重置；此保守边界避免不确定资源被重复计入。
+- 每个设备控制器创建一个 `IceConfigurationCache`，IPv4 / relay 及重连轮次共用；最多保留一个身份条目。缓存键包含服务地址、host、client、公钥与 token 的摘要。凭据只在内存中，最长 60 秒刷新，且到期前至少 60 秒失效，避免长期缓存 Host trickle 能力。失败不缓存，401/403 清空对应条目，换服务或身份不复用。缓存复用不等于复用 PeerConnection 或 TURN allocation。
+- 共享的 HTTP 请求独立持有 client，最长 15 秒，结束必关闭；取消某一路不会中断其他等待者。IPv6 仍不领取 ICE 凭据。各路径只拿各自筛选后的配置，认证和通道优先级保持现有协议。
+
+验证：`flutter analyze` 与全量 `flutter test`（465 项）通过；新增模拟测试涵盖关闭抛错/挂起、dispose 恢复、迟到 peer/channel、100 次并行创建取消、100 次重连输入保持隔离名额，以及凭据并发复用、过期、换身份、撤销与取消隔离。独立引擎 `dart test` 通过；`dart run tool/stress.dart 10000 16` 最终 liveConnections / permits / waiting 均为 0。这是模拟资源压测，不是公网吞吐能力结论。
+
+`integration_test/rtc_cleanup_test.dart` 用真实 Android WebRTC 做 40 个 peer 的创建、取消和 dispose；运行 `flutter test integration_test/rtc_cleanup_test.dart -d <设备>`，不需要配对凭据。已在本机 ARM64 Android 模拟器通过，40 个 cleanup.completed，无 cleanup.failed。它不覆盖 TURN 或真实手机切网。后续手机验收需分别测试 Wi-Fi→蜂窝、VPN 开关、反复重连，比较 `cleanup.failed` / `cleanup.completed confirmed` 与引擎 `*_cleanup_failed_quarantined`，再对齐 VPS 的 429 / 486 / 503 和分配释放日志。没有读取到对应原生结果时，不能将手机验收标记通过。
+
 2026-11-06：开启 WebRTC 后，并行竞速 LAN/WSS、IPv6 直连、IPv4 直连和 TURN 中继；先建立者获胜。
 文件挂载、上传下载和预览不在本轮范围。
 

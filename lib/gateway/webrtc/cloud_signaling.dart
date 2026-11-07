@@ -12,6 +12,7 @@ import '../../security/pinned_tls.dart';
 import 'signaling.dart';
 import 'rtc_diagnostics.dart';
 import 'path_policy.dart';
+import 'ice_configuration_cache.dart';
 
 /// A new key is pinned only over the existing LAN TLS/bearer boundary.
 class CloudPairing {
@@ -98,12 +99,15 @@ class CloudRtcSignaling implements RtcTrickleSignaling {
     this.state, {
     this.forceRelay = false,
     this.pathPolicy = RtcPathPolicy.auto,
+    IceConfigurationCache? iceCache,
     RtcDiagnostics? diagnostics,
-  }) : _diagnostics =
+  }) : _iceCache = iceCache ?? IceConfigurationCache(),
+       _diagnostics =
            diagnostics ?? RtcDiagnostics(pathPolicy: pathPolicy.wireName);
   final Map<String, dynamic> state;
   final bool forceRelay;
   final RtcPathPolicy pathPolicy;
+  final IceConfigurationCache _iceCache;
   String? _attempt;
   int _answerPolls = 0;
   final _answerWait = Stopwatch();
@@ -213,12 +217,21 @@ class CloudRtcSignaling implements RtcTrickleSignaling {
     if (_closed) {
       throw const GatewayConnectionException('Cloud signaling closed');
     }
+    return _requestWith(_http, method, path, body);
+  }
+
+  Future<Map<String, dynamic>> _requestWith(
+    HttpClient http,
+    String method,
+    String path, [
+    Object? body,
+  ]) async {
     final uri = Uri.parse('${state['serviceUrl']}$path');
     if (uri.scheme != 'https') {
       throw const FormatException('Cloud requires HTTPS');
     }
     final started = Stopwatch()..start();
-    final request = await _http
+    final request = await http
         .openUrl(method, uri)
         .timeout(const Duration(seconds: 12));
     request.followRedirects = false;
@@ -241,6 +254,9 @@ class CloudRtcSignaling implements RtcTrickleSignaling {
       });
     }
     if (response.statusCode != 200) {
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        _iceCache.invalidate(state);
+      }
       throw GatewayConnectionException(
         'Cloud signaling status ${response.statusCode}',
         retryable: response.statusCode != 401 && response.statusCode != 403,
@@ -258,10 +274,30 @@ class CloudRtcSignaling implements RtcTrickleSignaling {
 
   @override
   Future<Map<String, dynamic>> configuration() async {
+    if (_closed) {
+      throw const GatewayConnectionException('Cloud signaling closed');
+    }
     if (pathPolicy == RtcPathPolicy.ipv6Direct) {
       return pathPolicy.configuration([]);
     }
-    final value = await _request('GET', '/v1/ice');
+    final value = await _iceCache.load(state, () async {
+      // The shared request owns its HTTP client. Closing a losing candidate
+      // cannot abort the other candidate's configuration fetch.
+      final http = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 10);
+      try {
+        return await _requestWith(
+          http,
+          'GET',
+          '/v1/ice',
+        ).timeout(const Duration(seconds: 15));
+      } finally {
+        http.close(force: true);
+      }
+    });
+    if (_closed) {
+      throw const GatewayConnectionException('Cloud signaling closed');
+    }
     trickleEnabled = value['trickleIce'] == true;
     iceExpires = value['expires'] as int;
     return {

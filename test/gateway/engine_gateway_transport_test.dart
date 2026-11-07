@@ -6,6 +6,9 @@ import 'package:codepet_remote/core/domain/models.dart';
 import 'package:codepet_remote/core/domain/connection_traffic.dart';
 import 'package:codepet_remote/gateway/transport.dart';
 import 'package:codepet_remote/gateway/connection/engine_gateway_transport.dart';
+import 'package:codepet_remote/gateway/webrtc/webrtc_gateway_transport.dart';
+
+import 'webrtc_transport_test.dart' show FakePeer, FakeSignaling, eventually;
 
 final handshake = <String, Object?>{
   'jsonrpc': '2.0',
@@ -22,6 +25,46 @@ Map<String, Object?> rpc(String method) => {
 Future<void> flush() => Future<void>.delayed(Duration.zero);
 
 void main() {
+  test(
+    'native cleanup failure retains budget across repeated reconnect inputs',
+    () async {
+      final budget = ce.CandidateBudget(limit: 1);
+      final peer = FakePeer()
+        ..disposeAction = () async => throw StateError('native dispose failed');
+      var opened = 0;
+      final transport = EngineGatewayTransport(
+        targetId: 'host',
+        kinds: [ce.ChannelKind.relay],
+        budget: budget,
+        policy: const ce.ConnectionPolicy(
+          retry: Duration(milliseconds: 5),
+          cleanupTimeout: Duration(milliseconds: 10),
+        ),
+        openTransport: (_, _) async {
+          opened++;
+          return WebRtcGatewayTransport(
+            signaling: FakeSignaling(failure: StateError('answer failed')),
+            peerFactory: () async => peer,
+          );
+        },
+      );
+      final request = expectLater(
+        transport.request(handshake),
+        throwsException,
+      );
+      await eventually(() => peer.disposeCalls == 1);
+      for (var i = 0; i < 100; i++) {
+        transport.reconcile();
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(opened, 1);
+      expect(budget.used, 1);
+      await transport.close();
+      await request;
+      expect(opened, 1);
+    },
+  );
+
   test('slow WSS pong preserves bounded heartbeat grace instead of aborting bulk transfer', () async {
     final owner = Owner();
     late FakeRoute route;

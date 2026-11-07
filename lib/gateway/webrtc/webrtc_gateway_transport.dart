@@ -17,9 +17,21 @@ import 'path_policy.dart';
 
 typedef RtcPeerFactory = Future<RTCPeerConnection> Function();
 
+/// Native resource release was not confirmed. The connection engine must retain
+/// its resource permit instead of starting unlimited replacement peers.
+final class RtcCleanupException implements Exception {
+  RtcCleanupException(this.steps);
+  final List<String> steps;
+  @override
+  String toString() => 'RTC cleanup unconfirmed: ${steps.join(', ')}';
+}
+
 /// Carries unchanged Gateway JSON-RPC over a reliable, ordered DataChannel.
 final class WebRtcGatewayTransport
-    implements GatewayTransport, MetricsGatewayTransport, ChannelControlGatewayTransport {
+    implements
+        GatewayTransport,
+        MetricsGatewayTransport,
+        ChannelControlGatewayTransport {
   final _traffic = ConnectionTrafficMeter(channel: 'unknown');
   @override
   ConnectionTraffic get connectionTraffic => _traffic.snapshot;
@@ -29,6 +41,7 @@ final class WebRtcGatewayTransport
     RtcPeerFactory? peerFactory,
     this.connectTimeout = const Duration(seconds: 25),
     this.requestTimeout = const Duration(seconds: 30),
+    this.cleanupTimeout = const Duration(seconds: 2),
     this.enableChannelControl = false,
     this.pathPolicy = RtcPathPolicy.auto,
     RtcDiagnostics? diagnostics,
@@ -38,11 +51,13 @@ final class WebRtcGatewayTransport
            diagnostics ?? RtcDiagnostics(pathPolicy: pathPolicy.wireName);
 
   final bool enableChannelControl;
-  @override bool supportsChannelControl = false;
+  @override
+  bool supportsChannelControl = false;
   final RtcSignaling signaling;
   final RtcPeerFactory? _peerFactory;
   final Duration connectTimeout;
   final Duration requestTimeout;
+  final Duration cleanupTimeout;
   final RtcPathPolicy pathPolicy;
   final _events = StreamController<JsonMap>.broadcast();
   final _pending = <String, Completer<Object?>>{};
@@ -122,6 +137,7 @@ final class WebRtcGatewayTransport
   RTCDataChannel? _channel;
   Future<void>? _connecting;
   Future<void>? _closing;
+  Future<Object>? _creating;
   Future<void> _sendTail = Future<void>.value();
   Completer<void>? _gathered;
   bool _closed = false;
@@ -205,13 +221,14 @@ final class WebRtcGatewayTransport
             (signaling as RtcTrickleSignaling).trickleEnabled
         ? signaling as RtcTrickleSignaling
         : null;
-    final peer = await (_peerFactory?.call() ?? createPeerConnection(config));
-    if (_closed) {
-      await peer.close();
-      await peer.dispose();
-      _checkNotClosed();
-    }
-    _peer = peer;
+    final peerCreation = _createOwned(
+      () => _peerFactory?.call() ?? createPeerConnection(config),
+      (peer) => _peer = peer,
+      (peer) => _releaseNative(peer: peer),
+    );
+    _creating = peerCreation;
+    final peer = await peerCreation;
+    _checkNotClosed();
     _diagnostics.emit('ice.configuration', {
       'policy': config['iceTransportPolicy'] ?? 'all',
       'serverCount': (config['iceServers'] as List?)?.length ?? 0,
@@ -264,19 +281,21 @@ final class WebRtcGatewayTransport
         gathered.complete();
       }
     };
-    final channel = await peer.createDataChannel(
-      'codepet.gateway.v1',
-      RTCDataChannelInit()
-        ..ordered = true
-        ..negotiated = true
-        ..id = 0
-        ..protocol = 'codepet.gateway.cpg1',
+    final channelCreation = _createOwned(
+      () => peer.createDataChannel(
+        'codepet.gateway.v1',
+        RTCDataChannelInit()
+          ..ordered = true
+          ..negotiated = true
+          ..id = 0
+          ..protocol = 'codepet.gateway.cpg1',
+      ),
+      (channel) => _channel = channel,
+      (channel) => _releaseNative(channel: channel),
     );
-    if (_closed) {
-      await channel.close();
-      _checkNotClosed();
-    }
-    _channel = channel;
+    _creating = channelCreation;
+    final channel = await channelCreation;
+    _checkNotClosed();
     channel.onMessage = _onMessage;
     channel.onDataChannelState = (state) {
       if (state == RTCDataChannelState.RTCDataChannelClosed) {
@@ -333,7 +352,11 @@ final class WebRtcGatewayTransport
       answer['sdp'] as String,
       pathPolicy,
     );
-    supportsChannelControl = enableChannelControl && (answer['sdp'] as String).split(RegExp(r'\r?\n')).contains('a=x-codepet-channel-control:1');
+    supportsChannelControl =
+        enableChannelControl &&
+        (answer['sdp'] as String)
+            .split(RegExp(r'\r?\n'))
+            .contains('a=x-codepet-channel-control:1');
     _enter("remoteDescription");
     _decoder.allowCompression = _compression = rtcSupportsCompression(
       answer['sdp'] as String,
@@ -384,7 +407,10 @@ final class WebRtcGatewayTransport
     final id = request['id'];
     if (id is! String ||
         id.isEmpty ||
-        (request['method'] is! String && !(supportsChannelControl && request['channelControl'] == 1 && request['operation'] is String)) ||
+        (request['method'] is! String &&
+            !(supportsChannelControl &&
+                request['channelControl'] == 1 &&
+                request['operation'] is String)) ||
         _pending.containsKey(id)) {
       return Future.error(
         const FormatException('Invalid or duplicate Gateway request id'),
@@ -622,7 +648,73 @@ final class WebRtcGatewayTransport
       if (!pending.isCompleted) pending.completeError(error);
     }
     _pending.clear();
-    unawaited(close());
+    // close() retains the failed future for the owner's subsequent await.
+    // Cleanup diagnostics are emitted at the failing native operation.
+    unawaited(close().catchError((Object _) {}));
+  }
+
+  Future<T> _createOwned<T>(
+    Future<T> Function() create,
+    void Function(T) store,
+    Future<void> Function(T) release,
+  ) async {
+    final value = await create();
+    if (_closed) {
+      await release(value);
+      _checkNotClosed();
+    }
+    store(value);
+    return value;
+  }
+
+  Future<void> _cleanupStep(
+    String step,
+    Future<void> Function() action,
+    List<String> failures,
+  ) async {
+    final started = Stopwatch()..start();
+    try {
+      await action().timeout(cleanupTimeout);
+    } catch (error) {
+      failures.add(step);
+      _diagnostics.emit('cleanup.failed', {
+        'step': step,
+        'durationMs': started.elapsedMilliseconds,
+        'errorType': error.runtimeType.toString(),
+      });
+    }
+  }
+
+  Future<void> _releaseNative({
+    RTCDataChannel? channel,
+    RTCPeerConnection? peer,
+  }) async {
+    final failures = <String>[];
+    if (channel != null) {
+      channel.onMessage = null;
+      channel.onDataChannelState = null;
+      await _cleanupStep('channel.close', channel.close, failures);
+    }
+    if (peer != null) {
+      peer.onConnectionState = null;
+      peer.onIceGatheringState = null;
+      peer.onIceConnectionState = null;
+      peer.onIceCandidate = null;
+      peer.onSignalingState = null;
+      // Always attempt disposal, even when channel/peer close fails or hangs.
+      await _cleanupStep('peer.close', peer.close, failures);
+      await _cleanupStep('peer.dispose', peer.dispose, failures);
+      // Successful native disposal releases the peer and all of its channels.
+      // Earlier close errors remain diagnostic, but must not consume a permit
+      // forever once final resource release has actually been confirmed.
+      if (!failures.contains('peer.dispose')) {
+        if (failures.isNotEmpty) {
+          _diagnostics.emit('cleanup.recovered', {'steps': failures});
+        }
+        return;
+      }
+    }
+    if (failures.isNotEmpty) throw RtcCleanupException(failures);
   }
 
   @override
@@ -633,7 +725,12 @@ final class WebRtcGatewayTransport
     _statsTimer?.cancel();
     await _sampleStats('closing');
     _diagnostics.emit('channel.close');
-    if (signaling is RtcIceSignaling) (signaling as RtcIceSignaling).close();
+    final failures = <String>[];
+    if (signaling is RtcIceSignaling) {
+      await _cleanupStep('signaling.close', () async {
+        (signaling as RtcIceSignaling).close();
+      }, failures);
+    }
     _connected = false;
     if (_gathered != null && !_gathered!.isCompleted) {
       _gathered!.complete();
@@ -651,30 +748,30 @@ final class WebRtcGatewayTransport
       }
     }
     _pending.clear();
+    // A cancelled native create can finish after cancellation. Its owner closes
+    // the late result; do not advertise resource release before that settles.
+    final creating = _creating;
+    if (creating != null) {
+      await _cleanupStep('creation.settle', () async {
+        try {
+          await creating;
+        } catch (error) {
+          if (error is RtcCleanupException) rethrow;
+          // Creation failed, or was cancelled after successful late cleanup.
+        }
+      }, failures);
+    }
     final channel = _channel;
     final peer = _peer;
     _channel = null;
     _peer = null;
-    if (channel != null) {
-      channel.onMessage = null;
-      channel.onDataChannelState = null;
-      try {
-        await channel.close().timeout(const Duration(seconds: 2));
-      } catch (_) {}
-    }
-    if (peer != null) {
-      peer.onConnectionState = null;
-      peer.onIceGatheringState = null;
-      peer.onIceConnectionState = null;
-      peer.onIceCandidate = null;
-      peer.onSignalingState = null;
-      try {
-        await peer.close().timeout(const Duration(seconds: 2));
-      } catch (_) {}
-      try {
-        await peer.dispose().timeout(const Duration(seconds: 2));
-      } catch (_) {}
+    try {
+      await _releaseNative(channel: channel, peer: peer);
+    } on RtcCleanupException catch (error) {
+      failures.addAll(error.steps);
     }
     await _events.close();
+    _diagnostics.emit('cleanup.completed', {'confirmed': failures.isEmpty});
+    if (failures.isNotEmpty) throw RtcCleanupException(failures);
   }
 }

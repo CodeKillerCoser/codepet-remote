@@ -95,6 +95,11 @@ class FakePeer extends RTCPeerConnection {
   bool disposed = false;
   int statsCalls = 0;
   List<StatsReport>? stats;
+  Future<void> Function()? closeAction;
+  Future<void> Function()? disposeAction;
+  Future<RTCDataChannel>? channelCreation;
+  int closeCalls = 0;
+  int disposeCalls = 0;
   @override
   Future<List<StatsReport>> getStats([MediaStreamTrack? track]) async {
     statsCalls++;
@@ -114,7 +119,7 @@ class FakePeer extends RTCPeerConnection {
   ) async {
     expect(label, 'codepet.gateway.v1');
     init = dataChannelDict;
-    return channel;
+    return channelCreation ?? channel;
   }
 
   @override
@@ -143,11 +148,15 @@ class FakePeer extends RTCPeerConnection {
 
   @override
   Future<void> close() async {
+    closeCalls++;
+    if (closeAction != null) return closeAction!();
     await channel.close();
   }
 
   @override
   Future<void> dispose() async {
+    disposeCalls++;
+    if (disposeAction != null) return disposeAction!();
     disposed = true;
   }
 
@@ -156,6 +165,8 @@ class FakePeer extends RTCPeerConnection {
 }
 
 class FakeChannel extends RTCDataChannel {
+  Future<void> Function()? closeAction;
+  int closeCalls = 0;
   RTCDataChannelState currentState =
       RTCDataChannelState.RTCDataChannelConnecting;
   int buffer = 0;
@@ -207,6 +218,8 @@ class FakeChannel extends RTCDataChannel {
 
   @override
   Future<void> close() async {
+    closeCalls++;
+    if (closeAction != null) return closeAction!();
     currentState = RTCDataChannelState.RTCDataChannelClosed;
   }
 }
@@ -219,6 +232,184 @@ Future<void> eventually(bool Function() condition) async {
 }
 
 void main() {
+  test(
+    'cleanup failures remain visible and do not skip peer disposal',
+    () async {
+      final peer = FakePeer();
+      final transport = WebRtcGatewayTransport(
+        signaling: FakeSignaling(),
+        peerFactory: () async => peer,
+      );
+      await transport.connect();
+      peer.channel.closeAction = () async => throw StateError('channel failed');
+      peer.closeAction = () async => throw StateError('peer failed');
+      peer.disposeAction = () async => throw StateError('dispose failed');
+      final first = transport.close();
+      expect(identical(first, transport.close()), true);
+      await expectLater(
+        first,
+        throwsA(
+          isA<RtcCleanupException>().having((e) => e.steps, 'steps', [
+            'channel.close',
+            'peer.close',
+            'peer.dispose',
+          ]),
+        ),
+      );
+      expect(peer.disposed, false);
+      expect(peer.closeCalls, 1);
+      expect(peer.disposeCalls, 1);
+      await expectLater(transport.close(), throwsA(isA<RtcCleanupException>()));
+    },
+  );
+
+  test(
+    'confirmed disposal recovers close errors without quarantining capacity',
+    () async {
+      final peer = FakePeer();
+      final transport = WebRtcGatewayTransport(
+        signaling: FakeSignaling(),
+        peerFactory: () async => peer,
+        cleanupTimeout: const Duration(milliseconds: 10),
+      );
+      await transport.connect();
+      peer.channel.closeAction = () async =>
+          throw StateError('channel close failed');
+      final hung = Completer<void>();
+      peer.closeAction = () => hung.future;
+      await transport.close();
+      expect(peer.disposed, true);
+      hung.complete();
+    },
+  );
+
+  test(
+    'repeated parallel open, cancellation and close release every native peer',
+    () async {
+      final peers = <FakePeer>[];
+      for (var round = 0; round < 25; round++) {
+        await Future.wait(
+          List.generate(4, (index) async {
+            final peer = FakePeer();
+            peers.add(peer);
+            final native = Completer<RTCPeerConnection>();
+            final transport = WebRtcGatewayTransport(
+              signaling: FakeSignaling(),
+              peerFactory: () => native.future,
+            );
+            final connection = transport.connect();
+            if (index.isEven) {
+              final cancelled = expectLater(
+                connection,
+                throwsA(isA<GatewayConnectionException>()),
+              );
+              await Future<void>.delayed(Duration.zero);
+              final close = transport.close();
+              native.complete(peer);
+              await close;
+              await cancelled;
+            } else {
+              native.complete(peer);
+              await connection;
+              await transport.close();
+            }
+          }),
+        );
+      }
+      expect(peers, hasLength(100));
+      expect(peers.every((p) => p.disposed && p.disposeCalls == 1), true);
+    },
+  );
+
+  test('hung close is bounded and still attempts disposal', () async {
+    final peer = FakePeer();
+    final transport = WebRtcGatewayTransport(
+      signaling: FakeSignaling(),
+      peerFactory: () async => peer,
+      cleanupTimeout: const Duration(milliseconds: 10),
+    );
+    await transport.connect();
+    final hung = Completer<void>();
+    peer.closeAction = () => hung.future;
+    peer.disposeAction = () async => throw StateError('dispose failed');
+    await expectLater(transport.close(), throwsA(isA<RtcCleanupException>()));
+    expect(peer.disposeCalls, 1);
+    hung.complete();
+  });
+
+  test(
+    'creation timeout quarantines cleanup but still disposes late peer',
+    () async {
+      final native = Completer<RTCPeerConnection>();
+      final transport = WebRtcGatewayTransport(
+        signaling: FakeSignaling(),
+        peerFactory: () => native.future,
+        cleanupTimeout: const Duration(milliseconds: 10),
+      );
+      final connection = expectLater(
+        transport.connect(),
+        throwsA(isA<RtcCleanupException>()),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await expectLater(transport.close(), throwsA(isA<RtcCleanupException>()));
+      final peer = FakePeer();
+      native.complete(peer);
+      await connection;
+      expect(peer.disposed, true);
+      expect(peer.disposeCalls, 1);
+    },
+  );
+
+  test(
+    'closing during data channel creation releases late channel and peer',
+    () async {
+      final native = Completer<RTCDataChannel>();
+      final peer = FakePeer()..channelCreation = native.future;
+      final transport = WebRtcGatewayTransport(
+        signaling: FakeSignaling(),
+        peerFactory: () async => peer,
+      );
+      final connection = expectLater(
+        transport.connect(),
+        throwsA(isA<GatewayConnectionException>()),
+      );
+      await eventually(() => peer.init != null);
+      var closed = false;
+      final closing = transport.close().then((_) => closed = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(closed, false);
+      native.complete(peer.channel);
+      await closing;
+      await connection;
+      expect(
+        peer.channel.currentState,
+        RTCDataChannelState.RTCDataChannelClosed,
+      );
+      expect(peer.disposeCalls, 1);
+    },
+  );
+
+  test(
+    'abort reports cleanup failure without an unhandled asynchronous error',
+    () async {
+      final peer = FakePeer();
+      final transport = WebRtcGatewayTransport(
+        signaling: FakeSignaling(),
+        peerFactory: () async => peer,
+      );
+      final errors = <Object>[];
+      final subscription = transport.events.listen((_) {}, onError: errors.add);
+      addTearDown(subscription.cancel);
+      await transport.connect();
+      peer.disposeAction = () async => throw StateError('dispose failed');
+      peer.channel.onMessage!(
+        RTCDataChannelMessage.fromBinary(rtcFragment(2, 1, [1])),
+      );
+      await expectLater(transport.close(), throwsA(isA<RtcCleanupException>()));
+      expect(errors, hasLength(1));
+    },
+  );
+
   test(
     'trickle starts before gathering completes and preserves late candidates',
     () async {
@@ -681,8 +872,12 @@ void main() {
       transport.connect(),
       throwsA(isA<GatewayConnectionException>()),
     );
-    await transport.close();
+    var closed = false;
+    final closing = transport.close().then((_) => closed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(closed, false);
     native.complete(peer);
+    await closing;
     await connection;
     expect(peer.disposed, isTrue);
     expect(events, contains('connect.cancelled'));
