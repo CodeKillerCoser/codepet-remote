@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../application/notifications/notification_coordinator.dart';
+import '../application/notifications/live_update_coordinator.dart';
 import '../core/domain/notification.dart';
 import '../diagnostics/app_log.dart';
 import '../notifications/local_notification_adapter.dart';
@@ -28,6 +29,7 @@ class AppNotifications with WidgetsBindingObserver {
     final adapter = LocalNotificationAdapter();
     final coordinator = NotificationCoordinator(
       system: adapter,
+      liveUpdates: LiveUpdateCoordinator(adapter),
       store: PreferencesNotificationStore(
         await SharedPreferences.getInstance(),
       ),

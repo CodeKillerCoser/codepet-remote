@@ -13,3 +13,6 @@ key.properties
 **/*.keystore
 **/*.jks
 !keystore/codepet-debug.keystore
+
+# Kotlin incremental build state
+/.kotlin/

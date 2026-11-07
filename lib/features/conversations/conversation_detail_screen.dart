@@ -8,6 +8,7 @@ import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
 import '../../core/domain/notification.dart';
 import '../common/identity_icons.dart';
+import '../common/live_update_scope.dart';
 import '../common/floating_detail_panel.dart';
 import '../connection/device_connection_notice.dart';
 import '../connection/connection_traffic_view.dart';
@@ -68,6 +69,42 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   bool get _sending => _controller.sending;
   bool get _outcomeUnknown => _controller.outcomeUnknown;
   GatewayMessage? get _pendingApproval => _controller.pendingApproval;
+
+  Future<void> _manageLiveUpdate() async {
+    final scope = LiveUpdateScope.of(context)!;
+    final target = ConversationDetailScreen.routeSettings(widget.session, widget.conversation).arguments as NotificationTarget;
+    final following = scope.coordinator!.follows(target);
+    final capabilities = await scope.capabilities();
+    if (!mounted) return;
+    final action = await showDialog<String>(context: context, builder: (context) => AlertDialog(
+      title: const Text('关注当前任务'),
+      content: Text('持续通知只展示你主动关注的一个任务，切换关注会替换原任务。关闭或取消关注不会停止任务。\n\n'
+        '${capabilities['promotionAllowed'] == true ? '系统允许实时更新，是否显示状态栏 chip 由系统决定。' : '当前使用普通持续通知；可在系统设置检查实时更新权限。'}'
+        '\n当前获系统提升：${capabilities['promoted'] == true ? '是' : '否'}'
+        '\n断网或三分钟没有新状态时结束展示，可刷新后重新关注。'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, 'settings'), child: const Text('系统设置')),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('返回')),
+        if (following) TextButton(onPressed: () => Navigator.pop(context, 'stop'), child: const Text('取消关注')),
+        TextButton(onPressed: () => Navigator.pop(context, 'follow'), child: const Text('关注当前任务')),
+      ],
+    ));
+    try {
+      if (action == 'settings') await scope.settings();
+      if (action == 'stop') await scope.coordinator!.stop();
+      if (action == 'follow') {
+        await _controller.reload(forceRefresh: true);
+        if (_controller.error != null) throw StateError('无法刷新任务状态，请检查连接');
+        final turn = _detail?.activeTurn;
+        if (turn == null || turn.status.isTerminal) throw StateError('当前没有进行中的任务，请刷新会话后重试');
+        await scope.follow(NotificationTarget(deviceId: target.deviceId,
+          providerId: target.providerId, conversationId: target.conversationId,
+          turnId: turn.id, requestId: _pendingApproval?.id), turn, _detail?.summary.status == ConversationStatus.waitingUserInput);
+      }
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
 
   @override
   void initState() {
@@ -351,6 +388,12 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         actions: [
+          if (LiveUpdateScope.of(context)?.coordinator != null)
+            IconButton(
+              tooltip: '实时更新 / 关注任务',
+              icon: const Icon(Icons.notifications_active_outlined),
+              onPressed: _manageLiveUpdate,
+            ),
           if (_controller.canRelease)
             PopupMenuButton<String>(
               key: const Key('conversation-actions'),

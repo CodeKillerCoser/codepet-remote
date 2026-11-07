@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:codepet_remote/application/notifications/live_update_coordinator.dart';
 
 import 'package:codepet_remote/application/notifications/notification_coordinator.dart';
 import 'package:codepet_remote/application/ports/system_notifications.dart';
@@ -30,6 +31,27 @@ void main() {
 
   Future<void> send(GatewayEvent event, {String host = 'host'}) =>
       coordinator.event(host, 'Private machine', event, summary());
+
+  test('visible conversation suppresses alerts but not explicitly followed status', () async {
+    final liveSystem = _LiveSystem();
+    final live = LiveUpdateCoordinator(liveSystem, now: () => now);
+    coordinator = NotificationCoordinator(system: system, store: store, liveUpdates: live, now: () => now);
+    await coordinator.initialize();
+    const target = NotificationTarget(deviceId: 'host', providerId: 'provider', conversationId: 'conversation');
+    coordinator.foreground = true;
+    coordinator.visibleConversation = target.conversationKey;
+    await live.follow(target, turn(TurnStatus.running).turn, preview: false);
+    await send(approval('pending'));
+    expect(system.shown, isEmpty);
+    expect(liveSystem.shown.last.title, '需要授权');
+    await coordinator.acknowledge(target);
+    expect(live.target, isNotNull);
+    coordinator.foreground = false;
+    await send(turn(TurnStatus.completed));
+    expect(live.target, isNull);
+    expect(system.shown.single.kind, NoticeKind.outcome);
+    await live.stop();
+  });
 
   test(
     'completion with omitted optional timestamps is still a live event',
@@ -350,4 +372,11 @@ class _Store implements NotificationStore {
   Future<void> savePreferences(NotificationPreferences value) async {
     preferences = value;
   }
+}
+
+class _LiveSystem implements LiveUpdates {
+  final shown = <LiveActivity>[];
+  @override Future<void> beginActivity(String key) async {}
+  @override Future<void> endActivity() async {}
+  @override Future<bool> showActivity(LiveActivity activity) async { shown.add(activity); return true; }
 }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'live_update_coordinator.dart';
 
 import '../../core/domain/models.dart';
 import '../../core/domain/notification.dart';
@@ -12,9 +13,11 @@ class NotificationCoordinator {
     required this.system,
     required this.store,
     this.logger = const NoopApplicationLog(),
+    this.liveUpdates,
     DateTime Function()? now,
   }) : now = now ?? DateTime.now;
   final SystemNotifications system;
+  final LiveUpdateCoordinator? liveUpdates;
   final NotificationStore store;
   final ApplicationLog logger;
   final DateTime Function() now;
@@ -63,6 +66,7 @@ class NotificationCoordinator {
   Future<void> updatePreferences(NotificationPreferences value) async {
     await store.savePreferences(value);
     preferences = value;
+    await _live(() => liveUpdates?.setPreview(value.preview));
     await _enqueue(() async {
       for (final entry in _ledger.values) {
         if ((!value.outcomes && entry['kind'] == 'outcome') ||
@@ -75,6 +79,7 @@ class NotificationCoordinator {
   }
 
   Future<void> forgetDevice(String deviceId) => _enqueue(() async {
+    if (liveUpdates?.target?.deviceId == deviceId) await _live(() => liveUpdates?.stop());
     for (final key in _ledger.keys.toList()) {
       if (_ledger[key]!['deviceId'] == deviceId) {
         await _cancel(_ledger[key]!['id'] as int);
@@ -113,7 +118,7 @@ class NotificationCoordinator {
   ) => _enqueue(() async {
     if (event is TurnUpsertedEvent) {
       final turn = event.turn;
-      if (!turn.status.isTerminal) return;
+
       final target = NotificationTarget(
         deviceId: deviceId,
         providerId: turn.conversationResource?.providerId ?? turn.providerId,
@@ -122,6 +127,8 @@ class NotificationCoordinator {
             _nativeConversationId(turn.conversationId, turn.providerId),
         turnId: turn.id,
       );
+      await _live(() => liveUpdates?.updateTurn(target, turn));
+      if (!turn.status.isTerminal) return;
       // Protocol timestamps are optional. A missing updatedAt can be mapped
       // to startedAt/epoch; do not discard a fresh completion of a long task.
       final at =
@@ -163,12 +170,22 @@ class NotificationCoordinator {
         at: approval.createdAt,
         summary: approval.approvalDescription ?? approval.title,
       );
+      await _live(() => liveUpdates?.request(request));
       await _request(request, deviceName, conversation?.title);
     } else if (event is ConversationUpsertedEvent) {
       await _conversation(deviceId, deviceName, event.conversation);
     }
     await _save();
   });
+
+  Future<void> _live(Future<void>? Function() work) async {
+    try {
+      await work();
+    } catch (error, stack) {
+      // A platform promotion failure must never swallow the existing alert.
+      logger.warning('Live update failed', error: error, stackTrace: stack);
+    }
+  }
 
   String _nativeConversationId(String id, String providerId) {
     final prefix = '$providerId\u0000';
@@ -186,6 +203,7 @@ class NotificationCoordinator {
       conversationId: value.resource?.nativeResourceId ?? value.id,
       turnId: value.activeTurn?.id,
     );
+    await _live(() => liveUpdates?.conversation(target, value));
     if (value.status == ConversationStatus.waitingUserInput ||
         value.status == ConversationStatus.waitingApproval) {
       final approval = value.status == ConversationStatus.waitingApproval;
@@ -444,5 +462,6 @@ class NotificationCoordinator {
 
   void dispose() {
     _disposed = true;
+    liveUpdates?.dispose();
   }
 }

@@ -11,11 +11,13 @@ import io.flutter.plugin.common.MethodChannel
 class CodePetApplication : Application() {
     private var flutterEngine: FlutterEngine? = null
     var activityResumed = false
+    var liveUpdates: LiveUpdatesBridge? = null
 
     fun engine(): FlutterEngine {
         flutterEngine?.let { return it }
         val engine = FlutterEngine(this)
         flutterEngine = engine
+        liveUpdates = LiveUpdatesBridge(this, engine)
         MdnsBridge(this, engine)
         NetworkDiagnosticsBridge(this, engine)
         NetworkChangesBridge(this, engine)

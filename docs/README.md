@@ -7,6 +7,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [开发指南](development.md) | 环境、本地运行、目录、生成 SDK 与分层约束 |
+| [Android Live Updates](android-live-updates.md) | 主动关注任务、系统持续通知、降级与验证边界 |
 | [Android 构建与发布](android-build.md) | Actions 打包、产物下载、签名配置 |
 | [连接与安全边界](connection-and-security.md) | LAN、TLS pin、设备凭据与持久化 |
 | [架构设计](architecture.md) | 分层、会话交互、分页、缓存与心跳 |

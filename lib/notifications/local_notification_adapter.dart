@@ -6,6 +6,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../application/ports/system_notifications.dart';
+import '../application/notifications/live_update_coordinator.dart';
 import '../core/domain/notification.dart';
 
 class PreferencesNotificationStore implements NotificationStore {
@@ -41,7 +42,27 @@ class PreferencesNotificationStore implements NotificationStore {
       _write(_preferencesKey, value.toJson());
 }
 
-class LocalNotificationAdapter implements SystemNotifications {
+class LocalNotificationAdapter implements SystemNotifications, LiveUpdates {
+  static const _live = MethodChannel('com.codepet.remote/live_updates');
+  @override
+  Future<void> beginActivity(String key) async {
+    if (Platform.isAndroid) await _live.invokeMethod<void>('begin', key);
+  }
+  @override
+  Future<void> endActivity() async {
+    if (Platform.isAndroid) await _live.invokeMethod<void>('end');
+  }
+  @override
+  Future<bool> showActivity(LiveActivity activity) async => Platform.isAndroid &&
+    (await _live.invokeMethod<bool>('show', {
+      'key': activity.key, 'title': activity.title, 'body': activity.body,
+      'preview': activity.preview, 'payload': jsonEncode(activity.target.toJson()),
+    }) ?? false);
+  Future<Map<String, dynamic>> liveCapabilities() async => Platform.isAndroid
+      ? Map<String, dynamic>.from(await _live.invokeMapMethod<String, dynamic>('capabilities') ?? {}) : {};
+  Future<void> liveSettings() async {
+    if (Platform.isAndroid) await _live.invokeMethod<void>('settings');
+  }
   final plugin = FlutterLocalNotificationsPlugin();
   static const _connection = MethodChannel(
     'com.codepet.remote/background_connection',
@@ -63,6 +84,13 @@ class LocalNotificationAdapter implements SystemNotifications {
     void Function(NotificationTarget) onOpen,
   ) async {
     if (!Platform.isAndroid) return null;
+    _live.setMethodCallHandler((call) async {
+      if (call.method == 'open') {
+        final target = NotificationTarget.parse(call.arguments as String?);
+        if (target != null) onOpen(target);
+        await _live.invokeMethod<void>('takeLaunch');
+      }
+    });
     await plugin.initialize(
       settings: const InitializationSettings(
         android: AndroidInitializationSettings('ic_notification'),
@@ -78,6 +106,8 @@ class LocalNotificationAdapter implements SystemNotifications {
         >()!;
     await android.createNotificationChannel(outcomeChannel);
     await android.createNotificationChannel(interventionChannel);
+    final liveTarget = NotificationTarget.parse(await _live.invokeMethod<String>('takeLaunch'));
+    if (liveTarget != null) return liveTarget;
     final launch = await plugin.getNotificationAppLaunchDetails();
     return launch?.didNotificationLaunchApp == true
         ? NotificationTarget.parse(launch?.notificationResponse?.payload)

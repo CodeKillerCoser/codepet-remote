@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import '../features/common/live_update_scope.dart';
 import 'package:codepet_connection_engine/codepet_connection_engine.dart' as ce;
 import '../gateway/connection/device_connection_routes.dart';
 
@@ -532,7 +533,6 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
          event is! ConversationUpsertedEvent)) {
       return;
     }
-    if (event is TurnUpsertedEvent && !event.turn.status.isTerminal) return;
     String? conversationId;
     String? providerId;
     if (event is TurnUpsertedEvent) {
@@ -691,7 +691,22 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     navigatorKey: _navigatorKey,
     navigatorObservers: [if (widget.notifications != null) widget.notifications!.observer],
     title: 'CodePet Remote', debugShowCheckedModeBanner: false,
-    builder: (context, child) => AppToastHost(child: child!),
+    builder: (context, child) => LiveUpdateScope(
+      coordinator: widget.notifications?.coordinator.liveUpdates,
+      follow: (target, turn, waitingForInput) async {
+        final notifications = widget.notifications;
+        if (notifications == null) return;
+        if (!await notifications.adapter.isAllowed() && !await notifications.adapter.requestPermission()) {
+          throw StateError('请在系统设置中允许通知');
+        }
+        await notifications.coordinator.liveUpdates?.follow(target, turn,
+          preview: notifications.coordinator.preferences.preview, waitingForInput: waitingForInput);
+        if (notifications.coordinator.liveUpdates?.target == null) throw StateError('无法显示持续通知，请检查系统通知权限与通知通道设置');
+      },
+      capabilities: () async => await widget.notifications?.adapter.liveCapabilities() ?? {},
+      settings: () async => widget.notifications?.adapter.liveSettings(),
+      child: AppToastHost(child: child!),
+    ),
     theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF326B66)), useMaterial3: true, scaffoldBackgroundColor: const Color(0xFFF7F9F8), inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder())),
     home: _loading ? const Scaffold(body: Center(child: CircularProgressIndicator())) : RemoteHomeScreen(
       sessions: _sessions, selectedIndex: _selectedIndex,
