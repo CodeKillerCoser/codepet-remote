@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:codepet_remote/app/codepet_remote_app.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -88,6 +91,22 @@ void main() {
 
   testWidgets('settings exports diagnostics and shows the archive path',
       (tester) async {
+    const shareChannel = MethodChannel('dev.fluttercommunity.plus/share');
+    final shareResult = Completer<String>();
+    final shareCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      shareChannel,
+      (call) {
+        shareCalls.add(call);
+        return shareResult.future;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        shareChannel,
+        null,
+      );
+    });
     await tester.pumpWidget(CodePetRemoteApp(
       includeDemoDevices: true,
       logExporter: () async => '/local/codepet-logs.zip',
@@ -102,7 +121,15 @@ void main() {
     await _pumpDemoFrames(tester);
 
     expect(find.text('/local/codepet-logs.zip'), findsOneWidget);
-    expect(find.byKey(const Key('share-logs')), findsOneWidget);
+    expect(shareCalls, hasLength(1));
+    expect(shareCalls.single.method, 'share');
+    expect(shareCalls.single.arguments['paths'], ['/local/codepet-logs.zip']);
+    expect(shareCalls.single.arguments['mimeTypes'], ['application/zip']);
+    expect(find.byKey(const Key('share-logs')), findsNothing);
+
+    shareResult.complete('dev.fluttercommunity.plus/share/dismissed');
+    await _pumpDemoFrames(tester);
+    expect(find.byKey(const Key('share-logs')).hitTestable(), findsOneWidget);
   });
 }
 

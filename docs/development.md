@@ -16,6 +16,30 @@ flutter run
 CI 会在 `main` push 和 Pull Request 上执行 analyze、全量测试和 Android
 debug 构建。
 
+### Quality 回归修复（2026-11-07）
+
+运行 [42350759804](https://github.com/CodeKillerCoser/codepet-remote/actions/runs/42350759804)
+在 `60c2234` 上静态分析通过，测试为 438 通过、2 失败，Android 构建尚未执行。
+两项失败均在本地使用原测试复现：
+
+- 分层测试指出 `features/settings/signaling_service_settings.dart` 引用 Gateway
+  adapter。`ca9e4ca` 引入该引用以捕获登记异常；现将 `SignalingRegistrationException`
+  放到 `application/errors/application_failures.dart`，UI 与 adapter 都引用应用层。
+  不放宽架构测试，登记文案与重试行为不变；设置测试验证具体登记错误仍可展示。
+- `test/widget_test.dart` 仍假设导出结束即可出现再次分享按钮。`1dcdd68`
+  已将流程改为导出后立即等待系统分享，但这个 App 级测试遗漏原生 MethodChannel
+  mock，分享未完成时按钮按设计保持忙碌。现模拟分享调用及取消结果，检查 ZIP 路径、
+  MIME、等待中的禁用状态和取消后的可点击性；测试结束清理 handler，不修改生产分享流程。
+
+验证：`flutter test test/widget_test.dart test/architecture/layering_test.dart test/settings
+test/gateway/device_registration_test.dart` 共 24 项通过；`flutter analyze --no-pub`
+无问题，`flutter test --no-pub` 全量 440 项通过。Linux runner 和 Android debug 打包以
+修复提交的 GitHub Quality 结果为准；widget mock 不代表真机分享面板验收。
+
+回归要求：共享的可展示异常由应用层定义，界面不为获取异常类型而引用 adapter；
+调用原生异步接口的 widget 测试必须控制完成结果并清理 mock。发布前的相关模块测试
+不能替代 Quality 的架构与全量测试；不要通过关闭测试或取消分层限制消除失败。
+
 ## 目录
 
 ```text

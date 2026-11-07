@@ -87,7 +87,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       final saved = <String?>[];
-      var fail = false;
+      Object? failure;
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -95,7 +95,7 @@ void main() {
               children: [
                 SignalingServiceSettings(
                   onSave: (value) async {
-                    if (fail) throw StateError('disk');
+                    if (failure != null) throw failure;
                     saved.add(value);
                   },
                 ),
@@ -117,7 +117,14 @@ void main() {
       expect(saved, ['https://172.96.254.12:8443']);
       expect(find.text('设备已登记，可开始配对'), findsOneWidget);
       expect(save.hitTestable(), findsOneWidget);
-      fail = true;
+      failure = const SignalingRegistrationException('信令服务尚未启用自动登记，请更新服务端');
+      await tester.enterText(input, 'new.example.com');
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(find.text('信令服务尚未启用自动登记，请更新服务端'), findsOneWidget);
+      expect(saved, hasLength(1));
+      expect(save.hitTestable(), findsOneWidget);
+      failure = StateError('disk');
       await tester.enterText(input, 'new.example.com');
       await tester.tap(save);
       await tester.pumpAndSettle();

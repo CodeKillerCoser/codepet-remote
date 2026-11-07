@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:codepet_remote/application/errors/application_failures.dart';
 import 'package:codepet_remote/gateway/webrtc/device_registration.dart';
 
 void main() {

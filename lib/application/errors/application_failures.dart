@@ -2,6 +2,15 @@ import 'dart:async';
 
 import '../../core/domain/models.dart';
 
+/// A user-facing enrollment failure shared by adapters and settings.
+class SignalingRegistrationException implements Exception {
+  const SignalingRegistrationException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class GatewayProtocolException implements Exception {
   const GatewayProtocolException({
     required this.code,

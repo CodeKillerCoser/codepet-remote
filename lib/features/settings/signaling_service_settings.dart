@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../application/errors/application_failures.dart';
 import '../../core/domain/signaling_service.dart';
-import '../../gateway/webrtc/device_registration.dart';
 
 class SignalingServiceSettings extends StatefulWidget {
   const SignalingServiceSettings({super.key, this.value, required this.onSave});

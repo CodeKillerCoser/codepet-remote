@@ -7,15 +7,9 @@ import 'package:crypto/crypto.dart' as hashes;
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../../application/errors/application_failures.dart';
 import '../../core/domain/signaling_service.dart';
 import '../../diagnostics/app_log.dart';
-
-class SignalingRegistrationException implements Exception {
-  const SignalingRegistrationException(this.message);
-  final String message;
-  @override
-  String toString() => message;
-}
 
 /// Enrollment identifies an installation; it grants no Host or TURN access.
 class SignalingDeviceRegistration {
