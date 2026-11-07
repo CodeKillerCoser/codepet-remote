@@ -11,6 +11,14 @@ abstract interface class RtcIceSignaling implements RtcSignaling {
   void close();
 }
 
+/// Optional client-to-Host Trickle ICE. Old services/Hosts use full SDP gathering.
+abstract interface class RtcTrickleSignaling implements RtcIceSignaling {
+  bool get trickleEnabled;
+  void localCandidate(Map<String, dynamic>? candidate);
+  void checkTrickleFailure();
+  void finishTrickle();
+}
+
 /// Bootstrap adapter for already paired LAN devices. The TLS pin authenticates
 /// the SDP and its ephemeral DTLS fingerprint; bearer authenticates the client.
 final class PinnedLanRtcSignaling implements RtcSignaling {

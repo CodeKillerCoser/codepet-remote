@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 
+import '../core/domain/connection_traffic.dart';
 import '../core/domain/models.dart';
 
 /// Channel-only contract used by the generated Gateway client.
@@ -26,4 +27,9 @@ abstract interface class EndpointAwareGatewayTransport {
 /// Controls whether a validated candidate may replace the persisted endpoint.
 abstract interface class EndpointPersistenceAwareGatewayTransport {
   bool get shouldPersistSelectedGatewayUri;
+}
+
+/// Optional local metrics. Wrappers expose only the selected business channel.
+abstract interface class MetricsGatewayTransport {
+  ConnectionTraffic? get connectionTraffic;
 }

@@ -11,6 +11,7 @@ import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 import 'package:codepet_remote/application/errors/application_failures.dart';
 import 'package:codepet_remote/gateway/webrtc/framing.dart';
 import 'package:codepet_remote/gateway/webrtc/signaling.dart';
+import 'package:codepet_remote/gateway/webrtc/path_policy.dart';
 import 'package:codepet_remote/gateway/webrtc/webrtc_gateway_transport.dart';
 
 class FakeSignaling implements RtcSignaling {
@@ -24,20 +25,86 @@ class FakeSignaling implements RtcSignaling {
   }
 }
 
+class TrickleSignaling extends FakeSignaling implements RtcTrickleSignaling {
+  TrickleSignaling(this.peer);
+  final DelayedGatheringPeer peer;
+  final candidates = <Map<String, dynamic>?>[];
+  bool finished = false;
+  @override
+  bool trickleEnabled = true;
+  @override
+  Future<Map<String, dynamic>> configuration() async => {};
+  @override
+  void localCandidate(Map<String, dynamic>? candidate) {
+    candidates.add(candidate);
+  }
+
+  @override
+  void checkTrickleFailure() {}
+  @override
+  void finishTrickle() {
+    finished = true;
+  }
+
+  @override
+  void close() {
+    finished = true;
+  }
+
+  @override
+  Future<Map<String, dynamic>> answer(Map<String, dynamic> offer) async {
+    expect(
+      peer.gatheringFinished,
+      false,
+      reason: 'Offer must not wait for slow ICE gathering',
+    );
+    expect(offer['sdp'], isNot(contains('a=candidate:')));
+    // A useful candidate arrives after the initial offer was already submitted.
+    peer.onIceCandidate?.call(
+      RTCIceCandidate('candidate:1 1 udp 1 192.0.2.1 1234 typ host', '0', 0),
+    );
+    peer.finishGathering();
+    return {
+      'type': 'answer',
+      'sdp': 'v=0\r\na=candidate:2 1 udp 1 192.0.2.2 1234 typ host\r\n',
+    };
+  }
+}
+
+class DelayedGatheringPeer extends FakePeer {
+  bool gatheringFinished = false;
+  @override
+  Future<RTCIceGatheringState?> getIceGatheringState() async =>
+      gatheringFinished
+      ? RTCIceGatheringState.RTCIceGatheringStateComplete
+      : RTCIceGatheringState.RTCIceGatheringStateGathering;
+  @override
+  Future<RTCSessionDescription?> getLocalDescription() async =>
+      RTCSessionDescription('v=0\r\n', 'offer');
+  void finishGathering() {
+    gatheringFinished = true;
+    onIceGatheringState?.call(
+      RTCIceGatheringState.RTCIceGatheringStateComplete,
+    );
+  }
+}
+
 class FakePeer extends RTCPeerConnection {
   final channel = FakeChannel();
   RTCDataChannelInit? init;
   bool disposed = false;
   int statsCalls = 0;
+  List<StatsReport>? stats;
   @override
   Future<List<StatsReport>> getStats([MediaStreamTrack? track]) async {
     statsCalls++;
-    return [
-      StatsReport('pair', 'candidate-pair', 0, {
-        'state': 'succeeded',
-        'requestsSent': 3,
-      }),
-    ];
+    return stats ??
+        [
+          StatsReport('pair', 'candidate-pair', 0, {
+            'state': 'succeeded',
+            'requestsSent': 3,
+          }),
+        ];
   }
 
   @override
@@ -152,6 +219,142 @@ Future<void> eventually(bool Function() condition) async {
 }
 
 void main() {
+  test(
+    'trickle starts before gathering completes and preserves late candidates',
+    () async {
+      final peer = DelayedGatheringPeer();
+      final signaling = TrickleSignaling(peer);
+      final transport = WebRtcGatewayTransport(
+        signaling: signaling,
+        peerFactory: () async => peer,
+        pathPolicy: RtcPathPolicy.ipv4Direct,
+      );
+      addTearDown(transport.close);
+      await transport.connect();
+      expect(signaling.candidates.first?['candidate'], contains('192.0.2.1'));
+      expect(signaling.candidates.last, null);
+      expect(signaling.finished, true);
+    },
+  );
+  test('small RPC keeps request correlation without duplicate frame lifecycle logs', () async {
+    final events = <String>[];
+    final previous = Logger.root.level;
+    Logger.root.level = Level.ALL;
+    final subscription = Logger.root.onRecord.listen((record) {
+      if (record.object case final StructuredLogEvent event) {
+        events.add(event.event);
+      }
+    });
+    final peer = FakePeer();
+    final transport = WebRtcGatewayTransport(
+      signaling: FakeSignaling(),
+      peerFactory: () async => peer,
+    );
+    try {
+      await transport.connect();
+      peer.channel.autoReply = false;
+      final response = transport.request({
+        'id': 'small',
+        'method': 'protocol.ping',
+      });
+      await eventually(() => peer.channel.sent.isNotEmpty);
+      peer.channel.emit({'jsonrpc': '2.0', 'id': 'small', 'result': {}});
+      await response;
+      expect(events, containsAll(['rpc.queued', 'rpc.response']));
+      expect(events, isNot(contains('message.send.start')));
+      expect(events, isNot(contains('message.send.complete')));
+      expect(events, isNot(contains('message.receive.complete')));
+      peer.channel.emit({
+        'jsonrpc': '2.0',
+        'method': 'event',
+        'params': 'x' * 80000,
+      });
+      expect(events, contains('message.receive.complete'));
+    } finally {
+      await transport.close();
+      await subscription.cancel();
+      Logger.root.level = previous;
+    }
+  });
+  test('channel follows selected ICE pair, including relay and later route changes', () async {
+    final peer = FakePeer();
+    final transport = WebRtcGatewayTransport(
+      signaling: FakeSignaling(),
+      peerFactory: () async => peer,
+    );
+    addTearDown(transport.close);
+    await transport.connect();
+    List<StatsReport> reports(String family, String kind) => [
+      StatsReport('transport', 'transport', 0, {
+        'selectedCandidatePairId': 'p',
+      }),
+      StatsReport('p', 'candidate-pair', 0, {
+        'localCandidateId': 'l',
+        'remoteCandidateId': 'r',
+      }),
+      StatsReport('l', 'local-candidate', 0, {
+        'address': family == 'v6' ? '2001:db8::1' : '192.0.2.1',
+        'candidateType': 'host',
+      }),
+      StatsReport('r', 'remote-candidate', 0, {
+        'address': family == 'v6' ? '2001:db8::2' : '192.0.2.2',
+        'candidateType': kind,
+      }),
+    ];
+    peer.stats = reports('v6', 'host');
+    expect(await transport.selectedPathKind(), 'ipv6-direct');
+    expect(transport.connectionTraffic.channel, 'ipv6-direct');
+    peer.stats = reports('v4', 'host');
+    expect(await transport.selectedPathKind(), 'ipv4-direct');
+    peer.stats = reports('v6', 'relay');
+    expect(await transport.selectedPathKind(), 'relay');
+    peer.stats = [];
+    expect(await transport.selectedPathKind(), 'unknown');
+  });
+
+  test('traffic counts UTF-8 payload fragments while excluding CPG1 headers and close', () async {
+    final peer = FakePeer()..channel.autoReply = false;
+    final transport = WebRtcGatewayTransport(
+      signaling: FakeSignaling(),
+      peerFactory: () async => peer,
+    );
+    addTearDown(transport.close);
+    await transport.connect();
+    final request = {
+      'id': 'traffic',
+      'method': 'test',
+      'params': {'text': '中文'},
+    };
+    final pending = transport.request(request);
+    await eventually(() => peer.channel.sent.isNotEmpty);
+    expect(
+      transport.connectionTraffic.sentBytes,
+      utf8.encode(jsonEncode(request)).length,
+    );
+    final response = Uint8List.fromList(
+      utf8.encode(
+        jsonEncode({'jsonrpc': '2.0', 'id': 'traffic', 'result': '中文'}),
+      ),
+    );
+    peer.channel.onMessage!(
+      RTCDataChannelMessage.fromBinary(
+        rtcFragment(response.length, 0, response.sublist(0, 10)),
+      ),
+    );
+    expect(transport.connectionTraffic.receivedBytes, 10);
+    peer.channel.onMessage!(
+      RTCDataChannelMessage.fromBinary(
+        rtcFragment(response.length, 10, response.sublist(10)),
+      ),
+    );
+    await pending;
+    expect(transport.connectionTraffic.receivedBytes, response.length);
+    peer.channel.onMessage!(
+      RTCDataChannelMessage.fromBinary(rtcFragment(0, 0, [3, 232])),
+    );
+    expect(transport.connectionTraffic.receivedBytes, response.length);
+  });
+
   test(
     'heartbeat failure owns liveness after ordinary request timeout',
     () async {

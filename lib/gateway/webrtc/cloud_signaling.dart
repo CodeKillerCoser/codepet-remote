@@ -93,7 +93,7 @@ void validateSignalingServiceBinding(
   }
 }
 
-class CloudRtcSignaling implements RtcIceSignaling {
+class CloudRtcSignaling implements RtcTrickleSignaling {
   CloudRtcSignaling(
     this.state, {
     this.forceRelay = false,
@@ -105,11 +105,105 @@ class CloudRtcSignaling implements RtcIceSignaling {
   final bool forceRelay;
   final RtcPathPolicy pathPolicy;
   String? _attempt;
+  int _answerPolls = 0;
+  final _answerWait = Stopwatch();
   final HttpClient _http = HttpClient()
     ..connectionTimeout = const Duration(seconds: 10);
   bool _closed = false;
   int? iceExpires;
   final RtcDiagnostics _diagnostics;
+  @override
+  bool trickleEnabled = false;
+  final _localCandidates = <Map<String, dynamic>>[];
+  final _candidateKeys = <String>{};
+  bool _localComplete = false;
+  bool _trickleFinished = false;
+  Object? _trickleFailure;
+
+  @override
+  void localCandidate(Map<String, dynamic>? candidate) {
+    if (!trickleEnabled || _trickleFinished) return;
+    if (candidate == null) {
+      _localComplete = true;
+      return;
+    }
+    final key = candidate['candidate'] as String;
+    if (!_candidateKeys.add(key)) return;
+    if (_candidateKeys.length > 128 || key.length > 1024) {
+      _trickleFailure = const FormatException('Too many ICE candidates');
+      return;
+    }
+    _localCandidates.add(candidate);
+  }
+
+  @override
+  void checkTrickleFailure() {
+    final failure = _trickleFailure;
+    if (failure != null) throw failure;
+  }
+
+  @override
+  void finishTrickle() {
+    _trickleFinished = true;
+  }
+
+  Future<void> _publishCandidates(
+    SimpleKeyPair key,
+    String attempt,
+    int expires,
+    String offerHash,
+  ) async {
+    var sequence = 0;
+    try {
+      while (!_closed &&
+          !_trickleFinished &&
+          DateTime.now().millisecondsSinceEpoch ~/ 1000 < expires) {
+        if (_localCandidates.isEmpty && !_localComplete) {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+          continue;
+        }
+        final batch = _localCandidates.take(8).toList();
+        _localCandidates.removeRange(0, batch.length);
+        final complete = _localComplete && _localCandidates.isEmpty;
+        final payload = utf8.encode(
+          jsonEncode({
+            'v': 1,
+            'kind': 'ice-update',
+            'host': state['host'],
+            'client': state['client'],
+            'attempt': attempt,
+            'expires': expires,
+            'offerHash': offerHash,
+            'sequence': sequence,
+            'candidates': batch,
+            'complete': complete,
+          }),
+        );
+        final signature = await Ed25519().sign(payload, keyPair: key);
+        final body = {
+          'attempt': attempt,
+          'sequence': sequence,
+          'envelope': {
+            'payload': base64Encode(payload),
+            'signature': base64Encode(signature.bytes),
+          },
+        };
+        await _request('POST', '/v1/ice-updates', body);
+        _diagnostics.emit('ice.update.sent', {
+          'sequence': sequence,
+          'count': batch.length,
+          'complete': complete,
+        });
+        sequence++;
+        if (complete) return;
+      }
+    } catch (error) {
+      if (!_closed && !_trickleFinished) {
+        _trickleFailure = error;
+        _diagnostics.emit('ice.update.failed', rtcFailure(error));
+      }
+    }
+  }
 
   Future<Map<String, dynamic>> _request(
     String method,
@@ -135,12 +229,17 @@ class CloudRtcSignaling implements RtcIceSignaling {
     request.headers.contentType = ContentType.json;
     if (body != null) request.add(utf8.encode(jsonEncode(body)));
     final response = await request.close().timeout(const Duration(seconds: 12));
-    _diagnostics.emit('signal.http', {
-      'method': method,
-      'path': uri.path,
-      'status': response.statusCode,
-      'durationMs': started.elapsedMilliseconds,
-    });
+    // Successful answer polls are summarized below. Failures remain immediate.
+    if (method != 'GET' ||
+        uri.path != '/v1/answer' ||
+        response.statusCode != 200) {
+      _diagnostics.emit('signal.http', {
+        'method': method,
+        'path': uri.path,
+        'status': response.statusCode,
+        'durationMs': started.elapsedMilliseconds,
+      });
+    }
     if (response.statusCode != 200) {
       throw GatewayConnectionException(
         'Cloud signaling status ${response.statusCode}',
@@ -163,6 +262,7 @@ class CloudRtcSignaling implements RtcIceSignaling {
       return pathPolicy.configuration([]);
     }
     final value = await _request('GET', '/v1/ice');
+    trickleEnabled = value['trickleIce'] == true;
     iceExpires = value['expires'] as int;
     return {
       ...pathPolicy.configuration(value['iceServers'] as List),
@@ -191,6 +291,7 @@ class CloudRtcSignaling implements RtcIceSignaling {
         'client': state['client'],
         'attempt': attempt,
         'expires': expires,
+        if (trickleEnabled) 'trickleIce': true,
         if (pathPolicy != RtcPathPolicy.auto) 'pathPolicy': pathPolicy.wireName,
         'description': offer,
       }),
@@ -204,10 +305,24 @@ class CloudRtcSignaling implements RtcIceSignaling {
         'signature': base64Encode(signature.bytes),
       },
     });
+    if (trickleEnabled) {
+      unawaited(
+        _publishCandidates(
+          key,
+          attempt,
+          expires,
+          hashes.sha256.convert(payload).toString(),
+        ),
+      );
+    }
+    _answerWait.start();
     while (!_closed &&
         DateTime.now().millisecondsSinceEpoch ~/ 1000 < expires) {
+      checkTrickleFailure();
       final result = await _request('GET', '/v1/answer?attempt=$attempt');
+      _answerPolls++;
       if (result['answer'] != null) {
+        _answerWait.stop();
         return verifyAnswer(
           Map<String, dynamic>.from(result['answer'] as Map),
           state,
@@ -215,7 +330,11 @@ class CloudRtcSignaling implements RtcIceSignaling {
           hashes.sha256.convert(payload).toString(),
           expectedPolicy: pathPolicy,
         ).then((answer) {
-          _diagnostics.emit('signal.answer.verified', {'attempt': attempt});
+          _diagnostics.emit('signal.answer.verified', {
+            'attempt': attempt,
+            'polls': _answerPolls,
+            'waitMs': _answerWait.elapsedMilliseconds,
+          });
           return answer;
         });
       }
@@ -270,6 +389,7 @@ class CloudRtcSignaling implements RtcIceSignaling {
   @override
   void close() {
     if (_closed) return;
+    finishTrickle();
     // Begin cancellation before closing the HTTP client; bounded and best effort.
     final attempt = _attempt;
     if (attempt != null) {
@@ -283,9 +403,12 @@ class CloudRtcSignaling implements RtcIceSignaling {
       _http.close(force: true);
     }
     _closed = true;
+    _answerWait.stop();
     _diagnostics.emit('signal.close', {
       'attempt': attempt,
       'cancelRequested': attempt != null,
+      'answerPolls': _answerPolls,
+      'answerWaitMs': _answerWait.elapsedMilliseconds,
     });
   }
 }

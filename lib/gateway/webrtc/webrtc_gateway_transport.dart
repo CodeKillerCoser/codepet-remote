@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../../application/errors/application_failures.dart';
+import '../../core/domain/connection_traffic.dart';
+import '../connection_traffic_meter.dart';
 import '../../core/domain/models.dart';
 import '../transport.dart';
 import 'framing.dart';
@@ -16,7 +18,11 @@ import 'path_policy.dart';
 typedef RtcPeerFactory = Future<RTCPeerConnection> Function();
 
 /// Carries unchanged Gateway JSON-RPC over a reliable, ordered DataChannel.
-final class WebRtcGatewayTransport implements GatewayTransport {
+final class WebRtcGatewayTransport
+    implements GatewayTransport, MetricsGatewayTransport {
+  final _traffic = ConnectionTrafficMeter(channel: 'unknown');
+  @override
+  ConnectionTraffic get connectionTraffic => _traffic.snapshot;
   // Public peerFactory name is retained for existing callers.
   WebRtcGatewayTransport({
     required this.signaling,
@@ -54,7 +60,7 @@ final class WebRtcGatewayTransport implements GatewayTransport {
 
   Timer? _statsTimer;
   bool _sampling = false;
-  int _statsSamples = 0;
+  final _statsLog = RtcStatsLogPolicy();
   int _receivedFrames = 0;
   int _messageFrames = 0;
   int? _messageStartedMs;
@@ -78,17 +84,26 @@ final class WebRtcGatewayTransport implements GatewayTransport {
             }.contains(r.type),
           )
           .toList();
+      _traffic.channel = _selectedPathKind(reports);
+      final sanitized = relevant
+          .take(128)
+          .map(
+            (r) =>
+                rtcStat(r, _diagnostics.offerId ?? _diagnostics.connectionId),
+          )
+          .toList();
+      if (!_statsLog.shouldEmit(
+        sanitized,
+        _diagnostics.clock.elapsedMilliseconds,
+        force: reason != 'periodic',
+      )) {
+        return;
+      }
       _diagnostics.emit('ice.stats', {
         'reason': reason,
         'count': relevant.length,
         'truncated': relevant.length > 128,
-        'reports': relevant
-            .take(128)
-            .map(
-              (r) =>
-                  rtcStat(r, _diagnostics.offerId ?? _diagnostics.connectionId),
-            )
-            .toList(),
+        'reports': sanitized,
       });
     } catch (error) {
       _diagnostics.emit('ice.statsUnavailable', {
@@ -109,6 +124,7 @@ final class WebRtcGatewayTransport implements GatewayTransport {
   bool _closed = false;
   bool _aborted = false;
   bool _connected = false;
+  bool _compression = false;
   int _queuedBytes = 0;
 
   @override
@@ -118,6 +134,10 @@ final class WebRtcGatewayTransport implements GatewayTransport {
   Future<String> selectedPathKind() async {
     final reports =
         await _peer?.getStats().timeout(const Duration(seconds: 1)) ?? [];
+    return _traffic.channel = _selectedPathKind(reports);
+  }
+
+  String _selectedPathKind(List<StatsReport> reports) {
     final byId = {for (final report in reports) report.id: report};
     for (final report in reports) {
       if (report.type != 'transport') continue;
@@ -130,11 +150,18 @@ final class WebRtcGatewayTransport implements GatewayTransport {
         return 'relay';
       }
       if (local != null && remote != null) {
-        final address = local.values['address'] ?? local.values['ip'];
-        final ip = address is String ? InternetAddress.tryParse(address) : null;
-        return ip == null
-            ? 'direct'
-            : ip.type == InternetAddressType.IPv6
+        InternetAddress? address(StatsReport candidate) {
+          final value = candidate.values['address'] ?? candidate.values['ip'];
+          return value is String ? InternetAddress.tryParse(value) : null;
+        }
+
+        final localIp = address(local), remoteIp = address(remote);
+        if (localIp == null ||
+            remoteIp == null ||
+            localIp.type != remoteIp.type) {
+          return 'direct';
+        }
+        return localIp.type == InternetAddressType.IPv6
             ? 'ipv6-direct'
             : 'ipv4-direct';
       }
@@ -150,6 +177,7 @@ final class WebRtcGatewayTransport implements GatewayTransport {
       await _open().timeout(connectTimeout);
     } catch (error) {
       final cancelled = _closed && !_aborted;
+      if (!cancelled) unawaited(_diagnostics.networkSnapshot('connectFailed'));
       _diagnostics.emit(cancelled ? 'connect.cancelled' : 'connect.failed', {
         if (cancelled) 'reason': 'closed' else ...rtcFailure(error),
         'stage': _stage,
@@ -169,6 +197,11 @@ final class WebRtcGatewayTransport implements GatewayTransport {
         : <String, dynamic>{'iceServers': <Object>[]};
     _checkNotClosed();
     _enter("peerCreation");
+    final trickle =
+        signaling is RtcTrickleSignaling &&
+            (signaling as RtcTrickleSignaling).trickleEnabled
+        ? signaling as RtcTrickleSignaling
+        : null;
     final peer = await (_peerFactory?.call() ?? createPeerConnection(config));
     if (_closed) {
       await peer.close();
@@ -180,12 +213,10 @@ final class WebRtcGatewayTransport implements GatewayTransport {
       'policy': config['iceTransportPolicy'] ?? 'all',
       'serverCount': (config['iceServers'] as List?)?.length ?? 0,
       'candidateErrorCallback': 'notExposedByFlutterWebrtc',
+      'trickleIce': trickle != null,
     });
     _statsTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      _statsSamples++;
-      if (!_connected || _statsSamples <= 30 || _statsSamples % 15 == 0) {
-        unawaited(_sampleStats('periodic'));
-      }
+      unawaited(_sampleStats('periodic'));
     });
     peer.onIceConnectionState = (state) {
       _diagnostics.emit('ice.state', {'state': state.name});
@@ -193,13 +224,21 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     };
     peer.onSignalingState = (state) =>
         _diagnostics.emit('signaling.state', {'state': state.name});
-    peer.onIceCandidate = (candidate) => _diagnostics.emit(
-      'ice.localCandidate',
-      rtcCandidate(
-        candidate.candidate ?? '',
-        _diagnostics.offerId ?? _diagnostics.connectionId,
-      ),
-    );
+    peer.onIceCandidate = (candidate) {
+      final line = candidate.candidate;
+      if (line == null || line.isEmpty) return;
+      _diagnostics.emit(
+        'ice.localCandidate',
+        _diagnostics.candidateDecision(line, pathPolicy),
+      );
+      if (pathPolicy.rejectionReason(line) == null) {
+        trickle?.localCandidate({
+          'candidate': line,
+          'sdpMid': candidate.sdpMid,
+          'sdpMLineIndex': candidate.sdpMLineIndex,
+        });
+      }
+    };
     peer.onConnectionState = (state) {
       _diagnostics.emit('peer.state', {'state': state.name});
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
@@ -218,6 +257,7 @@ final class WebRtcGatewayTransport implements GatewayTransport {
       _diagnostics.emit('ice.gathering', {'state': state.name});
       if (state == RTCIceGatheringState.RTCIceGatheringStateComplete &&
           !gathered.isCompleted) {
+        trickle?.localCandidate(null);
         gathered.complete();
       }
     };
@@ -255,8 +295,10 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     _checkNotClosed();
     await peer.setLocalDescription(offer);
     _checkNotClosed();
-    if (await peer.getIceGatheringState() !=
+    if (await peer.getIceGatheringState() ==
         RTCIceGatheringState.RTCIceGatheringStateComplete) {
+      trickle?.localCandidate(null);
+    } else if (trickle == null) {
       await gathered.future;
     }
     _gathered = null;
@@ -265,7 +307,13 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     if (description?.sdp == null) {
       throw const FormatException('Missing RTC offer');
     }
-    final offerSdp = pathPolicy.filterSdp(description!.sdp!);
+    _diagnostics.filteredCandidates(
+      'localOffer',
+      description!.sdp!,
+      pathPolicy,
+    );
+    final offerSdp =
+        '${pathPolicy.filterSdp(description.sdp!, allowEmpty: trickle != null).trimRight()}\r\n$rtcCompressionSdp\r\n';
     _diagnostics.offerId = rtcOfferId(offerSdp);
     _diagnostics.description('localOffer', offerSdp);
     _enter('signaling');
@@ -277,7 +325,18 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     }
     _diagnostics.emit('signaling.answer.received');
     _diagnostics.description('remoteAnswer', answer['sdp'] as String);
+    _diagnostics.filteredCandidates(
+      'remoteAnswer',
+      answer['sdp'] as String,
+      pathPolicy,
+    );
     _enter("remoteDescription");
+    _decoder.allowCompression = _compression = rtcSupportsCompression(
+      answer['sdp'] as String,
+    );
+    _diagnostics.emit('channel.encoding', {
+      'compression': _compression ? 'gzip' : 'none',
+    });
     await peer.setRemoteDescription(
       RTCSessionDescription(
         pathPolicy.filterSdp(answer['sdp'] as String),
@@ -291,11 +350,15 @@ final class WebRtcGatewayTransport implements GatewayTransport {
     }
     _enter("connected");
     _connected = true;
+    trickle?.finishTrickle();
     _diagnostics.emit('channel.open');
     unawaited(_sampleStats('open'));
   }
 
   void _checkNotClosed() {
+    if (signaling is RtcTrickleSignaling) {
+      (signaling as RtcTrickleSignaling).checkTrickleFailure();
+    }
     if (_closed) {
       throw const GatewayConnectionException(
         'RTC transport closed',
@@ -381,8 +444,19 @@ final class WebRtcGatewayTransport implements GatewayTransport {
   Future<void> _send(Uint8List bytes) async {
     final channel = _channel!;
     final started = Stopwatch()..start();
+    final originalBytes = bytes.length;
+    final encoded = rtcEncodeMessage(bytes, _compression);
+    bytes = encoded.bytes;
+    if (encoded.compressed) {
+      _diagnostics.emit('message.compressed', {
+        'originalBytes': originalBytes,
+        'wireBytes': bytes.length,
+      });
+    }
     var waitMs = 0;
-    _diagnostics.emit('message.send.start', {'bytes': bytes.length});
+    if (bytes.length >= rtcFrameBytes) {
+      _diagnostics.emit('message.send.start', {'bytes': bytes.length});
+    }
     for (var offset = 0; offset < bytes.length;) {
       _checkNotClosed();
       if (await channel.getBufferedAmount() > 64 * 1024) {
@@ -412,16 +486,22 @@ final class WebRtcGatewayTransport implements GatewayTransport {
             bytes.length,
             offset,
             Uint8List.sublistView(bytes, offset, end),
+            compressed: encoded.compressed,
           ),
         ),
       );
+      _traffic.sent(end - offset);
       offset = end;
     }
-    _diagnostics.emit('message.send.complete', {
-      'bytes': bytes.length,
-      'durationMs': started.elapsedMilliseconds,
-      'backpressureMs': waitMs,
-    });
+    if (bytes.length >= rtcFrameBytes ||
+        started.elapsedMilliseconds >= 1000 ||
+        waitMs > 0) {
+      _diagnostics.emit('message.send.complete', {
+        'bytes': bytes.length,
+        'durationMs': started.elapsedMilliseconds,
+        'backpressureMs': waitMs,
+      });
+    }
   }
 
   void _onMessage(RTCDataChannelMessage message) {
@@ -431,6 +511,9 @@ final class WebRtcGatewayTransport implements GatewayTransport {
         throw const FormatException('RTC requires CPG1 binary frames');
       }
       final envelope = _decoder.push(message.binary);
+      if (envelope is! RtcClose) {
+        _traffic.received(message.binary.length - rtcHeaderBytes);
+      }
       final now = _diagnostics.clock.elapsedMilliseconds;
       _receivedFrames++;
       _messageFrames++;
@@ -451,11 +534,13 @@ final class WebRtcGatewayTransport implements GatewayTransport {
         // RPC deadlines must not invalidate framing; heartbeat owns liveness.
         return;
       }
-      _diagnostics.emit('message.receive.complete', {
-        'bytes': envelope is RtcJson ? envelope.bytes.length : 0,
-        'frames': _messageFrames,
-        'durationMs': now - _messageStartedMs!,
-      });
+      if (_messageFrames > 1 || now - _messageStartedMs! >= 1000) {
+        _diagnostics.emit('message.receive.complete', {
+          'bytes': envelope is RtcJson ? envelope.bytes.length : 0,
+          'frames': _messageFrames,
+          'durationMs': now - _messageStartedMs!,
+        });
+      }
       _messageFrames = 0;
       _messageStartedMs = null;
       if (envelope is RtcClose) {

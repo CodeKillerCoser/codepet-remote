@@ -3,6 +3,7 @@ import 'dart:collection';
 
 import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 
+import '../core/domain/connection_traffic.dart';
 import '../core/domain/models.dart';
 import '../application/errors/application_failures.dart';
 import '../application/ports/gateway_client.dart';
@@ -20,6 +21,7 @@ final AppLog _log = AppLog.named('gateway.protocol');
 final class ProtocolGatewayClient
     implements
         GatewayClient,
+        ConnectionMetricsGatewayClient,
         ConversationResumeGatewayClient,
         ConversationReleaseGatewayClient,
         ConversationHistoryGatewayClient,
@@ -48,6 +50,11 @@ final class ProtocolGatewayClient
   }
 
   final GatewayTransport transport;
+  @override
+  ConnectionTraffic? get connectionTraffic {
+    final source = transport;
+    return source is MetricsGatewayTransport ? (source as MetricsGatewayTransport).connectionTraffic : null;
+  }
   final String clientId;
   final DeviceDescriptor clientDevice;
   final String expectedDeviceId;

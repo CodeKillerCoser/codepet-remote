@@ -3,6 +3,7 @@ import 'dart:async';
 import '../conversations/conversation_message_cache.dart';
 import '../conversations/recent_conversation_controller.dart';
 
+import '../../core/domain/connection_traffic.dart';
 import '../../core/domain/models.dart';
 import '../errors/application_failures.dart';
 import '../ports/application_log.dart';
@@ -205,6 +206,11 @@ class DeviceSession extends ApplicationNotifier {
   final void Function(GatewayEvent event)? onLiveEvent;
   final void Function(List<ConversationSummary> conversations)? onConversationSnapshot;
   GatewayClient? _client;
+  ConnectionTraffic? get connectionTraffic {
+    final client = _client;
+    if (connectionState != DeviceConnectionState.online) return null;
+    return client is ConnectionMetricsGatewayClient ? (client as ConnectionMetricsGatewayClient).connectionTraffic : null;
+  }
   GatewayEventWindow? _eventWindow;
   Timer? _reconnectTimer;
   StreamSubscription<void>? _reconnectSignalSubscription;

@@ -639,8 +639,9 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
             await ChannelPreferences.saveSignalingService(address);
             _savedSignalingService = address;
             _scheduleSignalingRegistrationRetry();
-            if (address != null)
+            if (address != null) {
               await _signalRegistration.register(address, force: true);
+            }
           },
           onWebRtcChanged: (enabled) async {
           await ChannelPreferences.saveWebRtcEnabled(enabled);

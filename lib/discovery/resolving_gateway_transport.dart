@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../core/domain/connection_traffic.dart';
 import '../core/domain/models.dart';
 import '../application/errors/application_failures.dart';
 import '../gateway/pinned_web_socket_transport.dart';
@@ -22,7 +23,7 @@ Uri? debugAndroidEmulatorGatewayCandidate(Uri preferredGatewayUri) {
 
 class ResolvingPinnedGatewayTransport
     implements GatewayTransport, EndpointAwareGatewayTransport,
-        EndpointPersistenceAwareGatewayTransport {
+        EndpointPersistenceAwareGatewayTransport, MetricsGatewayTransport {
   static const stableGatewayPort = 47622;
   static const defaultConnectTimeout = Duration(seconds: 8);
 
@@ -56,6 +57,11 @@ class ResolvingPinnedGatewayTransport
   final GatewayTransport Function(Uri gatewayUri, String credential, String certSha256) transportFactory;
   final StreamController<JsonMap> _events = StreamController<JsonMap>.broadcast();
   GatewayTransport? _active;
+  @override
+  ConnectionTraffic? get connectionTraffic {
+    final active = _active;
+    return active is MetricsGatewayTransport ? (active as MetricsGatewayTransport).connectionTraffic : null;
+  }
   GatewayTransport? _connectingCandidate;
   StreamSubscription<JsonMap>? _activeEvents;
   Future<void>? _closeFuture;

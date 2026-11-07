@@ -37,42 +37,48 @@ enum RtcPathPolicy {
     };
   }
 
-  bool _accepts(String candidate) {
-    final fields = candidate.split(RegExp(r'\s+'));
-    if (fields.length < 8 ||
-        fields[6] != 'typ' ||
-        fields[2].toLowerCase() != 'udp') {
-      return false;
+  /// Null means accepted. The diagnostic and SDP filter share this decision.
+  String? rejectionReason(String candidate) {
+    if (this == auto) return null;
+    final fields = candidate.trim().split(RegExp(r'\s+'));
+    if (fields.length < 8 || fields[6] != 'typ') {
+      return 'malformed';
     }
-    if (this == relay) return fields[7] == 'relay';
-    if (!const {'host', 'srflx', 'prflx'}.contains(fields[7])) return false;
+    if (fields[2].toLowerCase() != 'udp') return 'nonUdp';
+    if (this == relay) return fields[7] == 'relay' ? null : 'nonRelay';
+    if (!const {'host', 'srflx', 'prflx'}.contains(fields[7])) {
+      return 'nonDirect';
+    }
     final address = InternetAddress.tryParse(fields[4]);
-    if (address == null ||
-        address.isLoopback ||
-        address.isLinkLocal ||
-        address.isMulticast) {
-      return false;
-    }
+    if (address == null) return 'unresolvedAddress';
+    if (address.isLoopback) return 'loopback';
+    if (address.isLinkLocal) return 'linkLocal';
+    if (address.isMulticast) return 'multicast';
     final bytes = address.rawAddress;
-    if (bytes.every((b) => b == 0)) return false;
-    if (this == ipv4Direct) return address.type == InternetAddressType.IPv4;
-    return address.type == InternetAddressType.IPv6 &&
-        !(bytes.take(10).every((b) => b == 0) &&
-            bytes[10] == 255 &&
-            bytes[11] == 255);
+    if (bytes.every((b) => b == 0)) return 'unspecified';
+    if (this == ipv4Direct) {
+      return address.type == InternetAddressType.IPv4 ? null : 'wrongFamily';
+    }
+    if (address.type != InternetAddressType.IPv6) return 'wrongFamily';
+    if (bytes.take(10).every((b) => b == 0) &&
+        bytes[10] == 255 &&
+        bytes[11] == 255) {
+      return 'ipv4Mapped';
+    }
+    return null;
   }
 
-  String filterSdp(String sdp) {
+  String filterSdp(String sdp, {bool allowEmpty = false}) {
     if (this == auto) return sdp;
     var count = 0;
     final lines = sdp.split(RegExp(r'\r?\n')).where((line) {
       if (line.isEmpty || line.startsWith('a=remote-candidates:')) return false;
       if (!line.startsWith('a=candidate:')) return true;
-      final accepted = _accepts(line);
+      final accepted = rejectionReason(line) == null;
       if (accepted) count++;
       return accepted;
     }).toList();
-    if (count == 0) {
+    if (count == 0 && !allowEmpty) {
       throw GatewayConnectionException(
         'No ICE candidates for $wireName',
         retryable: true,

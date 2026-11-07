@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../core/domain/connection_traffic.dart';
 import '../../core/domain/models.dart';
 import '../../application/errors/application_failures.dart';
 import '../../discovery/codepet_discovery.dart';
@@ -33,7 +34,8 @@ class RoutedRtcTransport
     implements
         GatewayTransport,
         EndpointAwareGatewayTransport,
-        EndpointPersistenceAwareGatewayTransport {
+        EndpointPersistenceAwareGatewayTransport,
+        MetricsGatewayTransport {
   factory RoutedRtcTransport({
     required String deviceId,
     required Uri preferredGatewayUri,
@@ -43,7 +45,7 @@ class RoutedRtcTransport
     CodePetHostDirectory? hostDirectory,
     String? signalingService,
   }) {
-    final diagnostics = RtcDiagnostics();
+    final diagnostics = RtcDiagnostics(targetId: rtcOfferId(deviceId));
     diagnostics.raceId = diagnostics.connectionId;
     diagnostics.emit("race.target", {"targetId": rtcOfferId(deviceId)});
     final pairing = CloudPairing(deviceId, credential, certSha256);
@@ -71,7 +73,12 @@ class RoutedRtcTransport
             RtcPathPolicy.ipv4Direct,
             RtcPathPolicy.relay,
           ])
-            _cloudAttempt(state, policy, diagnostics.connectionId),
+            _cloudAttempt(
+              state,
+              policy,
+              diagnostics.connectionId,
+              diagnostics.targetId,
+            ),
         ];
       },
     );
@@ -97,9 +104,11 @@ class RoutedRtcTransport
     Map<String, dynamic> state,
     RtcPathPolicy policy,
     String raceId,
+    String? targetId,
   ) {
     final diagnostics = RtcDiagnostics(
       raceId: raceId,
+      targetId: targetId,
       pathPolicy: policy.wireName,
     );
     final signaling = CloudRtcSignaling(
@@ -135,6 +144,14 @@ class RoutedRtcTransport
   final _failures = <Object>[];
   final _result = Completer<void>();
   GatewayTransport? _active;
+  @override
+  ConnectionTraffic? get connectionTraffic {
+    final active = _active;
+    return active is MetricsGatewayTransport
+        ? (active as MetricsGatewayTransport).connectionTraffic
+        : null;
+  }
+
   Future<void>? _connecting;
   Future<void>? _closing;
   bool _closed = false;
@@ -166,6 +183,7 @@ class RoutedRtcTransport
     _diagnostics.emit("race.start", {
       "paths": ["lan", "ipv6-direct", "ipv4-direct", "relay"],
     });
+    unawaited(_diagnostics.networkSnapshot('raceStart'));
     _pending = 1;
     _start(RtcRouteAttempt('lan', local, timeout: lanTimeout));
     unawaited(_startCloud());
@@ -262,6 +280,7 @@ class RoutedRtcTransport
         "durationMs": started.elapsedMilliseconds,
         "paths": Map.of(_pathResults),
       });
+      unawaited(_diagnostics.networkSnapshot('raceSelected'));
       _armRelayRenewal(route.relayExpires?.call());
       AppLog.named('gateway.rtc')
           .info('Gateway race selected path=${route.name}');
@@ -318,6 +337,7 @@ class RoutedRtcTransport
       "paths": Map.of(_pathResults),
       ...rtcFailure(error),
     });
+    unawaited(_diagnostics.networkSnapshot('raceFailed'));
     _result.completeError(error);
     unawaited(close());
   }

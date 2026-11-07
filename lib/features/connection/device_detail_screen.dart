@@ -7,6 +7,7 @@ import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
 import '../../core/domain/paired_device.dart';
 import '../common/identity_icons.dart';
+import 'connection_traffic_view.dart';
 import 'device_connection_notice.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
@@ -102,6 +103,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
               _DetailRow(label: '系统', value: descriptor?.operatingSystem ?? '未知'),
               _DetailRow(label: '系统版本', value: descriptor?.systemVersion ?? '未知'),
               _DetailRow(label: '连接状态', value: _connectionLabel(session.connectionState)),
+              ConnectionTrafficView(read: () => session.connectionTraffic),
             ],
           ),
           if (DeviceConnectionNotice.shouldShow(session)) ...[

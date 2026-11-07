@@ -7,6 +7,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.net.Inet4Address
@@ -15,6 +16,7 @@ class MdnsBridge(private val applicationContext: Context, flutterEngine: Flutter
     private var multicastLock: WifiManager.MulticastLock? = null
     private var multicastLockHolders = 0
     private var activeDiscovery: NsdDiscoverySession? = null
+    private var lastDiagnostics: Map<String, Any?> = emptyMap()
 
     init {
         MethodChannel(
@@ -22,6 +24,7 @@ class MdnsBridge(private val applicationContext: Context, flutterEngine: Flutter
             "com.codepet.remote/mdns",
         ).setMethodCallHandler { call, result ->
             when (call.method) {
+                "diagnostics" -> result.success(activeDiscovery?.diagnostics() ?: lastDiagnostics)
                 "acquireMulticastLock" -> {
                     acquireMulticastLock()
                     result.success(null)
@@ -95,9 +98,21 @@ class MdnsBridge(private val applicationContext: Context, flutterEngine: Flutter
         private var discoveryStarted = false
         private var resolving = false
         private var finished = false
-        private val timeout = Runnable { finish(emptyList()) }
+        private val startedAt = SystemClock.elapsedRealtime()
+        private var phase = "created"
+        private var foundCount = 0
+        private var resolveFailures = 0
+        private var lastErrorCode: Int? = null
+        fun diagnostics(): Map<String, Any?> = mapOf(
+            "phase" to phase, "elapsedMs" to (SystemClock.elapsedRealtime() - startedAt),
+            "timeoutMs" to timeoutMillis, "discoveryStarted" to discoveryStarted,
+            "resolving" to resolving, "pendingCount" to pending.size,
+            "foundCount" to foundCount, "resolveFailures" to resolveFailures,
+            "lastErrorCode" to lastErrorCode, "finished" to finished)
+        private val timeout = Runnable { phase = "timerExpired"; finish(emptyList()) }
 
         fun start() {
+            phase = "startRequested"
             handler.postDelayed(timeout, timeoutMillis)
             try {
                 nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, this)
@@ -115,11 +130,15 @@ class MdnsBridge(private val applicationContext: Context, flutterEngine: Flutter
 
         override fun onDiscoveryStarted(regType: String) {
             discoveryStarted = true
+            phase = "discoveryStarted"
+            // A late callback after the timeout must not leave an NSD scan alive.
+            if (finished) stopDiscovery()
         }
 
         override fun onServiceFound(service: NsdServiceInfo) {
             if (finished || normalizeType(service.serviceType) != normalizeType(serviceType)) return
             pending.addLast(service)
+            foundCount++
             resolveNext()
         }
 
@@ -130,10 +149,12 @@ class MdnsBridge(private val applicationContext: Context, flutterEngine: Flutter
         }
 
         override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+            lastErrorCode = errorCode
             fail("nsd_start_failed", "Android NSD failed to start: $errorCode")
         }
 
         override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+            lastErrorCode = errorCode
             discoveryStarted = false
         }
 
@@ -141,11 +162,13 @@ class MdnsBridge(private val applicationContext: Context, flutterEngine: Flutter
         private fun resolveNext() {
             if (finished || resolving || pending.isEmpty()) return
             resolving = true
+            phase = "resolving"
             val service = pending.removeFirst()
             try {
                 nsdManager.resolveService(service, object : NsdManager.ResolveListener {
                     override fun onServiceResolved(resolved: NsdServiceInfo) {
                         resolving = false
+                        phase = "resolved"
                         val record = resolved.toDiscoveryRecord()
                         if (record != null) {
                             finish(listOf(record))
@@ -156,6 +179,8 @@ class MdnsBridge(private val applicationContext: Context, flutterEngine: Flutter
 
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
                         resolving = false
+                        resolveFailures++
+                        lastErrorCode = errorCode
                         resolveNext()
                     }
                 })
@@ -187,6 +212,7 @@ class MdnsBridge(private val applicationContext: Context, flutterEngine: Flutter
         private fun finish(records: List<Map<String, Any>>) {
             if (finished) return
             finished = true
+            lastDiagnostics = diagnostics()
             handler.removeCallbacks(timeout)
             stopDiscovery()
             if (activeDiscovery === this) activeDiscovery = null
@@ -196,6 +222,8 @@ class MdnsBridge(private val applicationContext: Context, flutterEngine: Flutter
         private fun fail(code: String, message: String) {
             if (finished) return
             finished = true
+            phase = code
+            lastDiagnostics = diagnostics()
             handler.removeCallbacks(timeout)
             stopDiscovery()
             if (activeDiscovery === this) activeDiscovery = null

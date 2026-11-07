@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../core/domain/connection_traffic.dart';
+import 'connection_traffic_meter.dart';
 import '../core/domain/models.dart';
 import '../application/errors/application_failures.dart';
 import '../security/pinned_tls.dart';
@@ -10,7 +12,10 @@ import 'transport.dart';
 
 final AppLog _log = AppLog.named('gateway.websocket');
 
-class PinnedWebSocketGatewayTransport implements GatewayTransport {
+class PinnedWebSocketGatewayTransport implements GatewayTransport, MetricsGatewayTransport {
+  final _traffic = ConnectionTrafficMeter(channel: 'lan');
+  @override
+  ConnectionTraffic get connectionTraffic => _traffic.snapshot;
   static const compressionOptions = CompressionOptions(
     clientNoContextTakeover: true,
     serverNoContextTakeover: true,
@@ -179,6 +184,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     final stopwatch = Stopwatch()..start();
     try {
       socket.add(encodedRequest);
+      _traffic.sent(requestBytes);
       final response = await completer.future.timeout(
         const Duration(seconds: 30),
         onTimeout: () {
@@ -215,6 +221,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport {
     try {
       if (frame is! String) throw const FormatException('Gateway requires text frames');
       final frameBytes = utf8.encode(frame).length;
+      _traffic.received(frameBytes);
       final decodeStopwatch = Stopwatch()..start();
       final decoded = jsonDecode(frame);
       final jsonDecodeUs = decodeStopwatch.elapsedMicroseconds;

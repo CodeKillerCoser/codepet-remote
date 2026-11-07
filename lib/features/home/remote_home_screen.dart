@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../connection/connection_traffic_view.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
 import '../common/identity_icons.dart';
@@ -171,6 +172,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
                     children: [
+                      ConnectionTrafficView(read: () => session.connectionTraffic, compact: true),
                       if (DeviceConnectionNotice.shouldShow(
                         session,
                         includeConnecting: true,

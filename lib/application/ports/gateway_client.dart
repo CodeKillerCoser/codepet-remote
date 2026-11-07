@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../sync/gateway_event_window.dart';
+import '../../core/domain/connection_traffic.dart';
 import '../../core/domain/models.dart';
 import 'trace_recorder.dart';
 
@@ -158,4 +159,8 @@ class ConversationSnapshot {
 /// Provider presence snapshots are control data, separate from replayable conversation events.
 abstract interface class ProviderSnapshotGatewayClient {
   Stream<List<GatewayProvider>> get providerSnapshots;
+}
+
+abstract interface class ConnectionMetricsGatewayClient {
+  ConnectionTraffic? get connectionTraffic;
 }

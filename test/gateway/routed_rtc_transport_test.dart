@@ -1,3 +1,4 @@
+import 'package:codepet_remote/core/domain/connection_traffic.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -16,7 +17,9 @@ class Candidate
     implements
         GatewayTransport,
         EndpointAwareGatewayTransport,
-        EndpointPersistenceAwareGatewayTransport {
+        EndpointPersistenceAwareGatewayTransport, MetricsGatewayTransport {
+  @override
+  ConnectionTraffic connectionTraffic = const ConnectionTraffic(channel: 'unknown');
   final ready = Completer<void>();
   final output = StreamController<JsonMap>.broadcast();
   bool started = false, closed = false;
@@ -53,6 +56,18 @@ class Candidate
 Future<void> tick() => Future<void>.delayed(Duration.zero);
 
 void main() {
+  test('metrics expose only the winning business channel', () async {
+    final lan = Candidate()..connectionTraffic = const ConnectionTraffic(channel:'lan', sentBytes:999);
+    final relay = Candidate()..connectionTraffic = const ConnectionTraffic(channel:'relay', receivedBytes:123);
+    final route = RoutedRtcTransport.withRoutes(local:lan, cloudRoutes:() async => [RtcRouteAttempt('relay', relay)]);
+    addTearDown(route.close);
+    expect(route.connectionTraffic, isNull);
+    final connected = route.connect();
+    await tick(); relay.ready.complete(); await connected;
+    expect(route.connectionTraffic!.channel, 'relay');
+    expect(route.connectionTraffic!.totalBytes, 123);
+  });
+
   test(
     'exported logs correlate race outcomes and distinguish cancellation',
     () async {

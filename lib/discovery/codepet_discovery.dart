@@ -214,16 +214,44 @@ class PlatformCodePetMulticastLock implements CodePetMulticastLock {
 }
 
 class PlatformCodePetNsdDiscovery {
-  static const MethodChannel _channel = MethodChannel('com.codepet.remote/mdns');
+  static const MethodChannel _channel = MethodChannel(
+    'com.codepet.remote/mdns',
+  );
+  static DateTime? _lastDiagnostic;
+
+  static Future<void> _diagnoseFailure() async {
+    final now = DateTime.now();
+    if (_lastDiagnostic != null &&
+        now.difference(_lastDiagnostic!) < const Duration(minutes: 1)) {
+      return;
+    }
+    _lastDiagnostic = now;
+    try {
+      final value = await _channel
+          .invokeMapMethod<String, dynamic>('diagnostics')
+          .timeout(const Duration(milliseconds: 500));
+      _log.event(
+        'discovery.nativeSnapshot',
+        value?.cast<String, Object?>() ?? {},
+      );
+    } catch (error) {
+      _log.event('discovery.nativeSnapshotUnavailable', {
+        'errorType': error.runtimeType.toString(),
+      });
+    }
+  }
 
   Future<List<DiscoveredCodePetHost>> discover(Duration timeout) async {
-    final records = await _channel.invokeMethod<List<dynamic>>(
-      'discoverServices',
-      {
-        'serviceType': '_codepet._tcp.',
-        'timeoutMillis': timeout.inMilliseconds,
-      },
-    );
+    final records = await _channel
+        .invokeMethod<List<dynamic>>('discoverServices', {
+          'serviceType': '_codepet._tcp.',
+          'timeoutMillis': timeout.inMilliseconds,
+        })
+        .timeout(timeout + const Duration(milliseconds: 400))
+        .catchError((Object error, StackTrace stack) {
+          unawaited(_diagnoseFailure());
+          Error.throwWithStackTrace(error, stack);
+        });
     if (records == null) return const [];
     return records
         .map(_decodeRecord)
@@ -251,19 +279,20 @@ class PlatformCodePetNsdDiscovery {
 RawDatagramSocketFactory codePetMdnsSocketFactory({
   required bool isAndroid,
   RawDatagramSocketFactory socketBinder = RawDatagramSocket.bind,
-}) => (
-  dynamic host,
-  int port, {
-  bool reuseAddress = true,
-  bool reusePort = false,
-  int ttl = 1,
-}) => socketBinder(
-  host,
-  port,
-  reuseAddress: reuseAddress,
-  reusePort: isAndroid ? false : reusePort,
-  ttl: ttl,
-);
+}) =>
+    (
+      dynamic host,
+      int port, {
+      bool reuseAddress = true,
+      bool reusePort = false,
+      int ttl = 1,
+    }) => socketBinder(
+      host,
+      port,
+      reuseAddress: reuseAddress,
+      reusePort: isAndroid ? false : reusePort,
+      ttl: ttl,
+    );
 
 class CodePetDiscovery {
   CodePetDiscovery({
