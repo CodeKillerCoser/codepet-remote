@@ -15,6 +15,35 @@ import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('restores structured failures without native message items and rejects foreign turns', () async {
+    final failed = _turnJson('failed-turn', status: 'failed')..['error'] = {
+      'code': 'quota_exceeded', 'message': 'Free usage limit reached', 'retryable': false,
+      'details': {'nativeCode': 'QuotaExceeded'},
+    };
+    final response = {'conversation': _conversationJson(), 'items': <Object>[],
+      'turns': [failed], 'snapshotCursor': 'opaque-handshake'};
+    final transport = _FakeTransport({
+      'protocol.handshake': _handshakeJson(),
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+      'conversation.get': response,
+    });
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'test',
+      clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect();
+    final snapshot = await client.getConversation(_domainConversation());
+    final turn = snapshot.detail.turns.single;
+    expect(turn.error!.message, 'Free usage limit reached');
+    expect(turn.error!.code, 'quota_exceeded');
+    expect(turn.error!.retryable, isFalse);
+    expect(turn.error!.details, {'nativeCode': 'QuotaExceeded'});
+    final legacy = TurnTask(id: turn.id, providerId: turn.providerId,
+      conversationId: turn.conversationId, status: turn.status, updatedAt: turn.updatedAt);
+    expect(snapshot.detail.withTurn(legacy).turns.single.error!.code, 'quota_exceeded');
+    (failed['conversation'] as Map<String,dynamic>)['nativeResourceId'] = 'foreign';
+    await expectLater(client.getConversation(_domainConversation()), throwsFormatException);
+    await client.close();
+  });
+
   test('recent uses generated v1 request and preserves Host order and read state', () async {
     final description = _providerDescriptionJson();
     (description['capabilities']['methods'] as List).add('conversation.recent');
@@ -77,13 +106,16 @@ void main() {
       }, responseBuilder: (method, params, id) => method == 'conversation.recent' ? {
         'jsonrpc': '2.0', 'id': id,
         'error': {'code': -32000, 'message': code,
-          'data': {'code': code, 'message': code, 'retryable': false}},
+          'data': {'code': code, 'message': code, 'retryable': false, 'details': {'stage': 'cursor'}}},
       } : null);
       final client = ProtocolGatewayClient(transport: transport, clientId: 'client-test',
         clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
       await client.connect();
       await expectLater(client.recentConversations(providerId: _providerId, cursor: 'old'),
-        throwsA(isA<GatewayProtocolException>().having((error) => error.code, 'code', code)));
+        throwsA(isA<GatewayProtocolException>().having((error) => error.code, 'code', code)
+          .having((error) => error.message, 'message', code)
+          .having((error) => error.retryable, 'retryable', false)
+          .having((error) => error.details, 'details', {'stage': 'cursor'})));
       await client.close();
     }
   });

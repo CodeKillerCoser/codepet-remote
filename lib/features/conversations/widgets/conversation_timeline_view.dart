@@ -24,6 +24,7 @@ class ConversationTimelineBlockView extends StatelessWidget {
   Widget build(BuildContext context) => switch (block) {
         UserMessageBlock value => _UserMessage(block: value),
         AssistantMessageBlock value => _AssistantMessage(block: value, allowCopy: allowCopy),
+        TurnFailureBlock value => _TurnFailure(block: value),
         TurnProcessBlock value => _TurnProcess(block: value),
         ReasoningBlock value => _ReasoningActivity(block: value),
         CommandBlock value => _CommandActivity(block: value),
@@ -32,6 +33,44 @@ class ConversationTimelineBlockView extends StatelessWidget {
         ApprovalBlock value => _ApprovalActivity(block: value),
         UnknownActivityBlock value => _UnknownActivity(block: value),
       };
+}
+
+class _TurnFailure extends StatelessWidget {
+  const _TurnFailure({required this.block});
+  final TurnFailureBlock block;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      container: true,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: colors.errorContainer,
+          borderRadius: BorderRadius.circular(12)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.error_outline, color: colors.onErrorContainer, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text('执行失败', style: TextStyle(
+              color: colors.onErrorContainer, fontWeight: FontWeight.w600))),
+          ]),
+          const SizedBox(height: 8),
+          SelectableText(block.message, style: TextStyle(color: colors.onErrorContainer)),
+          if (block.retryable) ...[
+            const SizedBox(height: 8),
+            Text('可稍后重新发送。', style: TextStyle(color: colors.onErrorContainer)),
+          ],
+          if (block.completedAt != null) ...[
+            const SizedBox(height: 4),
+            Text('${MaterialLocalizations.of(context).formatShortDate(block.completedAt!.toLocal())} '
+              '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(block.completedAt!.toLocal()))}',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(color: colors.onErrorContainer)),
+          ],
+        ]),
+      ),
+    );
+  }
 }
 
 class _UserMessage extends StatelessWidget {

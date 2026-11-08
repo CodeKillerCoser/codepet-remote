@@ -151,6 +151,9 @@ final class GeneratedGatewayMapper {
       conversationId: resourceKey(value.conversation),
       status: TurnStatus.fromWire(value.status.wireValue),
       displaySummary: value.displaySummary,
+      error: value.error == null ? null : TurnFailure(
+        code: value.error!.code, message: value.error!.message,
+        retryable: value.error!.retryable, details: value.error!.details),
       startedAt: startedAt,
       updatedAt: _time(value.updatedAt) ?? startedAt ?? _epoch,
       completedAt: _time(value.completedAt),

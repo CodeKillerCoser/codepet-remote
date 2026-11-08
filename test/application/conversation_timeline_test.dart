@@ -5,6 +5,25 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const projector = ConversationTimelineProjector();
 
+  test('failure remains visible after partial output and without any history item', () {
+    final turn = TurnTask(id: 'turn', providerId: 'provider', conversationId: 'conversation',
+      status: TurnStatus.failed, updatedAt: _epoch,
+      error: const TurnFailure(code: 'rate_limited', message: 'Too many requests', retryable: true));
+    final detail = ConversationDetail(summary: _summary, turns: [turn],
+      committedMessages: [_message(id: 'partial', content: 'Partial answer')]);
+    final blocks = projector.projectForDisplay(detail);
+    expect(blocks.whereType<AssistantMessageBlock>().single.text, 'Partial answer');
+    final failure = blocks.last as TurnFailureBlock;
+    expect(failure.message, 'Too many requests'); expect(failure.retryable, isTrue);
+    expect(projector.projectForDisplay(ConversationDetail(summary: _summary, turns: [turn]))
+      .whereType<TurnFailureBlock>().single.message, 'Too many requests');
+    final legacy = TurnTask(id: 'old', providerId: 'provider', conversationId: 'conversation',
+      status: TurnStatus.failed, updatedAt: _epoch, displaySummary: 'Legacy reason');
+    expect((projector.projectForDisplay(ConversationDetail(summary: _summary, turns: [legacy])).single
+      as TurnFailureBlock).message, 'Legacy reason');
+  });
+
+
   test('groups completed process separately from the final message and hides empty reasoning', () {
     final detail = ConversationDetail(summary: _summary,
       turns: [TurnTask(id: 'turn', providerId: 'provider', conversationId: 'conversation',

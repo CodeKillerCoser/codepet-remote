@@ -937,6 +937,15 @@ class GatewayHandshake {
       );
 }
 
+class TurnFailure {
+  const TurnFailure({required this.code, required this.message,
+    required this.retryable, this.details});
+  final String code;
+  final String message;
+  final bool retryable;
+  final JsonMap? details;
+}
+
 class TurnTask {
   const TurnTask({
     required this.id,
@@ -945,6 +954,7 @@ class TurnTask {
     required this.status,
     required this.updatedAt,
     this.displaySummary,
+    this.error,
     this.startedAt,
     this.completedAt,
     this.clientRequestId,
@@ -957,6 +967,7 @@ class TurnTask {
   final String conversationId;
   final TurnStatus status;
   final String? displaySummary;
+  final TurnFailure? error;
   final DateTime? startedAt;
   final DateTime updatedAt;
   final DateTime? completedAt;
@@ -971,6 +982,7 @@ class TurnTask {
         status: status,
         updatedAt: updatedAt,
         displaySummary: displaySummary,
+        error: error,
         startedAt: startedAt,
         completedAt: completedAt,
         clientRequestId: value,
@@ -1782,6 +1794,9 @@ TurnTask _newerTurn(TurnTask current, TurnTask incoming) {
   } else if (comparison > 0) {
     newer = incoming;
   } else if (comparison < 0) {
+    newer = current;
+  } else if (current.status == TurnStatus.failed && incoming.status == TurnStatus.failed &&
+      current.error != null && incoming.error == null) {
     newer = current;
   } else if (_turnStatusRank(incoming.status) >=
       _turnStatusRank(current.status)) {

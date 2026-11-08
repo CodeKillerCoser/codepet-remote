@@ -700,6 +700,7 @@ void main() {
           providerId: running.providerId,
           conversationId: running.conversationId,
           status: terminalStatus,
+          error: terminalStatus == TurnStatus.failed ? const TurnFailure(code: 'quota_exceeded', message: 'Free usage limit reached', retryable: false) : null,
           updatedAt: running.updatedAt,
           completedAt: running.updatedAt,
         ),
@@ -708,6 +709,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       expect(client.getCalls, 1);
+      if (terminalStatus == TurnStatus.failed) {
+        expect(find.text('Free usage limit reached'), findsOneWidget);
+        expect(find.text('执行失败'), findsOneWidget);
+      }
       expect(
         tester.widget<TextField>(find.byKey(const Key('turn-input'))).enabled,
         isTrue,

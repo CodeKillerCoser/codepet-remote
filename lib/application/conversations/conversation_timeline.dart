@@ -170,6 +170,16 @@ final class UnknownActivityBlock extends ConversationTimelineBlock {
   final String detail;
 }
 
+final class TurnFailureBlock extends ConversationTimelineBlock {
+  const TurnFailureBlock({required super.id, required super.turnId,
+    required this.message, required this.retryable, this.errorCode, this.completedAt})
+      : super(sourceItemIds: const [], isStreaming: false, status: 'failed');
+  final String message;
+  final bool retryable;
+  final String? errorCode;
+  final DateTime? completedAt;
+}
+
 final class TurnProcessBlock extends ConversationTimelineBlock {
   const TurnProcessBlock({required super.id, required super.turnId,
     required this.children, this.duration, required this.completed})
@@ -267,6 +277,18 @@ final class ConversationTimelineProjector {
       if (last != null) result.add(last);
       start = end;
     }
+    // Failures are separate from assistant/process output, including attempts
+    // with no native history item. Merge by turn identity, never by message text.
+    for (final turn in turns.values.where((turn) => turn.status == TurnStatus.failed)) {
+      final message = turn.error?.message ?? turn.displaySummary;
+      final failure = TurnFailureBlock(id: 'failure-${turn.id}', turnId: turn.id,
+        message: message == null || message.trim().isEmpty
+          ? '执行失败，Provider 未提供具体原因。' : message,
+        retryable: turn.error?.retryable ?? false, errorCode: turn.error?.code,
+        completedAt: turn.completedAt);
+      final index = result.lastIndexWhere((block) => block.turnId == turn.id);
+      result.insert(index < 0 ? result.length : index + 1, failure);
+    }
     return result;
   }
 
@@ -348,7 +370,7 @@ final class ConversationTimelineProjector {
     final contents = _contentsOf(item);
     switch (item.kind) {
       case 'message':
-        final text = _textFor(contents, const {'text'});
+        final text = _textFor(contents, const {'text', 'activity-summary'});
         if (item.role == MessageRole.user) {
           return UserMessageBlock(
             id: common.id,

@@ -778,6 +778,12 @@ final class ProtocolGatewayClient
       }
     }
 
+    for (final turn in response.turns ?? const <sdk.TurnTask>[]) {
+      if (_mapper.resourceKey(turn.conversation) != _mapper.resourceKey(requested) ||
+          !_mapper.hasSameRoute(turn.resource, requested)) {
+        throw const FormatException('Conversation terminal turn providerId mismatch');
+      }
+    }
     final summary = _mapper.conversation(response.conversation);
     final activeTurn = responseActiveTurn == null ? null : _mapper.turn(responseActiveTurn);
     final snapshotCursor = response.snapshotCursor;
@@ -794,7 +800,7 @@ final class ProtocolGatewayClient
       detail: ConversationDetail(
         summary: summary,
         committedMessages: committedMessages,
-        turns: [?activeTurn],
+        turns: [for (final turn in response.turns ?? const <sdk.TurnTask>[]) _mapper.turn(turn), ?activeTurn],
         lastEventCursor: snapshotCursor,
       ),
       snapshotCursor: snapshotCursor,
@@ -1252,7 +1258,7 @@ final class ProtocolGatewayClient
             : 'gateway_rpc_${error.error.code}',
         message: error.error.message,
         retryable: data?['retryable'] == true,
-        details: data == null ? null : Map<String, dynamic>.from(data),
+        details: data?['details'] is Map ? Map<String, dynamic>.from(data!['details'] as Map) : null,
       );
     } on sdk.ProtocolCodecException catch (error) {
       throw FormatException(error.toString());
