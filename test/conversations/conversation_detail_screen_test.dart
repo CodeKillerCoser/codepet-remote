@@ -50,6 +50,8 @@ void main() {
     await tester.pumpAndSettle();
     final input = find.byKey(const Key('turn-input'));
     await tester.enterText(input, 'existing draft');
+    await tester.tap(find.byKey(const Key('queue-menu-a')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('queue-edit-a')));
     await tester.pumpAndSettle();
     final field = tester.widget<TextField>(input);
@@ -58,6 +60,8 @@ void main() {
     expect(field.controller!.selection.baseOffset, 7);
     expect(client.acknowledged, ['a']);
     expect(find.byKey(const Key('queue-item-a')), findsNothing);
+    await tester.tap(find.byKey(const Key('queue-menu-b')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('queue-delete-b')));
     await tester.pumpAndSettle();
     expect(tester.widget<TextField>(input).controller!.text, 'edit me');
@@ -74,6 +78,8 @@ void main() {
     await _pumpDetail(tester, client, conversation: _idleConversation(activeTurn: _queueTurn));
     await tester.pumpAndSettle();
     final historyReads = client.getCalls;
+    await tester.tap(find.byKey(const Key('queue-menu-a')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('queue-steer-a')));
     await tester.pumpAndSettle();
     expect(client.steeredTurns, ['active']);
@@ -100,8 +106,8 @@ void main() {
     await tester.enterText(find.byKey(const Key('turn-input')), 'retry me');
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    await tester.ensureVisible(find.byKey(const Key('queue-edit-a')));
-    expect(find.byKey(const Key('queue-edit-a')).hitTestable(), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('queue-menu-a')));
+    expect(find.byKey(const Key('queue-menu-a')).hitTestable(), findsOneWidget);
     client.failEnqueue = true;
     await tester.tap(find.byKey(const Key('turn-send')));
     await tester.pumpAndSettle();

@@ -68,6 +68,28 @@ void main() {
     }
   });
 
+  test('separates mixed reasoning and text within one streamed item', () {
+    var detail = ConversationDetail(summary: _summary);
+    for (final content in [
+      ('reasoning-summary', 'thought', 'think'),
+      ('text', 'answer', 'visible reply'),
+      ('text', 'answer', ' continued'),
+    ]) {
+      detail = detail.apply(TurnOutputDeltaEvent(eventCursor: content.$3,
+        providerId: 'provider', conversationId: 'conversation', turnId: 'turn',
+        itemId: 'shared-native-item', contentId: content.$2,
+        kind: content.$1, delta: content.$3));
+    }
+    for (final snapshot in [detail, ConversationDetail(summary: _summary,
+      committedMessages: detail.liveOutputMessages)]) {
+      final blocks = projector.projectForDisplay(snapshot);
+      expect(blocks.whereType<AssistantMessageBlock>().single.text, 'visible reply continued');
+      final process = blocks.whereType<TurnProcessBlock>().single;
+      expect((process.children.single as ReasoningBlock).summary, 'think');
+      expect(blocks.map((b) => b.id).toSet(), hasLength(blocks.length));
+    }
+  });
+
   test('merges file change counts without inventing details or duplicate item counts', () {
     final first = _message(id: 'files', kind: 'file-change', content: '2 file change(s)');
     final detail = ConversationDetail(summary: _summary, committedMessages: [first, first,

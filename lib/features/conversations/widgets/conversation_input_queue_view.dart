@@ -93,10 +93,37 @@ class ConversationInputQueueView extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            item.text,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                          Row(
+                            children: [
+                              Expanded(child: Text(item.text, maxLines: 2,
+                                overflow: TextOverflow.ellipsis)),
+                              PopupMenuButton<String>(
+                                key: ValueKey('queue-menu-${item.id}'),
+                                tooltip: '消息操作',
+                                icon: const Icon(Icons.more_horiz),
+                                onSelected: (action) {
+                                  switch (action) {
+                                    case 'steer': onSteer(item);
+                                    case 'edit': onEdit(item);
+                                    case 'delete': onDelete(item);
+                                  }
+                                },
+                                itemBuilder: (_) => [
+                                  PopupMenuItem(value: 'steer',
+                                    key: ValueKey('queue-steer-${item.id}'),
+                                    enabled: enabled && canSteer && item.editable,
+                                    child: const Text('引导')),
+                                  PopupMenuItem(value: 'edit',
+                                    key: ValueKey('queue-edit-${item.id}'),
+                                    enabled: enabled && item.editable,
+                                    child: const Text('重新编辑')),
+                                  PopupMenuItem(value: 'delete',
+                                    key: ValueKey('queue-delete-${item.id}'),
+                                    enabled: enabled && (item.editable || item.uncertain),
+                                    child: Text(item.uncertain ? '核对后移除' : '删除')),
+                                ],
+                              ),
+                            ],
                           ),
                           if (!item.editable)
                             Text(switch (item.state) {
@@ -114,33 +141,6 @@ class ConversationInputQueueView extends StatelessWidget {
                                     color: Theme.of(context).colorScheme.error,
                                   ),
                             ),
-                          Wrap(
-                            spacing: 2,
-                            children: [
-                              TextButton(
-                                key: ValueKey('queue-steer-${item.id}'),
-                                onPressed: enabled && canSteer && item.editable
-                                    ? () => onSteer(item)
-                                    : null,
-                                child: const Text('引导'),
-                              ),
-                              TextButton(
-                                key: ValueKey('queue-edit-${item.id}'),
-                                onPressed: enabled && item.editable
-                                    ? () => onEdit(item)
-                                    : null,
-                                child: const Text('重新编辑'),
-                              ),
-                              TextButton(
-                                key: ValueKey('queue-delete-${item.id}'),
-                                onPressed:
-                                    enabled && (item.editable || item.uncertain)
-                                    ? () => onDelete(item)
-                                    : null,
-                                child: Text(item.uncertain ? '核对后移除' : '删除'),
-                              ),
-                            ],
-                          ),
                         ],
                       ),
                     ),

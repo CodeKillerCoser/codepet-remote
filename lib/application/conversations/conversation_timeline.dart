@@ -218,7 +218,7 @@ final class ConversationTimelineProjector {
     }
 
     final blocks = <ConversationTimelineBlock>[];
-    for (final item in items) {
+    for (final item in items.expand(_splitTextContents)) {
       if (item.kind == 'approval' &&
           item.relatedItemId != null &&
           attachedApprovals.containsKey(item.relatedItemId)) {
@@ -314,6 +314,30 @@ final class ConversationTimelineProjector {
       }
     }
     return FileChangeSummary(count: count, details: details.toList());
+  }
+
+  // A stream item can carry several content kinds. Item kind is inferred from
+  // its first delta; it must not turn a later text block into hidden reasoning.
+  Iterable<GatewayMessage> _splitTextContents(GatewayMessage item) sync* {
+    if (item.role == MessageRole.user ||
+        !const {'message', 'reasoning'}.contains(item.kind) ||
+        !item.contents.any((c) => c.kind == 'reasoning-summary') ||
+        !item.contents.any((c) => c.kind == 'text')) {
+      yield item;
+      return;
+    }
+    for (final content in item.contents) {
+      yield GatewayMessage(
+        id: '${item.id}:content:${content.id}', itemId: item.itemId ?? item.id,
+        turnId: item.turnId, role: MessageRole.assistant,
+        kind: switch (content.kind) {
+          'text' => 'message', 'reasoning-summary' => 'reasoning', _ => item.kind,
+        },
+        content: content.displayText, contents: [content], contentIds: [content.id],
+        createdAt: item.createdAt, isStreaming: item.isStreaming,
+        isLiveOutput: item.isLiveOutput, status: item.status,
+      );
+    }
   }
 
   List<GatewayMessage> _mergeItems(List<GatewayMessage> messages) {
