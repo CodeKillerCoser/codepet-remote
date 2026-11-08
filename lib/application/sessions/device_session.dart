@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import '../conversations/conversation_message_cache.dart';
+import '../ports/conversation_input_queue_gateway.dart';
+import '../../core/domain/conversation_input_queue.dart';
 import '../conversations/recent_conversation_controller.dart';
 
 import '../../core/domain/connection_traffic.dart';
@@ -34,6 +36,8 @@ class DeviceSessionRuntimeLease {
         identityHashCode(_client),
       );
 
+  ConversationInputQueueGatewayClient? get inputQueue => _client is ConversationInputQueueGatewayClient
+      ? _client as ConversationInputQueueGatewayClient : null;
   GatewayEventWindow openEventWindow() => _client.openEventWindow();
 
   Future<ConversationSnapshot> getConversation(
@@ -108,6 +112,10 @@ class DeviceSessionRuntimeLease {
 }
 
 class DeviceSession extends ApplicationNotifier {
+  // UI projections/drafts only; the Host owns the durable queue.
+  final Map<String, PendingQueueSubmission> pendingQueueSubmissions = {};
+  final Map<String, List<ConversationDraftBackup>> queueDraftBackups = {};
+  final Map<String, int> inputQueueRevisions = {};
   DeviceSession({
     required this.device,
     required this.clientFactory,
@@ -1254,6 +1262,12 @@ class DeviceSession extends ApplicationNotifier {
 
   void _applyEvent(GatewayEvent event) {
     onLiveEvent?.call(event);
+    if (event is ConversationInputQueueChangedEvent) {
+      final key = event.conversation.key;
+      inputQueueRevisions[key] = event.revision;
+      _notifyListenersImmediately();
+      return;
+    }
     if (event is GatewayProviderChangedEvent) {
       _applyProviderUpdate(event.provider);
       return;

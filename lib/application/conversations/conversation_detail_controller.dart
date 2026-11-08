@@ -4,6 +4,8 @@ import 'dart:math';
 import 'conversation_message_cache.dart';
 
 import '../../core/domain/models.dart';
+import '../../core/domain/conversation_input_queue.dart';
+import '../ports/conversation_input_queue_gateway.dart';
 import '../errors/application_failures.dart';
 import '../ports/gateway_client.dart';
 import '../ports/trace_recorder.dart';
@@ -28,6 +30,14 @@ class ConversationDetailController extends ApplicationNotifier {
     session.addListener(_sessionChanged);
   }
 
+  Timer? _queueTimer;
+  ConversationInputQueue? _queueProjection;
+  DeviceSessionRuntimeLease? _queueLease;
+  bool _queueLoading = false;
+  bool _queueBusy = false;
+  String? _queueError;
+  String? _queueNotice;
+  int? _queueEventRevision;
   DeviceSession _session;
   late ConversationSummary _conversation;
   final DateTime Function() _now;
@@ -244,6 +254,11 @@ class ConversationDetailController extends ApplicationNotifier {
   }
 
   void _sessionChanged() {
+    final queueRevision = _session.inputQueueRevisions[_queueKey];
+    if (queueRevision != _queueEventRevision) {
+      _queueEventRevision = queueRevision;
+      unawaited(refreshInputQueue());
+    }
     if (interactionPaused) {
       _interactionRetryTimer?.cancel();
       _interactionRetryTimer = null;
@@ -326,6 +341,7 @@ class ConversationDetailController extends ApplicationNotifier {
     notifyApplicationListeners();
     if (lease == null || provider == null || binding == null) return;
     if (!provider.capabilitiesLoaded) return;
+    unawaited(refreshInputQueue());
     final source = _session.messageCache.acquire(conversation, binding);
     _source = source;
     source.addListener(_sourceChanged);
@@ -865,20 +881,17 @@ class ConversationDetailController extends ApplicationNotifier {
         !_staleCapabilities &&
         !_sending &&
         !_outcomeUnknown &&
-        !conversationBlocksSend &&
+        (supportsInputQueue ? _detail?.summary.status != ConversationStatus.archived && queueReady && pendingQueueSubmission == null : !conversationBlocksSend) &&
         selectionValid &&
         text.trim().isNotEmpty;
   }
 
-  bool get composerEnabled =>
-      _detail != null &&
-      _provider?.isAvailable == true &&
-      _provider?.methods.contains('turn.send') == true &&
-      !interactionPaused && _interactionAcquired &&
-      !_staleCapabilities &&
-      !_sending &&
-      !conversationBlocksSend &&
-      !_outcomeUnknown;
+  bool get composerEnabled => supportsInputQueue
+      ? _detail != null && _detail!.summary.status != ConversationStatus.archived
+      : _detail != null && _provider?.isAvailable == true &&
+        _provider?.methods.contains('turn.send') == true &&
+        !interactionPaused && _interactionAcquired && !_staleCapabilities &&
+        !_sending && !conversationBlocksSend && !_outcomeUnknown;
 
   bool get canInterrupt {
     final lease = _session.runtimeLease;
@@ -983,6 +996,7 @@ class ConversationDetailController extends ApplicationNotifier {
 
   Future<bool> _send(String text) async {
     if (!canSend(text)) return false;
+    if (supportsInputQueue) return _enqueueInput(text);
     final lease = _session.runtimeLease;
     final provider = _provider;
     final binding = _binding;
@@ -1119,10 +1133,12 @@ class ConversationDetailController extends ApplicationNotifier {
   }
 
   String get composerHint {
-    if (_session.runtimeLease == null) return '设备离线';
+    if (_session.runtimeLease == null) return supportsInputQueue ? '设备离线，可先编辑草稿' : '设备离线';
     if (_staleCapabilities) return 'Provider 能力已变化，正在刷新';
     if (_detail == null) return '正在加载会话';
     if (_outcomeUnknown) return '发送结果未知，请先刷新会话核对';
+    if (supportsInputQueue && pendingQueueSubmission != null) return '上次入队尚未确认，可保留当前草稿';
+    if (supportsInputQueue && conversationBlocksSend && _detail!.summary.status != ConversationStatus.archived) return '输入消息加入队列，或引导当前任务';
     final status = _detail!.summary.status;
     if (_detail!.activeTurn != null || status == ConversationStatus.running) {
       return '当前任务仍在运行';
@@ -1144,9 +1160,139 @@ class ConversationDetailController extends ApplicationNotifier {
     return '继续对话';
   }
 
+  String get _queueKey => currentConversation.resource?.key ?? conversationRoutingKey(currentConversation);
+  bool get supportsInputQueue => _provider?.methods.contains('conversation.inputQueue.enqueue') == true;
+  ConversationInputQueue? get inputQueue => _queueProjection?.conversation == currentConversation.resource ? _queueProjection : null;
+  bool get queueReady => inputQueue != null && _queueLease != null &&
+      _session.ownsRuntimeLease(_queueLease!) && _session.runtimeLease?.inputQueue != null;
+  bool get queueBusy => _queueBusy;
+  String? get queueError => _queueError;
+  String? get queueNotice => _queueNotice;
+  PendingQueueSubmission? get pendingQueueSubmission => _session.pendingQueueSubmissions[_queueKey];
+  bool get canQueueAction => queueReady && !_queueBusy;
+  bool get canSteerQueuedInput => canQueueAction && _interactionAcquired && !interactionPaused &&
+      _provider?.methods.contains('conversation.inputQueue.steer') == true &&
+      _detail?.activeTurn != null && _detail?.effectiveStatus == ConversationStatus.running &&
+      pendingApproval == null;
+  bool get hasSavedQueueDraft => _session.queueDraftBackups[_queueKey]?.isNotEmpty == true;
+  void preserveQueueDraft(String text) {
+    if (text.trim().isEmpty) { return; }
+    (_session.queueDraftBackups[_queueKey] ??= []).add(ConversationDraftBackup(text, selection));
+  }
+  ConversationDraftBackup? takeSavedQueueDraft() {
+    final drafts = _session.queueDraftBackups[_queueKey];
+    return drafts == null || drafts.isEmpty ? null : drafts.removeLast();
+  }
+  void restoreQueueSelection(TurnSendSelection value) {
+    _accessModeId = value.accessModeId; _reasoningEffortId = value.reasoningEffortId;
+    _modelSelection = value.model; notifyApplicationListeners();
+  }
+  Future<void> refreshInputQueue() async {
+    final lease = _session.runtimeLease;
+    final client = lease?.inputQueue;
+    if (_disposed || _queueLoading || !supportsInputQueue || lease == null || client == null) return;
+    _queueTimer ??= Timer.periodic(const Duration(seconds: 3), (_) => unawaited(refreshInputQueue()));
+    final conversation = currentConversation;
+    final epoch = _runtimeEpoch;
+    _queueLoading = true;
+    try {
+      final snapshot = await client.getInputQueue(conversation);
+      if (_disposed || epoch != _runtimeEpoch || !_session.ownsRuntimeLease(lease) ||
+          currentConversation.resource != conversation.resource) { return; }
+      if (_queueLease?.sameRuntime(lease) == true && inputQueue != null && snapshot.revision < inputQueue!.revision) { return; }
+      final changed = !queueReady || inputQueue?.revision != snapshot.revision || _queueError != null;
+      _queueProjection = snapshot; _queueLease = lease;
+      if (_queueError?.startsWith('刷新待发队列失败') == true) _queueError = null;
+      if (changed) notifyApplicationListeners();
+    } catch (error) {
+      if (!_disposed && epoch == _runtimeEpoch && _session.ownsRuntimeLease(lease)) {
+        _queueError = '刷新待发队列失败：$error'; _queueLease = null;
+        notifyApplicationListeners();
+      }
+    } finally { _queueLoading = false; }
+  }
+  Future<bool> _enqueueInput(String text) async {
+    final attempt = PendingQueueSubmission(requestId: _newClientRequestId(), text: text,
+      selection: selection, capabilityRevision: _provider!.capabilities.revision);
+    _session.pendingQueueSubmissions[_queueKey] = attempt;
+    return retryQueueSubmission();
+  }
+  Future<bool> retryQueueSubmission() async {
+    final attempt = pendingQueueSubmission;
+    final session = _session;
+    final lease = session.runtimeLease;
+    final client = lease?.inputQueue;
+    if (attempt == null || lease == null || client == null || _sending) return false;
+    final key = _queueKey; final conversation = currentConversation; final epoch = _runtimeEpoch;
+    _sending = true; _sendError = null; notifyApplicationListeners();
+    try {
+      await client.enqueueInput(conversation, attempt);
+      if (identical(session.pendingQueueSubmissions[key], attempt)) session.pendingQueueSubmissions.remove(key);
+      if (_disposed || !identical(session, _session) || epoch != _runtimeEpoch || !session.ownsRuntimeLease(lease)) return false;
+      _sendError = null; _queueError = null; _queueNotice = null;
+      await refreshInputQueue(); return true;
+    } catch (error) {
+      if (error is GatewayProtocolException && !isGatewayOutcomeUnknown(error)) {
+        if (identical(session.pendingQueueSubmissions[key], attempt)) session.pendingQueueSubmissions.remove(key);
+      }
+      if (!_disposed && identical(session, _session) && key == _queueKey) {
+        _sendError = session.pendingQueueSubmissions.containsKey(key)
+            ? '入队结果尚未确认。请核对原请求，避免重复添加。' : error.toString();
+      }
+      return false;
+    } finally {
+      if (!_disposed && identical(session, _session) && key == _queueKey) {
+        _sending = false; notifyApplicationListeners();
+      }
+    }
+  }
+  Future<T?> _queueAction<T>(Future<T> Function(ConversationInputQueueGatewayClient client) action) async {
+    final lease = _session.runtimeLease; final client = lease?.inputQueue;
+    if (!canQueueAction || lease == null || client == null) return null;
+    final key = _queueKey; final epoch = _runtimeEpoch;
+    _queueBusy = true; _queueError = null; _queueNotice = null; notifyApplicationListeners();
+    try {
+      final result = await action(client);
+      if (_disposed || epoch != _runtimeEpoch || !_session.ownsRuntimeLease(lease) || key != _queueKey) return null;
+      return result;
+    } catch (error) {
+      if (!_disposed && epoch == _runtimeEpoch) _queueError = '队列操作未完成：$error';
+      return null;
+    } finally {
+      _queueBusy = false;
+      if (!_disposed) { await refreshInputQueue(); notifyApplicationListeners(); }
+    }
+  }
+  Future<ConversationQueuedInput?> withdrawQueuedInput(ConversationQueuedInput item, {required bool edit}) {
+    final conversation = currentConversation; final revision = inputQueue?.revision ?? 0;
+    return _queueAction((client) => client.withdrawInput(conversation, itemId: item.id,
+      requestId: _newClientRequestId(), expectedRevision: revision, edit: edit));
+  }
+  Future<void> acknowledgeQueuedEdit(ConversationQueuedInput item) async {
+    final conversation = currentConversation;
+    await _queueAction((client) => client.acknowledgeInputEdit(conversation, itemId: item.id));
+  }
+  Future<void> steerQueuedInput(ConversationQueuedInput item) async {
+    if (!canSteerQueuedInput) return;
+    final conversation = currentConversation; final turn = _detail!.activeTurn!;
+    final revision = inputQueue!.revision; final capability = _provider!.capabilities.revision;
+    final result = await _queueAction((client) => client.steerInput(conversation,
+      itemId: item.id, requestId: _newClientRequestId(), expectedRevision: revision,
+      turn: turn, capabilityRevision: capability));
+    if (result?.state == 'accepted') {
+      _queueNotice = '引导已受理，等待消息同步；使用当前任务的模型与权限。';
+      notifyApplicationListeners();
+    }
+  }
+  Future<void> resumeInputQueue() async {
+    final conversation = currentConversation; final revision = inputQueue?.revision ?? 0;
+    await _queueAction((client) => client.resumeInputQueue(conversation, expectedRevision: revision));
+  }
+
   @override
   void dispose() {
     _disposed = true;
+    _queueTimer?.cancel();
     _runtimeEpoch++;
     _interactionRetryTimer?.cancel();
     _session.removeListener(_sessionChanged);

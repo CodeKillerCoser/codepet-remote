@@ -42,7 +42,9 @@ Provider 插件的作者。Provider 是由 Code Pet Host 启动的独立进程�
 协商后的 `stdio-codepet-mux-v1` 通道。Provider 不需要感知分片、窗口、raw/zstd、尺寸检查，也不需要依赖
 Tauri、Code Pet Host 或 Desktop 私有 IPC。
 
-SDK runtime 还随导出分发心跳：Dart Gateway client 的 GatewayHeartbeatClient 发送 protocol.ping 并输出 Provider 摘要；Rust Gateway 的 GatewayHeartbeat 校验顺序和失联 deadline。Host→Provider 的 run_provider_heartbeats 由连接快照与实例状态 watch 唤醒。Provider serve_stdio 直接确认 provider.ping，独立协调任务根据连接集合调用幂等 instance.start/stop。Server 模式 adapter 必须每实例仅一个 Server，start/stop 支持重复调用，并保证 stop 可以取消未完成的 initialize。最后客户端离线或 Host 心跳过期会停止 Harness，包括 active turn；插件进程仍继续服务。stdio 是 Provider IPC，不属于 Remote channel。
+SDK runtime 分发心跳和 release-control 安全准入：GatewayHeartbeatClient / GatewayHeartbeat 管理连通性；Host→Provider 的 run_provider_heartbeats 传播连接快照。Provider serve_stdio 确认 provider.ping，不根据心跳调用 start/stop。Host 按 `instance.releaseControl` 能力调度，默认要求持续业务空闲 300 秒；SDK 的 Activity 与独占执行门验证无任务、审批、等待输入、未完成请求或未知发送结果，再调用适配器实现。SDK 内不再创建空闲定时器，`StdioServerOptions.idle_timeout` / `restart_after_idle` 已移除；旧调用方应删除这些配置。需要参与的 Provider 在能力中声明新方法并实现它，未声明者保持原生命周期。Codex 实现释放旧 Server 并启动干净 Server，不恢复旧会话；Claude/OpenCode 不声明。Host 的 `PluginManagerConfig.release_control_idle_timeout` 取代原 Codex 进程的环境变量覆盖。
+
+适配器必须发布真实生命周期与任务终态，未知 start/steer 结果可通过错误 details.outcome="unknown" 保守保留。业务请求准入与回收互斥；后台读和心跳不续期。启用回收的 Server 模式每实例仅一个 Server，空闲释放清掉旧锁，新进程不批量 resume 旧会话。明确手动停止、stdio EOF 与 shutdown 沿用原清理合同。stdio 是 Provider IPC，不属于手机连接；手机失联不终止任务。
 
 ## 1. 分发内容
 

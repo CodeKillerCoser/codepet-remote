@@ -1,0 +1,180 @@
+import 'package:flutter/material.dart';
+
+import '../../../core/domain/conversation_input_queue.dart';
+
+class ConversationInputQueueView extends StatelessWidget {
+  const ConversationInputQueueView({
+    super.key,
+    required this.queue,
+    required this.enabled,
+    required this.canSteer,
+    required this.onSteer,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onRestore,
+    required this.onResume,
+    required this.onRefresh,
+    this.error,
+    this.notice,
+  });
+  final ConversationInputQueue? queue;
+  final bool enabled;
+  final bool canSteer;
+  final void Function(ConversationQueuedInput) onSteer,
+      onEdit,
+      onDelete,
+      onRestore;
+  final VoidCallback onResume, onRefresh;
+  final String? error, notice;
+  @override
+  Widget build(BuildContext context) {
+    final snapshot = queue;
+    final count = snapshot?.items.length ?? 0;
+    final edits =
+        snapshot?.recoverableEdits ?? const <ConversationQueuedInput>[];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                snapshot == null
+                    ? '正在读取待发队列…'
+                    : '待发送 $count 条${snapshot.paused ? ' · 已暂停' : ''}',
+                key: const Key('input-queue-title'),
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ),
+            if (snapshot?.paused == true && count > 0)
+              TextButton(
+                key: const Key('input-queue-resume'),
+                onPressed: enabled ? onResume : null,
+                child: const Text('继续队列'),
+              ),
+            IconButton(
+              tooltip: '刷新队列',
+              visualDensity: VisualDensity.compact,
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh, size: 18),
+            ),
+          ],
+        ),
+        if (count > 0 || edits.isNotEmpty)
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * .22,
+            ),
+            child: SingleChildScrollView(
+              key: const Key('input-queue-scroll'),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final item
+                      in snapshot?.items ?? const <ConversationQueuedInput>[])
+                    Container(
+                      key: ValueKey('queue-item-${item.id}'),
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 5,
+                      ),
+                      margin: const EdgeInsets.only(bottom: 4),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerLow,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.text,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (!item.editable)
+                            Text(switch (item.state) {
+                              'outcomeUnknown' => '发送结果未知，请核对会话后移除记录。',
+                              'steering' => '正在引导当前任务…',
+                              _ => '正在发送…',
+                            }, style: Theme.of(context).textTheme.bodySmall),
+                          if (item.errorMessage != null)
+                            Text(
+                              item.errorMessage!,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                            ),
+                          Wrap(
+                            spacing: 2,
+                            children: [
+                              TextButton(
+                                key: ValueKey('queue-steer-${item.id}'),
+                                onPressed: enabled && canSteer && item.editable
+                                    ? () => onSteer(item)
+                                    : null,
+                                child: const Text('引导'),
+                              ),
+                              TextButton(
+                                key: ValueKey('queue-edit-${item.id}'),
+                                onPressed: enabled && item.editable
+                                    ? () => onEdit(item)
+                                    : null,
+                                child: const Text('重新编辑'),
+                              ),
+                              TextButton(
+                                key: ValueKey('queue-delete-${item.id}'),
+                                onPressed:
+                                    enabled && (item.editable || item.uncertain)
+                                    ? () => onDelete(item)
+                                    : null,
+                                child: Text(item.uncertain ? '核对后移除' : '删除'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  for (final item in edits)
+                    ListTile(
+                      key: ValueKey('queue-recover-${item.id}'),
+                      dense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      title: Text(
+                        item.text,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: const Text('已撤回，尚未确认恢复到输入框'),
+                      trailing: TextButton(
+                        onPressed: enabled ? () => onRestore(item) : null,
+                        child: const Text('恢复编辑'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        if (error != null)
+          Text(
+            error!,
+            key: const Key('input-queue-error'),
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: Theme.of(context).colorScheme.error),
+          ),
+        if (notice != null)
+          Text(
+            notice!,
+            key: const Key('input-queue-notice'),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+      ],
+    );
+  }
+}

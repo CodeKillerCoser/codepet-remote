@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:codepet_remote/application/ports/conversation_input_queue_gateway.dart';
+import 'package:codepet_remote/core/domain/conversation_input_queue.dart';
 
 import 'package:codepet_remote/core/domain/connection_traffic.dart';
 
@@ -16,6 +18,102 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 void main() {
+
+  testWidgets('queue accepts while active, preserves typing during acknowledgement, and never stages a fake chat message', (tester) async {
+    final client = _QueueDetailClient();
+    final ack = Completer<ConversationQueuedInput>();
+    client.enqueueResult = ack.future;
+    await _pumpDetail(tester, client, conversation: _idleConversation(activeTurn: _queueTurn));
+    await tester.pumpAndSettle();
+    final input = find.byKey(const Key('turn-input'));
+    await tester.enterText(input, 'queued input');
+    await tester.pump();
+    expect(find.byKey(const Key('turn-interrupt')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('turn-send')));
+    await tester.pump();
+    expect(client.enqueues.single.text, 'queued input');
+    expect(client.sendCalls, isEmpty);
+    await tester.enterText(input, 'next draft');
+    ack.complete(_queueItem('sent', 'queued input'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(input).controller!.text, 'next draft');
+    expect(find.text('queued input'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await client.close(); await tester.pumpAndSettle();
+  });
+
+  testWidgets('queue edit restores focus and selection, preserves old draft, and delete leaves draft intact', (tester) async {
+    final client = _QueueDetailClient()..items = [_queueItem('a', 'edit me'), _queueItem('b', 'delete me')];
+    await _pumpDetail(tester, client, conversation: _idleConversation(activeTurn: _queueTurn));
+    await tester.pumpAndSettle();
+    final input = find.byKey(const Key('turn-input'));
+    await tester.enterText(input, 'existing draft');
+    await tester.tap(find.byKey(const Key('queue-edit-a')));
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(input);
+    expect(field.controller!.text, 'edit me');
+    expect(field.focusNode!.hasFocus, isTrue);
+    expect(field.controller!.selection.baseOffset, 7);
+    expect(client.acknowledged, ['a']);
+    expect(find.byKey(const Key('queue-item-a')), findsNothing);
+    await tester.tap(find.byKey(const Key('queue-delete-b')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(input).controller!.text, 'edit me');
+    await tester.tap(find.byKey(const Key('queue-restore-draft')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(input).controller!.text, 'existing draft');
+    expect(client.withdrawals, ['edit:a', 'delete:b']);
+    await tester.pumpWidget(const SizedBox());
+    await client.close(); await tester.pumpAndSettle();
+  });
+
+  testWidgets('queue steer targets the current turn and queue events do not reload history', (tester) async {
+    final client = _QueueDetailClient()..items = [_queueItem('a', 'steer me')];
+    await _pumpDetail(tester, client, conversation: _idleConversation(activeTurn: _queueTurn));
+    await tester.pumpAndSettle();
+    final historyReads = client.getCalls;
+    await tester.tap(find.byKey(const Key('queue-steer-a')));
+    await tester.pumpAndSettle();
+    expect(client.steeredTurns, ['active']);
+    expect(find.byKey(const Key('queue-item-a')), findsNothing);
+    client.items = [_queueItem('b', 'other device input')]; client.revision++;
+    client.emit(ConversationInputQueueChangedEvent(eventCursor: 'queue-event', conversation: _conversation.resource!, revision: client.revision));
+    await tester.pumpAndSettle();
+    expect(find.text('other device input'), findsOneWidget);
+    expect(client.getCalls, historyReads);
+    await tester.pumpWidget(const SizedBox());
+    await client.close(); await tester.pumpAndSettle();
+  });
+
+  testWidgets('queue retry keeps its request ID after a lost acknowledgement and survives keyboard on a small screen', (tester) async {
+    tester.view.physicalSize = const Size(320, 800); tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize); addTearDown(tester.view.resetDevicePixelRatio);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final client = _QueueDetailClient()..items = [_queueItem('a', 'A long queued input that should wrap without pushing actions off screen.')];
+    await _pumpDetail(tester, client, conversation: _idleConversation(activeTurn: _queueTurn));
+    await tester.pumpAndSettle();
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.enterText(find.byKey(const Key('turn-input')), 'retry me');
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.byKey(const Key('queue-edit-a')));
+    expect(find.byKey(const Key('queue-edit-a')).hitTestable(), findsOneWidget);
+    client.failEnqueue = true;
+    await tester.tap(find.byKey(const Key('turn-send')));
+    await tester.pumpAndSettle();
+    final requestId = client.enqueues.single.requestId;
+    expect(find.byKey(const Key('queue-confirm-submission')), findsOneWidget);
+    client.failEnqueue = false;
+    await tester.tap(find.byKey(const Key('queue-confirm-submission')));
+    await tester.pumpAndSettle();
+    expect(client.enqueues.map((e) => e.requestId), [requestId, requestId]);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await client.close(); await tester.pumpAndSettle();
+  });
+
   testWidgets('conversation header shows its device traffic on a narrow screen', (tester) async {
     tester.view.physicalSize = const Size(320, 800);
     tester.view.devicePixelRatio = 1;
@@ -2542,4 +2640,53 @@ class _TrafficDetailClient extends _DetailClient implements ConnectionMetricsGat
   ConnectionTraffic? connectionTraffic = const ConnectionTraffic(
     channel: 'ipv6-direct', sentBytes: 1024, receivedBytes: 2048, sentBytesPerSecond: 1024,
   );
+}
+
+final _queueTurn = TurnTask(id: 'active', providerId: _detailProviderId,
+  conversationId: 'conversation', status: TurnStatus.running,
+  updatedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+  resource: const RoutedResourceId(providerId: _detailProviderId, nativeResourceId: 'active'),
+  conversationResource: _conversation.resource);
+ConversationQueuedInput _queueItem(String id, String text, {String state = 'queued'}) => ConversationQueuedInput(
+  id: id, sequence: 1, text: text, selection: const TurnSendSelection(),
+  capabilityRevision: 'queue-v1', state: state, createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true));
+class _QueueDetailClient extends _DetailClient implements ConversationInputQueueGatewayClient {
+  _QueueDetailClient() : super(provider: const GatewayProvider(id: _detailProviderId,
+    displayName: 'Provider', status: ProviderStatus.ready,
+    capabilities: GatewayCapabilities(revision: 'queue-v1', methods: ['conversation.get', 'turn.send',
+      'turn.interrupt', 'conversation.inputQueue.get', 'conversation.inputQueue.enqueue', 'conversation.inputQueue.steer'], turnSend: TurnSendCapabilities())));
+  List<ConversationQueuedInput> items = [], edits = [];
+  final enqueues = <PendingQueueSubmission>[];
+  final acknowledged = <String>[], withdrawals = <String>[], steeredTurns = <String>[];
+  int revision = 1;
+  Future<ConversationQueuedInput>? enqueueResult;
+  bool failEnqueue = false;
+  @override Future<ConversationInputQueue> getInputQueue(ConversationSummary conversation) async => ConversationInputQueue(
+    conversation: conversation.resource!, revision: revision, paused: false,
+    items: List.of(items), recoverableEdits: List.of(edits), snapshotCursor: 'queue-$revision');
+  @override Future<ConversationQueuedInput> enqueueInput(ConversationSummary conversation, PendingQueueSubmission submission) async {
+    enqueues.add(submission);
+    if (failEnqueue) throw TimeoutException("ack lost");
+    return enqueueResult ?? _queueItem(submission.requestId, submission.text);
+  }
+  @override Future<ConversationQueuedInput> withdrawInput(ConversationSummary conversation, {required String itemId,
+    required String requestId, required int expectedRevision, required bool edit}) async {
+    expect(expectedRevision, revision);
+    final item = items.singleWhere((i) => i.id == itemId); items.remove(item); revision++;
+    withdrawals.add('${edit ? 'edit' : 'delete'}:$itemId');
+    final withdrawn = _queueItem(item.id, item.text, state: 'withdrawn');
+    if (edit) edits.add(withdrawn);
+    return withdrawn;
+  }
+  @override Future<ConversationQueuedInput> steerInput(ConversationSummary conversation, {required String itemId,
+    required String requestId, required int expectedRevision, required TurnTask turn, required String capabilityRevision}) async {
+    expect(expectedRevision, revision); steeredTurns.add(turn.id);
+    final item = items.singleWhere((i) => i.id == itemId); items.remove(item); revision++;
+    return _queueItem(item.id, item.text, state: 'accepted');
+  }
+  @override Future<ConversationInputQueue> acknowledgeInputEdit(ConversationSummary conversation, {required String itemId}) async {
+    acknowledged.add(itemId); edits.removeWhere((i) => i.id == itemId); revision++;
+    return getInputQueue(conversation);
+  }
+  @override Future<ConversationInputQueue> resumeInputQueue(ConversationSummary conversation, {required int expectedRevision}) => getInputQueue(conversation);
 }

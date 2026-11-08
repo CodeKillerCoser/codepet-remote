@@ -6,6 +6,8 @@ import '../../application/conversations/conversation_detail_controller.dart';
 import '../../application/conversations/conversation_timeline.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
+import '../../core/domain/conversation_input_queue.dart';
+import 'widgets/conversation_input_queue_view.dart';
 import '../../core/domain/notification.dart';
 import '../common/identity_icons.dart';
 import '../common/floating_detail_panel.dart';
@@ -43,6 +45,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _messagesCenterKey = GlobalKey();
   final TextEditingController _draftController = TextEditingController();
+  final FocusNode _draftFocus = FocusNode();
   late ConversationDetailController _controller;
   List<ConversationTimelineBlock> _timeline = const [];
   final GlobalKey _notificationAnchor = GlobalKey();
@@ -115,6 +118,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       ..dispose();
     _draftController.removeListener(_draftChanged);
     _draftController.dispose();
+    _draftFocus.dispose();
     _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
     super.dispose();
@@ -228,10 +232,52 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   bool get _composerEnabled => _controller.composerEnabled;
 
   Future<void> _send() async {
-    final sent = await _controller.send(_draftController.text);
-    if (!mounted || !sent) return;
-    _draftController.clear();
+    final text = _draftController.text;
+    final controller = _controller;
+    final sent = await controller.send(text);
+    if (!mounted || !sent || !identical(controller, _controller)) return;
+    if (_draftController.text == text) _draftController.clear();
     _scrollToBottom();
+  }
+
+  Future<void> _retryQueueSubmission() async {
+    final controller = _controller;
+    final text = controller.pendingQueueSubmission?.text;
+    final confirmed = await controller.retryQueueSubmission();
+    if (mounted && identical(controller, _controller) && confirmed && _draftController.text == text) _draftController.clear();
+  }
+  Future<void> _editQueuedInput(ConversationQueuedInput item) async {
+    final controller = _controller;
+    final withdrawn = await controller.withdrawQueuedInput(item, edit: true);
+    if (!mounted || !identical(controller, _controller) || withdrawn == null) return;
+    await _restoreQueuedEdit(withdrawn);
+  }
+  Future<void> _restoreQueuedEdit(ConversationQueuedInput item) async {
+    _controller.preserveQueueDraft(_draftController.text);
+    _controller.restoreQueueSelection(item.selection);
+    _draftController.value = TextEditingValue(text: item.text, selection: TextSelection.collapsed(offset: item.text.length));
+    _draftFocus.requestFocus();
+    await _controller.acknowledgeQueuedEdit(item);
+  }
+  void _restoreSavedQueueDraft() {
+    final draft = _controller.takeSavedQueueDraft();
+    if (draft == null) return;
+    _controller.preserveQueueDraft(_draftController.text);
+    _controller.restoreQueueSelection(draft.selection);
+    _draftController.value = TextEditingValue(text: draft.text, selection: TextSelection.collapsed(offset: draft.text.length));
+    _draftFocus.requestFocus();
+  }
+  Future<void> _deleteQueuedInput(ConversationQueuedInput item) async {
+    final controller = _controller;
+    if (item.uncertain) {
+      final confirmed = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+        title: const Text('确认已核对会话'),
+        content: const Text('这条消息可能已经送达。此操作只移除待核对记录，不会撤回已发送消息，也不会重新发送。'),
+        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('返回核对')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('已核对，移除记录'))]));
+      if (!mounted || !identical(controller, _controller) || confirmed != true) return;
+    }
+    await controller.withdrawQueuedInput(item, edit: false);
   }
 
   void _clearUnknownOutcome() => _controller.clearUnknownOutcome();
@@ -742,8 +788,26 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                 ),
                 const SizedBox(height: 8),
               ],
+              if (_controller.supportsInputQueue) ...[
+                ConversationInputQueueView(queue: _controller.inputQueue,
+                  enabled: _controller.canQueueAction, canSteer: _controller.canSteerQueuedInput,
+                  error: _controller.queueError, notice: _controller.queueNotice,
+                  onSteer: (item) => unawaited(_controller.steerQueuedInput(item)),
+                  onEdit: (item) => unawaited(_editQueuedInput(item)),
+                  onDelete: (item) => unawaited(_deleteQueuedInput(item)),
+                  onRestore: (item) => unawaited(_restoreQueuedEdit(item)),
+                  onResume: () => unawaited(_controller.resumeInputQueue()),
+                  onRefresh: () => unawaited(_controller.refreshInputQueue())),
+                if (_controller.pendingQueueSubmission != null)
+                  TextButton(key: const Key('queue-confirm-submission'),
+                    onPressed: _sending || widget.session.runtimeLease == null ? null : () => unawaited(_retryQueueSubmission()),
+                    child: const Text('核对上次入队结果')),
+                if (_controller.hasSavedQueueDraft)
+                  TextButton(key: const Key('queue-restore-draft'), onPressed: _restoreSavedQueueDraft, child: const Text('恢复之前的草稿')),
+              ],
               TextField(
                 key: const Key('turn-input'),
+                focusNode: _draftFocus,
                 controller: _draftController,
                 enabled: _composerEnabled,
                 minLines: 2,
@@ -862,11 +926,11 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.stop_rounded),
-                    )
-                  else
+                    ),
+                  if (_controller.supportsInputQueue || !(_controller.canInterrupt || _controller.interrupting))
                     IconButton.filled(
                       key: const Key('turn-send'),
-                      tooltip: '发送',
+                      tooltip: _controller.supportsInputQueue && _controller.conversationBlocksSend ? '加入队列' : '发送',
                       onPressed: _canSend ? () => unawaited(_send()) : null,
                       icon: _sending
                           ? const SizedBox.square(

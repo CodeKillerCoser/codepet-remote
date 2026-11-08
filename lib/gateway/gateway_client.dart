@@ -5,6 +5,8 @@ import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 
 import '../core/domain/connection_traffic.dart';
 import '../core/domain/models.dart';
+import '../core/domain/conversation_input_queue.dart';
+import '../application/ports/conversation_input_queue_gateway.dart';
 import '../application/errors/application_failures.dart';
 import '../application/ports/gateway_client.dart';
 import '../application/ports/recent_conversation_gateway.dart';
@@ -21,6 +23,7 @@ final AppLog _log = AppLog.named('gateway.protocol');
 final class ProtocolGatewayClient
     implements
         GatewayClient,
+        ConversationInputQueueGatewayClient,
         ManagedConnectionGatewayClient,
         ConnectionMetricsGatewayClient,
         ConversationResumeGatewayClient,
@@ -972,6 +975,81 @@ final class ProtocolGatewayClient
       );
     }
     return _mapper.conversation(response.conversation);
+  }
+
+  sdk.RoutedResourceId _queueResource(ConversationSummary conversation) {
+    final route = conversation.resource;
+    if (route == null) throw const FormatException('Conversation has no routed identity');
+    return _mapper.sdkResourceId(route);
+  }
+  ConversationQueuedInput _queueItem(sdk.InputQueueItem item, sdk.RoutedResourceId route) {
+    if (item.targetTurn != null && !_mapper.hasSameRoute(item.targetTurn!, route)) {
+      throw const FormatException('Queue item target belongs to another Provider');
+    }
+    return ConversationQueuedInput(id: item.id, sequence: item.sequence,
+      text: item.input.text, selection: _mapper.selection(item.selection),
+      capabilityRevision: item.capabilityRevision, state: item.state.toJson(),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(item.createdAt, isUtc: true),
+      targetTurn: item.targetTurn == null ? null : _mapper.resourceId(item.targetTurn!),
+      errorCode: item.errorCode, errorMessage: item.errorMessage);
+  }
+  ConversationInputQueue _queueSnapshot(sdk.InputQueueSnapshot value, sdk.RoutedResourceId route) {
+    if (_mapper.resourceKey(value.conversation) != _mapper.resourceKey(route)) {
+      throw const FormatException('Input queue belongs to another conversation');
+    }
+    return ConversationInputQueue(conversation: _mapper.resourceId(value.conversation),
+      revision: value.revision, paused: value.paused, snapshotCursor: value.snapshotCursor,
+      items: value.items.map((item) => _queueItem(item, route)).toList(growable: false),
+      recoverableEdits: value.recoverableEdits.map((item) => _queueItem(item, route)).toList(growable: false));
+  }
+  @override
+  Future<ConversationInputQueue> getInputQueue(ConversationSummary conversation) async {
+    final route = _queueResource(conversation);
+    final response = await _call(() => _protocol.conversationInputQueueGet(
+      sdk.InputQueueGetRequest(conversation: route)));
+    return _queueSnapshot(response, route);
+  }
+  @override
+  Future<ConversationQueuedInput> enqueueInput(ConversationSummary conversation, PendingQueueSubmission submission) async {
+    final route = _queueResource(conversation);
+    final response = await _call(() => _protocol.conversationInputQueueEnqueue(
+      sdk.InputQueueEnqueueRequest(conversation: route, clientRequestId: submission.requestId,
+        capabilityRevision: submission.capabilityRevision,
+        input: sdk.TurnInput(kind: sdk.TurnInputKind.text, text: submission.text),
+        selection: sdk.TurnSelection.fromJson(submission.selection.toJson()))));
+    return _queueItem(response.item, route);
+  }
+  @override
+  Future<ConversationQueuedInput> withdrawInput(ConversationSummary conversation,
+      {required String itemId, required String requestId, required int expectedRevision, required bool edit}) async {
+    final route = _queueResource(conversation);
+    final response = await _call(() => _protocol.conversationInputQueueWithdraw(
+      sdk.InputQueueWithdrawRequest(conversation: route, itemId: itemId, clientRequestId: requestId,
+        expectedRevision: expectedRevision, kind: edit ? sdk.InputQueueWithdrawKind.edit : sdk.InputQueueWithdrawKind.delete)));
+    return _queueItem(response.item, route);
+  }
+  @override
+  Future<ConversationQueuedInput> steerInput(ConversationSummary conversation,
+      {required String itemId, required String requestId, required int expectedRevision,
+       required TurnTask turn, required String capabilityRevision}) async {
+    final route = _queueResource(conversation);
+    if (turn.resource == null) throw const FormatException('Active turn has no routed identity');
+    final response = await _call(() => _protocol.conversationInputQueueSteer(
+      sdk.InputQueueSteerRequest(conversation: route, itemId: itemId, clientRequestId: requestId,
+        expectedRevision: expectedRevision, turn: _mapper.sdkResourceId(turn.resource!), capabilityRevision: capabilityRevision)));
+    return _queueItem(response.item, route);
+  }
+  @override
+  Future<ConversationInputQueue> resumeInputQueue(ConversationSummary conversation, {required int expectedRevision}) async {
+    final route = _queueResource(conversation);
+    return _queueSnapshot(await _call(() => _protocol.conversationInputQueueResume(
+      sdk.InputQueueResumeRequest(conversation: route, expectedRevision: expectedRevision))), route);
+  }
+  @override
+  Future<ConversationInputQueue> acknowledgeInputEdit(ConversationSummary conversation, {required String itemId}) async {
+    final route = _queueResource(conversation);
+    return _queueSnapshot(await _call(() => _protocol.conversationInputQueueAcknowledgeEdit(
+      sdk.InputQueueAcknowledgeEditRequest(conversation: route, itemId: itemId))), route);
   }
 
   @override

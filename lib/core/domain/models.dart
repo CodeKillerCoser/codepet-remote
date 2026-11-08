@@ -2011,3 +2011,10 @@ void _requireUniqueIds(Iterable<String> values, String name) {
 }
 
 String _messageKey(GatewayMessage message) => '${message.turnId}\u0000${message.itemId ?? message.id}';
+
+final class ConversationInputQueueChangedEvent extends GatewayEvent {
+  ConversationInputQueueChangedEvent({required super.eventCursor,
+    required this.conversation, required this.revision});
+  final RoutedResourceId conversation;
+  final int revision;
+}

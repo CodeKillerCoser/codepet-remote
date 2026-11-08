@@ -544,6 +544,12 @@ final class GeneratedGatewayMapper {
   }) {
     final cursor = envelope.eventCursor;
     switch (envelope.event) {
+      case sdk.ProtocolEventName.conversationInputQueueChanged:
+        final payload = envelope.payload as sdk.InputQueueChangedEvent;
+        _requireResourceRoute(payload.conversation, expectedDeviceId: expectedDeviceId,
+          expectedProviderRouteKeys: expectedProviderRouteKeys);
+        return ConversationInputQueueChangedEvent(eventCursor: cursor,
+          conversation: resourceId(payload.conversation), revision: payload.revision);
       case sdk.ProtocolEventName.conversationRecentChanged:
         final payload = envelope.payload as sdk.ConversationRecentChangedEvent;
         if (!expectedProviderRouteKeys.contains(payload.providerId)) {
