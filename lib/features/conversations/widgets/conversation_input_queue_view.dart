@@ -32,6 +32,9 @@ class ConversationInputQueueView extends StatelessWidget {
     final count = snapshot?.items.length ?? 0;
     final edits =
         snapshot?.recoverableEdits ?? const <ConversationQueuedInput>[];
+    if (count == 0 && edits.isEmpty && error == null && notice == null) {
+      return const SizedBox.shrink();
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,

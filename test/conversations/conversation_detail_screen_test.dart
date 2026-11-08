@@ -25,6 +25,8 @@ void main() {
     client.enqueueResult = ack.future;
     await _pumpDetail(tester, client, conversation: _idleConversation(activeTurn: _queueTurn));
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('input-queue-title')), findsNothing);
+    expect(find.byTooltip('刷新队列'), findsNothing);
     final input = find.byKey(const Key('turn-input'));
     await tester.enterText(input, 'queued input');
     await tester.pump();
@@ -781,7 +783,7 @@ void main() {
     await client.close();
   });
 
-  testWidgets('collapses process, copies only final output and moves file changes above input', (tester) async {
+  testWidgets('collapses activity, keeps replies visible and moves file changes above input', (tester) async {
     final client = _DetailClient(committedMessages: [
       _history('user', MessageRole.user, 'message', 'request'),
       _history('reason', MessageRole.assistant, 'reasoning', 'completed'),
@@ -792,16 +794,16 @@ void main() {
     ]);
     await _pumpDetail(tester, client, conversation: _idleConversation());
     await tester.pumpAndSettle();
-    expect(find.text('progress note'), findsNothing);
+    expect(find.text('progress note'), findsOneWidget);
     expect(find.text('completed'), findsNothing);
-    expect(find.byTooltip('复制'), findsOneWidget);
+    expect(find.byTooltip('复制'), findsNWidgets(2));
     expect(find.text('文件变更 · 2 次'), findsOneWidget);
     expect(tester.getBottomLeft(find.text('文件变更 · 2 次')).dy,
       lessThan(tester.getTopLeft(find.byKey(const Key('turn-input'))).dy));
     await tester.tap(find.text('执行过程'));
     await tester.pumpAndSettle();
     expect(find.text('progress note'), findsOneWidget);
-    expect(find.byTooltip('复制'), findsOneWidget);
+    expect(find.byTooltip('复制'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     await client.close();

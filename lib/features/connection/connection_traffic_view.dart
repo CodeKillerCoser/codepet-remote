@@ -149,8 +149,7 @@ class _ConnectionTrafficViewState extends State<ConnectionTrafficView> {
   }
 }
 
-/// Numeric and unit slots stay fixed even across digit and unit boundaries.
-/// Measure the active font/scaler rather than shrinking accessibility text.
+/// Keep each arrow, value and unit together without invisible fixed-width slots.
 class _TrafficValue extends StatelessWidget {
   const _TrafficValue({
     super.key,
@@ -180,24 +179,6 @@ class _TrafficValue extends StatelessWidget {
     final suffix = '${units[unit]}${rate ? '/s' : ''}';
     final style = DefaultTextStyle.of(context).style;
     final scaler = MediaQuery.textScalerOf(context);
-    double width(String text) {
-      final painter = TextPainter(
-        text: TextSpan(text: text, style: style),
-        textDirection: Directionality.of(context),
-        textScaler: scaler,
-      )..layout();
-      final result = painter.width.ceilToDouble();
-      painter.dispose();
-      return result;
-    }
-
-    final numberWidth = [
-      width('1024'),
-      width('99.9'),
-    ].reduce((a, b) => a > b ? a : b);
-    final unitWidth = units
-        .map((unit) => width('$unit${rate ? '/s' : ''}'))
-        .reduce((a, b) => a > b ? a : b);
     return Semantics(
       container: true,
       label: '$label ${formatTrafficBytes(bytes)}${rate ? '每秒' : ''}',
@@ -209,12 +190,9 @@ class _TrafficValue extends StatelessWidget {
             Icon(icon, size: scaler.scale(11), color: style.color),
             const SizedBox(width: 1),
           ],
-          SizedBox(
-            width: numberWidth,
-            child: Text(number, textAlign: TextAlign.end, maxLines: 1),
-          ),
+          Text(number, maxLines: 1),
           const SizedBox(width: 2),
-          SizedBox(width: unitWidth, child: Text(suffix, maxLines: 1)),
+          Text(suffix, maxLines: 1),
         ],
       ),
     );

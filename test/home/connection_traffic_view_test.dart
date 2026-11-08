@@ -4,7 +4,7 @@ import 'package:codepet_remote/core/domain/connection_traffic.dart';
 import 'package:codepet_remote/features/connection/connection_traffic_view.dart';
 
 void main() {
-  testWidgets('compact metrics stay left aligned and stable across units', (
+  testWidgets('compact metrics keep arrows adjacent and wrap across units', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 640);
@@ -66,7 +66,11 @@ void main() {
         receivedBytesPerSecond: bytes.toDouble(),
       );
       await tester.pump(const Duration(seconds: 1));
-      expect(metrics.map(tester.getRect).toList(), original);
+      final uploadNumber = find.descendant(of: metrics.first, matching: find.byType(Text)).first;
+      expect(tester.getTopLeft(uploadNumber).dx -
+          tester.getTopRight(find.byIcon(Icons.arrow_upward)).dx, closeTo(1, .01));
+      expect(tester.getTopLeft(metrics[1]).dx - tester.getTopRight(metrics[0]).dx,
+          closeTo(6, .01));
       expect(tester.takeException(), isNull);
     }
     expect(find.bySemanticsLabel('上传速度 1.0 GiB每秒'), findsOneWidget);
@@ -83,7 +87,9 @@ void main() {
     }
     traffic = const ConnectionTraffic(channel: 'ipv6-direct', sentBytes: 9);
     await tester.pump(const Duration(seconds: 1));
-    expect(metrics.map(tester.getRect).toList(), narrow);
+    for (final metric in metrics) {
+      expect(tester.getRect(metric).right, lessThanOrEqualTo(304));
+    }
     expect(tester.takeException(), isNull);
     traffic = null;
     await tester.pump(const Duration(seconds: 1));

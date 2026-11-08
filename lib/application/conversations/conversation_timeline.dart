@@ -260,21 +260,29 @@ final class ConversationTimelineProjector {
       final completed = turn?.status.isTerminal ??
         (!group.any((block) => block.isRunning) && detail.activeTurn?.id != group.first.turnId &&
           detail.effectiveStatus != ConversationStatus.running);
-      final last = group.last is AssistantMessageBlock
-        ? group.last as AssistantMessageBlock : null;
-      final process = group.where((block) => block is! UserMessageBlock &&
-        block is! ApprovalBlock && block != last).toList();
-      result.addAll(group.whereType<UserMessageBlock>());
-      if (process.isNotEmpty) {
-        final duration = turn?.startedAt != null && turn?.completedAt != null
-          ? turn!.completedAt!.difference(turn.startedAt!) : null;
-        result.add(TurnProcessBlock(id: 'process-${group.first.id}',
-          turnId: group.first.turnId, children: process,
+      final duration = turn?.startedAt != null && turn?.completedAt != null
+        ? turn!.completedAt!.difference(turn.startedAt!) : null;
+      final process = <ConversationTimelineBlock>[];
+      void flushProcess() {
+        if (process.isEmpty) return;
+        result.add(TurnProcessBlock(id: 'process-${process.first.id}',
+          turnId: group.first.turnId, children: List.unmodifiable(process),
           duration: duration != null && !duration.isNegative ? duration : null,
           completed: completed));
+        process.clear();
       }
-      result.addAll(group.whereType<ApprovalBlock>());
-      if (last != null) result.add(last);
+      // Text remains visible even when reasoning/tools/status events follow it.
+      // Fold only activity blocks, preserving their order relative to replies.
+      for (final block in group) {
+        if (block is UserMessageBlock || block is AssistantMessageBlock ||
+            block is ApprovalBlock) {
+          flushProcess();
+          result.add(block);
+        } else {
+          process.add(block);
+        }
+      }
+      flushProcess();
       start = end;
     }
     // Failures are separate from assistant/process output, including attempts

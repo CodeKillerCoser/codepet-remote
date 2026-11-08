@@ -39,13 +39,33 @@ void main() {
         _message(id: 'final', content: 'done'),
       ]);
     final blocks = projector.projectForDisplay(detail);
-    expect(blocks, hasLength(3));
+    expect(blocks, hasLength(4));
     expect(blocks.first, isA<UserMessageBlock>());
-    final process = blocks[1] as TurnProcessBlock;
+    expect((blocks[1] as AssistantMessageBlock).text, 'working');
+    final process = blocks[2] as TurnProcessBlock;
     expect(process.completed, isTrue);
     expect(process.duration, const Duration(seconds: 89));
-    expect(process.children.map((block) => block.id), ['commentary', 'reason', 'command']);
+    expect(process.children.map((block) => block.id), ['reason', 'command']);
     expect((blocks.last as AssistantMessageBlock).text, 'done');
+  });
+
+  test('history and streaming replies stay visible before trailing activity', () {
+    for (final streaming in [false, true]) {
+      final messages = [
+        _message(id: 'answer', content: 'visible answer', isStreaming: streaming),
+        _message(id: 'thought', kind: 'reasoning', content: 'private reasoning', isStreaming: streaming),
+        _message(id: 'status', kind: 'unknown', content: 'OpenCode idle'),
+      ];
+      final blocks = projector.projectForDisplay(ConversationDetail(
+        summary: _summary,
+        committedMessages: streaming ? [] : messages,
+        liveOutputMessages: streaming ? messages : [],
+      ));
+      expect(blocks.first, isA<AssistantMessageBlock>());
+      expect((blocks.first as AssistantMessageBlock).text, 'visible answer');
+      expect(blocks.whereType<TurnProcessBlock>().single.children
+        .whereType<AssistantMessageBlock>(), isEmpty);
+    }
   });
 
   test('merges file change counts without inventing details or duplicate item counts', () {
@@ -191,6 +211,7 @@ GatewayMessage _message({
   String kind = 'message',
   MessageRole role = MessageRole.assistant,
   String content = '',
+  bool isStreaming = false,
   List<GatewayMessageContent> contents = const [],
   GatewayToolInvocation? tool,
 }) =>
@@ -204,7 +225,7 @@ GatewayMessage _message({
       contents: contents,
       contentIds: contents.map((value) => value.id).toList(growable: false),
       createdAt: _epoch,
-      isStreaming: false,
+      isStreaming: isStreaming,
       tool: tool,
     );
 
