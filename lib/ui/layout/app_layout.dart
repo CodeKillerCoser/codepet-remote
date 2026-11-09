@@ -29,6 +29,7 @@ abstract final class AppLayout {
   static const double bubbleRadius = 16;
   static const double controlHeight = 44;
   static const double compactControlHeight = 32;
+  static const double switchVisualScale = .82;
   static const double maxContentWidth = 960;
   static const double gap = 8;
   static const double compactGap = 4;
@@ -40,6 +41,18 @@ abstract final class AppLayout {
       (MediaQuery.sizeOf(context).width * drawerWidthFraction)
           .clamp(0.0, drawerMaxWidth);
   static const double sectionGap = 24;
+
+  // Insets surround the whole option surface, including selected backgrounds.
+  static const double selectionDialogWidth = 360;
+  static const selectionDialogTitlePadding = EdgeInsets.fromLTRB(
+    space24, space24, space24, 0,
+  );
+  static const selectionDialogContentPadding = EdgeInsets.fromLTRB(
+    space24, space16, space24, space24,
+  );
+  static const selectionSheetPadding = EdgeInsets.fromLTRB(
+    space16, 0, space16, space16,
+  );
 
   static double pageInset(BuildContext context) =>
       MediaQuery.sizeOf(context).width < 600 ? 16 : 24;

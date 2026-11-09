@@ -35,7 +35,9 @@ void main() {
     final content = find.byKey(const Key('home-content-scroll'));
     expect(find.descendant(of: content, matching: traffic), findsNothing);
     final position = tester.getTopLeft(traffic);
-    expect(tester.getTopLeft(find.text('IPv6 直连')).dx, 16);
+    expect(find.descendant(of: find.byType(AppBar), matching: traffic), findsOneWidget);
+    expect(tester.getTopLeft(find.text('IPv6 直连')).dx,
+        tester.getTopLeft(find.byKey(const Key('home-device-menu'))).dx);
     await tester.drag(content, const Offset(0, -350));
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(traffic), position);
@@ -44,9 +46,31 @@ void main() {
         ),
         findsOneWidget,
       );
-    await tester.tap(find.byKey(const Key('home-navigation-menu')));
+    await tester.tap(find.byKey(const Key('home-device-menu')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('device-second')));
+    expect(find.byKey(const Key('device-selection-dialog')), findsOneWidget);
+    expect(tester.getCenter(find.byType(Dialog)), const Offset(160, 320));
+    expect(find.text('选择设备'), findsOneWidget);
+    final surface = tester.getRect(find.descendant(
+      of: find.byType(Dialog), matching: find.byType(Material),
+    ).first);
+    final option = tester.getRect(find.byKey(const Key('device-option-first')));
+    final lastOption = tester.getRect(find.byKey(const Key('device-option-second')));
+    final title = tester.getRect(find.text('选择设备'));
+    expect(option.left - surface.left, 24);
+    expect(surface.right - option.right, 24);
+    expect(surface.bottom - lastOption.bottom, 24);
+    expect(option.left, title.left);
+    expect(option.top - title.bottom, 16);
+    expect(find.byIcon(Icons.check), findsOneWidget);
+    // Dismissing the modal must leave the current device and traffic unchanged.
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('device-selection-dialog')), findsNothing);
+    expect(find.text('IPv6 直连'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('home-device-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('device-option-second')));
     await tester.pumpAndSettle();
     expect(find.text('中继'), findsOneWidget);
     expect(find.descendant(of: find.byKey(const Key('traffic-total')), matching: find.text('4.0'),
@@ -59,6 +83,40 @@ void main() {
     for (final session in sessions) { session.dispose(); }
   },
   );
+
+  testWidgets('device header and picker fit narrow screens with large text', (tester) async {
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final session = _sessionForClient('large-text', _TrafficClient(
+      const ConnectionTraffic(channel: 'ipv6-direct', sentBytes: 1024000,
+        receivedBytes: 4096000),
+    ));
+    await session.connect();
+    for (final brightness in Brightness.values) {
+      await tester.pumpWidget(MaterialApp(
+        theme: ThemeData(brightness: brightness),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: _HomeHarness(sessions: [session]),
+      ));
+      await tester.pumpAndSettle();
+      final headerBounds = tester.getRect(find.byType(AppBar));
+      final trafficBounds = tester.getRect(find.byKey(const Key('home-connection-traffic')));
+      expect(headerBounds.contains(trafficBounds.bottomRight), isTrue);
+      await tester.tap(find.byKey(const Key('home-device-menu')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('device-option-large-text')).hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byKey(const Key('device-option-large-text')));
+      await tester.pumpAndSettle();
+    }
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
 
   testWidgets('connection failure after scrolling keeps recovery actions usable', (tester) async {
     tester.view.physicalSize = const Size(360, 800);
@@ -520,17 +578,8 @@ void main() {
 
     expect(find.byKey(const Key('connected-providers')), findsOneWidget);
     expect(find.text('Codex Work'), findsOneWidget);
-    expect(
-      find.text(
-        'Codex Work · v0.151.0 · 在线'), findsOneWidget);
+    expect(find.textContaining('v0.151.0'), findsNothing);
     expect(find.text('/usr/local/bin/codex'), findsNothing);
-    final sectionTop = tester.getTopLeft(find.text('最近'));
-    await tester.tap(find.text('Codex Work · v0.151.0 · 在线'));
-    await tester.pumpAndSettle();
-    expect(find.text('/usr/local/bin/codex'), findsOneWidget);
-    expect(tester.getTopLeft(find.text('最近')), sectionTop);
-    expect(find.text('Signed in'), findsOneWidget);
-    expect(find.text('72% remaining'), findsOneWidget);
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('device-selector')), findsNothing);
     expect(

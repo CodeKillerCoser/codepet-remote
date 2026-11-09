@@ -10,9 +10,7 @@ import '../connection/connection_traffic_view.dart';
 import '../../application/sessions/device_session.dart';
 import '../../core/domain/models.dart';
 import '../common/identity_icons.dart';
-import '../common/floating_detail_panel.dart';
 import '../connection/device_connection_notice.dart';
-import '../connection/device_detail_screen.dart';
 import '../conversations/conversation_detail_screen.dart';
 import '../conversations/conversation_search_screen.dart';
 import '../conversations/widgets/conversation_list_item.dart';
@@ -151,22 +149,35 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
             onPressed: () => Scaffold.of(context).openDrawer(),
           ),
         ),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              session?.displayDeviceName ?? 'CodePet',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (session != null)
-              Text(
-                _deviceMenuStateLabel(session),
-                key: Key('device-status-${session.device.deviceId}'),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-          ],
+        toolbarHeight: MediaQuery.textScalerOf(context).scale(
+          kToolbarHeight + AppLayout.space8,
         ),
+        title: session == null
+            ? const Text('CodePet')
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _DevicePicker(
+                    sessions: sessions,
+                    selectedIndex: selectedIndex,
+                    onSelect: widget.onSelectDevice,
+                  ),
+                  if (session.connectionState == DeviceConnectionState.online &&
+                      !session.isReconnecting && session.connectionTraffic != null)
+                    ConnectionTrafficView(
+                      key: const Key('home-connection-traffic'),
+                      read: () => session.connectionTraffic,
+                      compact: true,
+                    )
+                  else
+                    Text(
+                      _deviceMenuStateLabel(session),
+                      key: Key('device-status-${session.device.deviceId}'),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                ],
+              ),
       ),
       body: sessions.isEmpty
           ? _EmptyDevices(onAddDevice: widget.onAddDevice)
@@ -174,7 +185,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
               key: const Key('remote-home'),
               children: [
                 Padding(
-                  padding: EdgeInsets.fromLTRB(AppLayout.pageInset(context), AppLayout.gap, AppLayout.pageInset(context), 0,
+                  padding: EdgeInsets.fromLTRB(AppLayout.pageInset(context), 0, AppLayout.pageInset(context), 0,
                   ),
                   child: _DeviceActions(
                     session: session!,
@@ -182,16 +193,6 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     onSelectProvider: session.selectProvider,
                   ),
                 ),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: AppLayout.pageInset(context),
-                  ),
-                  child: ConnectionTrafficView(
-                    key: const Key('home-connection-traffic'),
-                    read: () => session.connectionTraffic,
-                    compact: true,
-                  ),
-                ),
-                const Divider(height: 1),
                 Expanded(
                   child: ListView(
                     key: const Key('home-content-scroll'),
@@ -413,6 +414,87 @@ class _DeviceHomeViewState {
   final scrollController = ScrollController();
 }
 
+/// Device selection belongs to the title; the drawer remains the navigation root.
+class _DevicePicker extends StatelessWidget {
+  const _DevicePicker({
+    required this.sessions,
+    required this.selectedIndex,
+    required this.onSelect,
+  });
+
+  final List<DeviceSession> sessions;
+  final int selectedIndex;
+  final ValueChanged<int> onSelect;
+
+  Future<void> _chooseDevice(BuildContext context) async {
+    final deviceId = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        key: const Key('device-selection-dialog'),
+        title: const Text('选择设备'),
+        constraints: const BoxConstraints.tightFor(width: AppLayout.selectionDialogWidth),
+        titlePadding: AppLayout.selectionDialogTitlePadding,
+        contentPadding: AppLayout.selectionDialogContentPadding,
+        children: [
+          for (var i = 0; i < sessions.length; i++)
+            Material(
+              type: MaterialType.transparency,
+              child: ListTile(
+                key: Key('device-option-${sessions[i].device.deviceId}'),
+                selected: i == selectedIndex,
+                leading: Icon(
+                  operatingSystemIconData(sessions[i].displaySystemLabel),
+                ),
+                title: Text(
+                  sessions[i].displayDeviceName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(_deviceMenuStateLabel(sessions[i])),
+                trailing: i == selectedIndex ? const Icon(Icons.check) : null,
+                onTap: () =>
+                    Navigator.of(context).pop(sessions[i].device.deviceId),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (!context.mounted || deviceId == null) return;
+    final index = sessions.indexWhere(
+      (session) => session.device.deviceId == deviceId,
+    );
+    if (index >= 0) onSelect(index);
+  }
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: '切换设备',
+    child: InkWell(
+      key: const Key('home-device-menu'),
+      onTap: () => _chooseDevice(context),
+      borderRadius: BorderRadius.circular(AppLayout.subtleRadius),
+      child: Row(
+        children: [
+          Flexible(
+            child: Text(
+              sessions[selectedIndex].displayDeviceName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: AppLayout.compactGap),
+          Icon(
+            Icons.expand_more,
+            size: AppLayout.iconSize,
+            color: Theme.of(context).secondaryActionIcon,
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _HomeDrawer extends StatelessWidget {
   const _HomeDrawer({
     required this.sessions,
@@ -532,101 +614,9 @@ class _DeviceActions extends StatelessWidget {
           ),
           const SizedBox(height: AppLayout.space4),
         ],
-        if (selectedProvider != null)
-          _ProviderDisclosure(
-            key: ValueKey('provider-details-${session.device.deviceId}-${selectedProvider!.id}',
-            ),
-            provider: selectedProvider!,
-            connectionState: session.connectionState,
-          )
-        else
+        if (providers.isEmpty)
           Text(handshake == null ? '会话数据仅保留在本次连接中' : '未发现 Provider'),
       ],
-    );
-  }
-}
-
-class _ProviderDisclosure extends StatefulWidget {
-  const _ProviderDisclosure({super.key, required this.provider, required this.connectionState,
-  });
-
-  final GatewayProvider provider;
-  final DeviceConnectionState connectionState;
-
-  @override
-  State<_ProviderDisclosure> createState() => _ProviderDisclosureState();
-}
-
-class _ProviderDisclosureState extends State<_ProviderDisclosure> {
-  final _controller = OverlayPortalController();
-  final _link = LayerLink();
-
-  void _toggle() => setState(_controller.toggle);
-  void _close() => setState(_controller.hide);
-
-  @override
-  Widget build(BuildContext context) {
-    final provider = widget.provider;
-    return LayoutBuilder(builder: (context, constraints) {
-      return CompositedTransformTarget(
-        link: _link,
-        child: OverlayPortal(
-          controller: _controller,
-          overlayChildBuilder: (context) => Stack(
-            children: [
-              Positioned.fill(child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _close,
-                child: const SizedBox.expand(),
-              ),
-                ),
-              CompositedTransformFollower(
-                link: _link,
-                showWhenUnlinked: false,
-                targetAnchor: Alignment.bottomLeft,
-                followerAnchor: Alignment.topLeft,
-                offset: const Offset(0, 8),
-                child: SizedBox(
-                  width: constraints.maxWidth,
-                  child: FloatingDetailPanel(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.45,
-                        ),
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(AppLayout.space16, AppLayout.space14, AppLayout.space16, AppLayout.space4),
-                        child: ProviderDetails(provider: provider),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          child: InkWell(
-            onTap: _toggle,
-            borderRadius: BorderRadius.circular(AppLayout.subtleRadius),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: AppLayout.space8),
-              child: Row(children: [
-                Expanded(child: Text(
-                  '${provider.displayName} · ${provider.runtimeVersion == null ? '版本未提供' : 'v${provider.runtimeVersion}'} · ${_providerStateLabel(provider, widget.connectionState)}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                    ),
-                AnimatedRotation(
-                  turns: _controller.isShowing ? 0.5 : 0,
-                  duration: const Duration(milliseconds: 200),
-                  child: Icon(Icons.expand_more, size: 20,
-                    semanticLabel: _controller.isShowing ? '收起 Provider 信息' : '展开 Provider 信息',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 }

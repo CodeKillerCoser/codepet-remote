@@ -1,3 +1,4 @@
+import 'package:codepet_remote/ui/components/app_switch_tile.dart';
 import 'dart:async';
 
 import 'package:codepet_remote/features/settings/app_settings_screen.dart';
@@ -32,7 +33,7 @@ void main() {
       onNotificationsChanged: (value) async { saved = value; return value; },
     )));
     await tester.pumpAndSettle();
-    expect(tester.widget<SwitchListTile>(find.byKey(const Key('notification-preview'))).value, isFalse);
+    expect(tester.widget<AppSwitchTile>(find.byKey(const Key('notification-preview'))).value, isFalse);
     await tester.tap(find.byKey(const Key('notification-outcomes')));
     await tester.pumpAndSettle();
     expect(saved?.outcomes, isTrue);
@@ -50,7 +51,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('notification-interventions')));
     await tester.pumpAndSettle();
-    expect(tester.widget<SwitchListTile>(find.byKey(const Key('notification-interventions'))).value, isFalse);
+    expect(tester.widget<AppSwitchTile>(find.byKey(const Key('notification-interventions'))).value, isFalse);
     expect(find.text('无法开启，请检查系统通知权限后重试'), findsOneWidget);
   });
 
@@ -65,7 +66,7 @@ void main() {
       ),
     ));
 
-    expect(find.textContaining('日志保留 7 天'), findsOneWidget);
+    expect(find.text('用于排查连接与消息问题'), findsOneWidget);
     await tester.tap(find.byKey(const Key('export-logs')));
     await tester.pumpAndSettle();
 

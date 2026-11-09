@@ -1,3 +1,4 @@
+import 'package:codepet_remote/ui/components/app_switch_tile.dart';
 import 'package:codepet_remote/app/channel_preferences.dart';
 import 'package:codepet_remote/features/settings/app_settings_screen.dart';
 import 'package:flutter/material.dart';
@@ -33,24 +34,24 @@ void main() {
     await tester.tap(find.byKey(const Key('webrtc-switch')));
     await tester.pumpAndSettle();
     expect(await ChannelPreferences.loadWebRtcEnabled(), isTrue);
-    expect(find.text('当前通道：LAN / WSS'), findsOneWidget);
+    expect(find.textContaining('当前通道'), findsNothing);
     expect(find.text('设置已保存，重启 App 后生效'), findsOneWidget);
     await openSettings(false);
     expect(
       tester
-          .widget<SwitchListTile>(find.byKey(const Key('webrtc-switch')))
+          .widget<AppSwitchTile>(find.byKey(const Key('webrtc-switch')))
           .value,
       isTrue,
     );
     await openSettings(await ChannelPreferences.loadWebRtcEnabled());
-    expect(find.text('当前通道：WebRTC'), findsOneWidget);
+    expect(find.textContaining('当前通道'), findsNothing);
     expect(find.text('设置已保存，重启 App 后生效'), findsNothing);
     await tester.tap(find.byKey(const Key('webrtc-switch')));
     await tester.pumpAndSettle();
     expect(await ChannelPreferences.loadWebRtcEnabled(), isFalse);
-    expect(find.text('当前通道：WebRTC'), findsOneWidget);
+    expect(find.textContaining('当前通道'), findsNothing);
     await openSettings(await ChannelPreferences.loadWebRtcEnabled());
-    expect(find.text('当前通道：LAN / WSS'), findsOneWidget);
+    expect(find.textContaining('当前通道'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -67,7 +68,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       tester
-          .widget<SwitchListTile>(find.byKey(const Key('webrtc-switch')))
+          .widget<AppSwitchTile>(find.byKey(const Key('webrtc-switch')))
           .value,
       isFalse,
     );

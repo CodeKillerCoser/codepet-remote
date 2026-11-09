@@ -1,5 +1,8 @@
+import '../../ui/components/app_switch_tile.dart';
+import '../../ui/components/app_settings_section.dart';
 import '../../ui/layout/app_layout.dart';
 import '../../ui/layout/app_scaffold.dart';
+
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -29,7 +32,8 @@ class AppSettingsScreen extends StatefulWidget {
   final Future<void> Function(ThemeMode)? onThemeModeChanged;
 
   final NotificationPreferences? notificationPreferences;
-  final Future<NotificationPreferences> Function(NotificationPreferences)? onNotificationsChanged;
+  final Future<NotificationPreferences> Function(NotificationPreferences)?
+  onNotificationsChanged;
   final Future<bool> Function()? notificationsAllowed;
   final Future<void> Function()? openNotificationSettings;
   final String? signalingService;
@@ -44,7 +48,8 @@ class AppSettingsScreen extends StatefulWidget {
   State<AppSettingsScreen> createState() => _AppSettingsScreenState();
 }
 
-class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindingObserver {
+class _AppSettingsScreenState extends State<AppSettingsScreen>
+    with WidgetsBindingObserver {
   late ThemeMode _themeMode = widget.themeMode;
   bool _savingTheme = false;
   Future<void> _changeTheme(ThemeMode mode) async {
@@ -55,8 +60,8 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
       if (mounted) setState(() => _themeMode = mode);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('主题设置保存失败，请重试')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('主题设置保存失败，请重试')));
       }
     } finally {
       if (mounted) setState(() => _savingTheme = false);
@@ -72,19 +77,23 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
     WidgetsBinding.instance.addObserver(this);
     _refreshPermission();
   }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) _refreshPermission();
   }
+
   Future<void> _refreshPermission() async {
     final allowed = await widget.notificationsAllowed?.call();
     if (mounted) setState(() => _notificationsAllowed = allowed);
   }
+
   Future<void> _changeNotifications(NotificationPreferences value) async {
     if (_savingNotifications || widget.onNotificationsChanged == null) return;
     setState(() => _savingNotifications = true);
@@ -94,14 +103,14 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
       await _refreshPermission();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('无法开启，请检查系统通知权限后重试'),
-        ));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('无法开启，请检查系统通知权限后重试')));
       }
     } finally {
       if (mounted) setState(() => _savingNotifications = false);
     }
   }
+
   bool _exporting = false;
   bool _sharing = false;
   String? _exportPath;
@@ -164,124 +173,255 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
               : renderBox.localToGlobal(Offset.zero) & renderBox.size,
         ),
       );
-      widget.logger.info('Diagnostics share sheet result: ${result.status.name}');
+      widget.logger.info(
+        'Diagnostics share sheet result: ${result.status.name}',
+      );
     } catch (error) {
       widget.logger.warning('Diagnostics share sheet failed', error: error);
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('日志已导出，但无法打开系统分享，请点击分享按钮重试')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('日志已导出，但无法打开系统分享，请点击分享按钮重试')),
+      );
     } finally {
       if (mounted) setState(() => _sharing = false);
     }
   }
 
-  @override
-  Widget build(BuildContext context) => AppScaffold(
-    appBar: AppBar(title: const Text('App 设置')),
-    body: ListView(
-      padding: EdgeInsets.all(AppLayout.pageInset(context)),
-      children: [
-        ListTile(
-          leading: const Icon(Icons.palette_outlined),
-          title: const Text('主题'),
-          trailing: DropdownButton<ThemeMode>(
-            key: const Key('theme-mode-selector'),
-            value: _themeMode,
-            underline: const SizedBox.shrink(),
-            items: const [
-              DropdownMenuItem(value: ThemeMode.system, child: Text('跟随系统')),
-              DropdownMenuItem(value: ThemeMode.light, child: Text('浅色')),
-              DropdownMenuItem(value: ThemeMode.dark, child: Text('深色')),
+  late String? _signalingService = widget.signalingService;
+
+  String _themeLabel(ThemeMode mode) => switch (mode) {
+    ThemeMode.system => '跟随系统',
+    ThemeMode.light => '浅色',
+    ThemeMode.dark => '深色',
+  };
+
+  Future<void> _chooseTheme() async {
+    final choice = await showModalBottomSheet<ThemeMode>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: AppLayout.selectionSheetPadding,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final mode in ThemeMode.values)
+                ListTile(
+                  key: Key('theme-option-${mode.name}'),
+                  title: Text(_themeLabel(mode)),
+                  trailing: mode == _themeMode ? const Icon(Icons.check) : null,
+                  onTap: () => Navigator.of(context).pop(mode),
+                ),
             ],
-            onChanged: _savingTheme || widget.onThemeModeChanged == null
-              ? null : (mode) { if (mode != null) _changeTheme(mode); },
           ),
         ),
-        const Divider(),
-        if (_notifications case final preferences?) ...[
-          const ListTile(leading: Icon(Icons.notifications_outlined), title: Text('通知')),
-          if (_notificationsAllowed == false)
-            ListTile(title: const Text('系统通知未开启'),
-              subtitle: const Text('允许系统通知后才能接收任务提醒'),
-              trailing: TextButton(onPressed: widget.openNotificationSettings,
-                child: const Text('去设置'))),
-          SwitchListTile(key: const Key('notification-outcomes'), title: const Text('任务结果'),
-            subtitle: const Text('任务完成或失败时提醒，主动停止不提醒'),
-            value: preferences.outcomes, onChanged: _savingNotifications ? null
-              : (value) => _changeNotifications(preferences.copyWith(outcomes: value))),
-          SwitchListTile(key: const Key('notification-interventions'), title: const Text('需要你处理'),
-            subtitle: const Text('等待授权或补充信息时提醒'),
-            value: preferences.interventions, onChanged: _savingNotifications ? null
-              : (value) => _changeNotifications(preferences.copyWith(interventions: value))),
-          SwitchListTile(key: const Key('notification-preview'), title: const Text('显示内容预览'),
-            subtitle: const Text('在通知中显示会话标题和简短说明，锁屏遵循系统隐私设置'),
-            value: preferences.preview, onChanged: _savingNotifications ? null
-              : (value) => _changeNotifications(preferences.copyWith(preview: value))),
-          SwitchListTile(key: const Key('background-connection'), title: const Text('后台保持连接'),
-            subtitle: const Text('显示常驻连接通知，切换 App 后继续接收事件。深度省电、强行停止或网络中断仍可能导致断线；后台提醒需要连接可用。'),
-            value: preferences.keepConnected, onChanged: _savingNotifications ? null
-              : (value) => _changeNotifications(preferences.copyWith(keepConnected: value))),
-          if (!preferences.keepConnected && (preferences.outcomes || preferences.interventions))
-            const ListTile(subtitle: Text('当前仅在 App 能接收设备事件时提醒。建议同时开启后台保持连接。')),
-          const Divider(),
-        ],
-        SwitchListTile(
-          key: const Key('webrtc-switch'),
-          title: const Text('开启 WebRTC'),
-          subtitle: const Text('更改后完全退出并重新打开 App 生效。首次公网授权需在同一局域网连接新版电脑端。'),
-          value: _webRtcEnabled,
-          onChanged: _savingChannel || widget.onWebRtcChanged == null
-              ? null
-              : _changeChannel,
-        ),
-        ListTile(
-          title: Text(
-            '当前通道：${widget.activeWebRtcEnabled ? 'WebRTC' : 'LAN / WSS'}',
+      ),
+    );
+    if (choice != null && mounted) await _changeTheme(choice);
+  }
+
+  void _openSignalingService() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => AppScaffold(
+          appBar: AppBar(title: const Text('信令服务')),
+          body: ListView(
+            padding: EdgeInsets.all(AppLayout.pageInset(context)),
+            children: [
+              SignalingServiceSettings(
+                value: _signalingService,
+                showHeading: false,
+                onSave: (value) async {
+                  await widget.onSignalingServiceChanged!(value);
+                  if (mounted) setState(() => _signalingService = value);
+                },
+              ),
+            ],
           ),
-          subtitle: _webRtcEnabled != widget.activeWebRtcEnabled
-              ? const Text('设置已保存，重启 App 后生效')
-              : null,
         ),
-        const Divider(),
-        if (widget.onSignalingServiceChanged case final save?) ...[
-          SignalingServiceSettings(
-            value: widget.signalingService,
-            onSave: save,
-          ),
-          const Divider(),
-        ],
-        const ListTile(
-          leading: Icon(Icons.security),
-          title: Text('Gateway v1'),
-          subtitle: Text('设备凭据保存在 Android Keystore 支持的安全存储中；会话正文和事件游标不落盘，通知去重只保存路由标识和处理状态。'),
-        ),
-        const Divider(),
-        ListTile(
-          key: const Key('export-logs'),
-          leading: const Icon(Icons.folder_zip_outlined),
-          title: const Text('导出并分享诊断日志'),
-          subtitle: Text(
-            _exportPath ?? '日志保留 7 天，单文件 2 MB，最多 5 个文件',
-            key: const Key('export-log-path'),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          trailing: _exporting || _sharing
-              ? const SizedBox.square(
-                  dimension: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : _exportPath == null
-                  ? const Icon(Icons.share_outlined)
-                  : IconButton(
-                      key: const Key('share-logs'),
-                      tooltip: '再次分享日志',
-                      onPressed: _share,
-                      icon: const Icon(Icons.share_outlined),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final preferences = _notifications;
+    final canChangeNotifications =
+        !_savingNotifications && widget.onNotificationsChanged != null;
+    return AppScaffold(
+      appBar: AppBar(title: const Text('设置')),
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          key: const Key('settings-list'),
+          padding: EdgeInsets.all(AppLayout.pageInset(context)),
+          children: [
+            AppSettingsSection(
+              title: '外观',
+              children: [
+                ListTile(
+                  key: const Key('theme-mode-selector'),
+                  leading: const Icon(Icons.palette_outlined),
+                  title: const Text('主题'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _themeLabel(_themeMode),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(width: AppLayout.gap),
+                      const Icon(Icons.chevron_right),
+                    ],
+                  ),
+                  onTap: _savingTheme || widget.onThemeModeChanged == null
+                      ? null
+                      : _chooseTheme,
+                ),
+              ],
+            ),
+            if (preferences != null)
+              AppSettingsSection(
+                title: '通知',
+                children: [
+                  if (_notificationsAllowed == false)
+                    ListTile(
+                      leading: const Icon(Icons.notifications_outlined),
+                      title: const Text('系统通知未开启'),
+                      trailing: TextButton(
+                        onPressed: widget.openNotificationSettings,
+                        child: const Text('去开启'),
+                      ),
                     ),
-          onTap: _exporting || _sharing ? null : _export,
+                  AppSwitchTile(
+                    key: const Key('notification-outcomes'),
+                    title: const Text('任务结果'),
+                    subtitle: const Text('任务完成或失败时提醒'),
+                    value: preferences.outcomes,
+                    onChanged: !canChangeNotifications
+                        ? null
+                        : (value) => _changeNotifications(
+                            preferences.copyWith(outcomes: value),
+                          ),
+                  ),
+                  AppSwitchTile(
+                    key: const Key('notification-interventions'),
+                    title: const Text('需要你处理'),
+                    subtitle: const Text('等待授权或补充信息时提醒'),
+                    value: preferences.interventions,
+                    onChanged: !canChangeNotifications
+                        ? null
+                        : (value) => _changeNotifications(
+                            preferences.copyWith(interventions: value),
+                          ),
+                  ),
+                  AppSwitchTile(
+                    key: const Key('notification-preview'),
+                    title: const Text('内容预览'),
+                    subtitle: const Text('在通知中显示会话标题和摘要'),
+                    value: preferences.preview,
+                    onChanged: !canChangeNotifications
+                        ? null
+                        : (value) => _changeNotifications(
+                            preferences.copyWith(preview: value),
+                          ),
+                  ),
+                ],
+              ),
+            AppSettingsSection(
+              title: '连接与后台',
+              children: [
+                if (preferences != null)
+                  AppSwitchTile(
+                    key: const Key('background-connection'),
+                    title: const Text('后台保持连接'),
+                    subtitle: const Text('切换 App 后继续接收任务消息'),
+                    value: preferences.keepConnected,
+                    onChanged: !canChangeNotifications
+                        ? null
+                        : (value) => _changeNotifications(
+                            preferences.copyWith(keepConnected: value),
+                          ),
+                  ),
+                AppSwitchTile(
+                  key: const Key('webrtc-switch'),
+                  title: const Text('WebRTC'),
+                  subtitle: Text(
+                    _webRtcEnabled != widget.activeWebRtcEnabled
+                        ? '设置已保存，重启 App 后生效'
+                        : '允许设备间直接连接，更改后重启生效',
+                  ),
+                  value: _webRtcEnabled,
+                  onChanged: _savingChannel || widget.onWebRtcChanged == null
+                      ? null
+                      : _changeChannel,
+                ),
+                if (widget.onSignalingServiceChanged != null)
+                  ListTile(
+                    key: const Key('signaling-service-entry'),
+                    title: const Text('信令服务'),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_signalingService == null)
+                          Text(
+                            '未配置',
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                          ),
+                        const SizedBox(width: AppLayout.gap),
+                        const Icon(Icons.chevron_right),
+                      ],
+                    ),
+                    subtitle: _signalingService == null
+                        ? null
+                        : Text(
+                            _signalingService!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                    onTap: _openSignalingService,
+                  ),
+              ],
+            ),
+            AppSettingsSection(
+              title: '诊断',
+              children: [
+                ListTile(
+                  key: const Key('export-logs'),
+                  leading: const Icon(Icons.description_outlined),
+                  title: const Text('导出日志'),
+                  subtitle: Text(
+                    _exportPath ?? '用于排查连接与消息问题',
+                    key: const Key('export-log-path'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: _exporting || _sharing
+                      ? const SizedBox.square(
+                          dimension: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : _exportPath == null
+                      ? const Icon(Icons.chevron_right)
+                      : IconButton(
+                          key: const Key('share-logs'),
+                          tooltip: '再次分享日志',
+                          onPressed: _share,
+                          icon: const Icon(Icons.share_outlined),
+                        ),
+                  onTap: _exporting || _sharing ? null : _export,
+                ),
+              ],
+            ),
+          ],
         ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }

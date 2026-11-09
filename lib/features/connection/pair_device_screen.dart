@@ -418,7 +418,7 @@ class _ManualPairingSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(AppLayout.space16, 0, AppLayout.space16, AppLayout.space16),
+          padding: AppLayout.selectionSheetPadding,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -578,7 +578,7 @@ class _PasscodeHostPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(AppLayout.space16, 0, AppLayout.space16, AppLayout.space16),
+          padding: AppLayout.selectionSheetPadding,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
