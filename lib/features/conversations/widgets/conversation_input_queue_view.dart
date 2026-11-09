@@ -39,31 +39,6 @@ class ConversationInputQueueView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (count > 0) Row(
-          children: [
-            Expanded(
-              child: Text(
-                snapshot == null
-                    ? '正在读取待发队列…'
-                    : '待发送 $count 条${snapshot.paused ? ' · 已暂停' : ''}',
-                key: const Key('input-queue-title'),
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
-            ),
-            if (snapshot?.paused == true && count > 0)
-              TextButton(
-                key: const Key('input-queue-resume'),
-                onPressed: enabled ? onResume : null,
-                child: const Text('继续队列'),
-              ),
-            IconButton(
-              tooltip: '刷新队列',
-              visualDensity: VisualDensity.compact,
-              onPressed: onRefresh,
-              icon: const Icon(Icons.refresh, size: 18),
-            ),
-          ],
-        ),
         if (count > 0 || edits.isNotEmpty)
           ConstrainedBox(
             constraints: BoxConstraints(
@@ -81,7 +56,7 @@ class ConversationInputQueueView extends StatelessWidget {
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
-                        vertical: 5,
+                        vertical: 2,
                       ),
                       margin: const EdgeInsets.only(bottom: 4),
                       decoration: BoxDecoration(
@@ -95,12 +70,19 @@ class ConversationInputQueueView extends StatelessWidget {
                         children: [
                           Row(
                             children: [
-                              Expanded(child: Text(item.text, maxLines: 2,
+                              Expanded(child: Text(item.text.replaceAll(RegExp(r'\s+'), ' ').trim(), maxLines: 1,
                                 overflow: TextOverflow.ellipsis)),
                               PopupMenuButton<String>(
                                 key: ValueKey('queue-menu-${item.id}'),
                                 tooltip: '消息操作',
-                                icon: const Icon(Icons.more_horiz),
+                                padding: EdgeInsets.zero,
+                                style: IconButton.styleFrom(
+                                  minimumSize: const Size(32, 32),
+                                  padding: EdgeInsets.zero,
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                icon: Icon(Icons.keyboard_arrow_down,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: .45)),
                                 onSelected: (action) {
                                   switch (action) {
                                     case 'steer': onSteer(item);
