@@ -59,6 +59,13 @@ void main() {
     );
   });
 
+  test('UI foundation is independent of business features and adapters', () {
+    _expectNoImports(Directory('lib/ui'), const [
+      '/features/', '/application/', '/core/', '/gateway/', '/devices/',
+      'package:codepet_', 'dart:io',
+    ]);
+  });
+
   test('generated packages share one compatible Core schema surface', () {
     final gatewayCore = File(
       'sdk/gateway/codepet-core-sdk/lib/src/generated.dart',

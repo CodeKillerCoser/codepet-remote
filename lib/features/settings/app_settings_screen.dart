@@ -1,3 +1,5 @@
+import '../../ui/layout/app_layout.dart';
+import '../../ui/layout/app_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -9,6 +11,8 @@ class AppSettingsScreen extends StatefulWidget {
   const AppSettingsScreen({
     super.key,
     required this.exportLogs,
+    this.themeMode = ThemeMode.system,
+    this.onThemeModeChanged,
     this.logger = const NoopApplicationLog(),
     this.webRtcEnabled = false,
     this.activeWebRtcEnabled = false,
@@ -20,6 +24,9 @@ class AppSettingsScreen extends StatefulWidget {
     this.signalingService,
     this.onSignalingServiceChanged,
   });
+
+  final ThemeMode themeMode;
+  final Future<void> Function(ThemeMode)? onThemeModeChanged;
 
   final NotificationPreferences? notificationPreferences;
   final Future<NotificationPreferences> Function(NotificationPreferences)? onNotificationsChanged;
@@ -38,6 +45,24 @@ class AppSettingsScreen extends StatefulWidget {
 }
 
 class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindingObserver {
+  late ThemeMode _themeMode = widget.themeMode;
+  bool _savingTheme = false;
+  Future<void> _changeTheme(ThemeMode mode) async {
+    if (_savingTheme || widget.onThemeModeChanged == null) return;
+    setState(() => _savingTheme = true);
+    try {
+      await widget.onThemeModeChanged!(mode);
+      if (mounted) setState(() => _themeMode = mode);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('主题设置保存失败，请重试')));
+      }
+    } finally {
+      if (mounted) setState(() => _savingTheme = false);
+    }
+  }
+
   late NotificationPreferences? _notifications = widget.notificationPreferences;
   bool _savingNotifications = false;
   bool? _notificationsAllowed;
@@ -151,11 +176,28 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> with WidgetsBindi
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => AppScaffold(
     appBar: AppBar(title: const Text('App 设置')),
     body: ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(AppLayout.pageInset(context)),
       children: [
+        ListTile(
+          leading: const Icon(Icons.palette_outlined),
+          title: const Text('主题'),
+          trailing: DropdownButton<ThemeMode>(
+            key: const Key('theme-mode-selector'),
+            value: _themeMode,
+            underline: const SizedBox.shrink(),
+            items: const [
+              DropdownMenuItem(value: ThemeMode.system, child: Text('跟随系统')),
+              DropdownMenuItem(value: ThemeMode.light, child: Text('浅色')),
+              DropdownMenuItem(value: ThemeMode.dark, child: Text('深色')),
+            ],
+            onChanged: _savingTheme || widget.onThemeModeChanged == null
+              ? null : (mode) { if (mode != null) _changeTheme(mode); },
+          ),
+        ),
+        const Divider(),
         if (_notifications case final preferences?) ...[
           const ListTile(leading: Icon(Icons.notifications_outlined), title: Text('通知')),
           if (_notificationsAllowed == false)

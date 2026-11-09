@@ -1,3 +1,5 @@
+import '../../../ui/components/app_row_menu.dart';
+import '../../../ui/layout/app_layout.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/domain/conversation_input_queue.dart';
@@ -63,7 +65,7 @@ class ConversationInputQueueView extends StatelessWidget {
                         color: Theme.of(context)
                             .colorScheme
                             .surfaceContainerLow,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(AppLayout.compactRadius),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -72,17 +74,8 @@ class ConversationInputQueueView extends StatelessWidget {
                             children: [
                               Expanded(child: Text(item.text.replaceAll(RegExp(r'\s+'), ' ').trim(), maxLines: 1,
                                 overflow: TextOverflow.ellipsis)),
-                              PopupMenuButton<String>(
+                              AppRowMenu<String>(
                                 key: ValueKey('queue-menu-${item.id}'),
-                                tooltip: '消息操作',
-                                padding: EdgeInsets.zero,
-                                style: IconButton.styleFrom(
-                                  minimumSize: const Size(32, 32),
-                                  padding: EdgeInsets.zero,
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                ),
-                                icon: Icon(Icons.keyboard_arrow_down,
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: .45)),
                                 onSelected: (action) {
                                   switch (action) {
                                     case 'steer': onSteer(item);

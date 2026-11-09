@@ -1,3 +1,4 @@
+import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -285,7 +286,8 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
     final discoveredHosts = _hosts.values
         .where((host) => !activeDeviceIds.contains(host.deviceId))
         .toList(growable: false);
-    return Scaffold(
+    return AppScaffold(
+      constrainContent: false,
       appBar: AppBar(title: const Text('配对 CodePet Host')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
       if (_busy && _qrPairing) Padding(
@@ -470,7 +472,8 @@ class _QrScannerScreenState extends State<_QrScannerScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => AppScaffold(
+      constrainContent: false,
         appBar: AppBar(title: const Text('扫描配对二维码')),
         body: SafeArea(
           child: Padding(

@@ -120,3 +120,9 @@ CodePet Remote 采用 [PolyForm Noncommercial License 1.0.0](LICENSE)。在该�
 **本许可不授予商业使用权。** 修改或二次分发不会解除非商业限制。商业使用需要另外取得相关权利人的授权。
 
 由于包含非商业限制，本项目属于 **源码可用（source-available）**，不属于 [OSI 定义的开源软件](https://opensource.org/osd)。上述内容为简要说明，具体适用范围（包括许可列明的组织用途）、第三方组件和贡献约定见[许可说明](docs/licensing.md)，正式条款以 [LICENSE](LICENSE) 为准。
+
+## 设计参考与致谢
+
+感谢 [FlClash](https://github.com/chen08209/FlClash) 项目。CodePet Remote 的界面管理方案参考了其主题集中管理、响应式页面布局和公共业务组件分层的设计思路。
+
+本项目基于 Flutter Material 3 独立实现这些分层，未复制 FlClash 或 Prism UI 的源码与资源。主题、字体、配色和组件默认样式集中在 `lib/ui/theme/`，布局尺度和页面骨架集中在 `lib/ui/layout/`，公共视觉组件集中在 `lib/ui/components/`；业务页面使用这些公共层。具体约定见 [界面设计与组件分层](docs/ui-design.md)。

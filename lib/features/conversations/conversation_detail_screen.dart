@@ -1,3 +1,4 @@
+import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -393,7 +394,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         ? ConversationStatus.running
         : detailStatus;
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
-    return Scaffold(
+    return AppScaffold(
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         actions: [
@@ -711,7 +712,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     if (interactionError != null) {
       return Material(
         key: const Key('interaction-unavailable'),
-        elevation: 8,
+        elevation: 0,
         color: Theme.of(context).colorScheme.surface,
         child: SafeArea(
           top: false,
@@ -760,7 +761,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     final selectorEnabled = _composerEnabled;
     return Material(
       key: const Key('conversation-composer'),
-      elevation: 8,
+      elevation: 0,
       color: Theme.of(context).colorScheme.surface,
       child: SafeArea(
         top: false,

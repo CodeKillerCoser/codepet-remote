@@ -1,3 +1,5 @@
+import '../../../ui/components/app_surface.dart';
+import '../../../ui/layout/app_layout.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -44,28 +46,27 @@ class _TurnFailure extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     return Semantics(
       container: true,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(color: colors.errorContainer,
-          borderRadius: BorderRadius.circular(12)),
+      child: AppSurface(
+        color: Color.alphaBlend(colors.error.withValues(alpha: .06), colors.surface),
+        border: true,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Icon(Icons.error_outline, color: colors.onErrorContainer, size: 20),
+            Icon(Icons.error_outline, color: colors.error, size: 20),
             const SizedBox(width: 8),
             Expanded(child: Text('执行失败', style: TextStyle(
-              color: colors.onErrorContainer, fontWeight: FontWeight.w600))),
+              color: colors.error, fontWeight: FontWeight.w600))),
           ]),
           const SizedBox(height: 8),
-          SelectableText(block.message, style: TextStyle(color: colors.onErrorContainer)),
+          SelectableText(block.message, style: TextStyle(color: colors.error)),
           if (block.retryable) ...[
             const SizedBox(height: 8),
-            Text('可稍后重新发送。', style: TextStyle(color: colors.onErrorContainer)),
+            Text('可稍后重新发送。', style: TextStyle(color: colors.error)),
           ],
           if (block.completedAt != null) ...[
             const SizedBox(height: 4),
             Text('${MaterialLocalizations.of(context).formatShortDate(block.completedAt!.toLocal())} '
               '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(block.completedAt!.toLocal()))}',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(color: colors.onErrorContainer)),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(color: colors.error)),
           ],
         ]),
       ),
@@ -94,9 +95,9 @@ class _UserMessage extends StatelessWidget {
               decoration: BoxDecoration(
                 color: colors.primaryContainer,
                 borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(18),
-                  topRight: Radius.circular(18),
-                  bottomLeft: Radius.circular(18),
+                  topLeft: Radius.circular(AppLayout.bubbleRadius),
+                  topRight: Radius.circular(AppLayout.bubbleRadius),
+                  bottomLeft: Radius.circular(AppLayout.bubbleRadius),
                   bottomRight: Radius.circular(5),
                 ),
               ),
@@ -809,7 +810,7 @@ class _ApprovalActivity extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colors.tertiaryContainer.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppLayout.radius),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -949,7 +950,7 @@ class _MarkdownContentState extends State<_MarkdownContent> {
         codeblockPadding: const EdgeInsets.all(12),
         codeblockDecoration: BoxDecoration(
           color: colors.surfaceContainer,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppLayout.radius),
           border: Border.all(color: colors.outlineVariant),
         ),
         blockquotePadding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
@@ -1034,7 +1035,7 @@ class _ActivityHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return InkWell(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(AppLayout.radius),
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
@@ -1088,7 +1089,7 @@ class _AttachedApproval extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colors.tertiaryContainer.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppLayout.radius),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -1124,7 +1125,7 @@ class _CodePanel extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colors.surfaceContainer,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppLayout.radius),
         border: Border.all(color: colors.outlineVariant),
       ),
       child: Padding(

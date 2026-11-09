@@ -1,3 +1,4 @@
+import '../../../ui/layout/app_layout.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/domain/models.dart';
@@ -83,7 +84,7 @@ class _ConversationTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) => InkWell(
     onTap: onTap,
-    borderRadius: BorderRadius.circular(12),
+    borderRadius: BorderRadius.circular(AppLayout.radius),
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Row(

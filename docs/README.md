@@ -9,6 +9,7 @@
 | [开发指南](development.md) | 环境、本地运行、目录、生成 SDK 与分层约束 |
 | [Android 构建与发布](android-build.md) | Actions 打包、产物下载、签名配置 |
 | [连接与安全边界](connection-and-security.md) | LAN、TLS pin、设备凭据与持久化 |
+| [界面设计与组件分层](ui-design.md) | 主题、布局尺度、页面骨架与公共组件 |
 | [架构设计](architecture.md) | 分层、会话交互、分页、缓存与心跳 |
 | [日志与排障](diagnostics.md) | 日志导出、跨端 Trace 与时间线解释 |
 | [许可说明](licensing.md) | 非商业许可、修改与分发、贡献与第三方组件 |

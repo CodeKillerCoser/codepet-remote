@@ -1,3 +1,4 @@
+import '../../ui/layout/app_layout.dart';
 import 'package:flutter/material.dart';
 
 /// A compact, opaque disclosure surface shared by detail popovers.
@@ -15,7 +16,7 @@ class FloatingDetailPanel extends StatelessWidget {
       elevation: 3,
       shadowColor: colors.shadow.withValues(alpha: 0.18),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppLayout.radius),
         side: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.7)),
       ),
       clipBehavior: Clip.antiAlias,

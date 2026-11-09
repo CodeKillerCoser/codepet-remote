@@ -1,3 +1,5 @@
+import 'theme_preferences.dart';
+import '../ui/theme/app_theme.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:codepet_connection_engine/codepet_connection_engine.dart' as ce;
@@ -80,6 +82,7 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   final _connectionBudget = ce.CandidateBudget(limit: 8);
   int _selectedIndex = 0;
   bool _loading = true;
+  ThemeMode _themeMode = ThemeMode.system;
   late bool _savedWebRtcEnabled;
   late String? _savedSignalingService;
   late final SignalingDeviceRegistration _signalRegistration;
@@ -127,7 +130,17 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     _connectionEnvironment = ConnectionEnvironmentObserver((optimize) {
       for (final session in _sessions) { session.reconcileConnection(optimize: optimize); }
     });
+    unawaited(_loadTheme());
     unawaited(_loadDevices());
+  }
+
+  Future<void> _loadTheme() async {
+    try {
+      final mode = await ThemePreferences.load();
+      if (mounted) setState(() => _themeMode = mode);
+    } catch (error) {
+      _log.warning('Unable to load theme preference', error: error);
+    }
   }
 
   Future<void> _loadDevices() async {
@@ -628,6 +641,11 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
   void _openSettings() {
     _navigatorKey.currentState!.push<void>(MaterialPageRoute(
       builder: (_) => AppSettingsScreen(
+        themeMode: _themeMode,
+        onThemeModeChanged: (mode) async {
+          await ThemePreferences.save(mode);
+          if (mounted) setState(() => _themeMode = mode);
+        },
         notificationPreferences: widget.notifications?.coordinator.preferences,
         onNotificationsChanged: widget.notifications?.changePreferences,
         notificationsAllowed: widget.notifications?.adapter.isAllowed,
@@ -692,7 +710,9 @@ class _CodePetRemoteAppState extends State<CodePetRemoteApp> {
     navigatorObservers: [if (widget.notifications != null) widget.notifications!.observer],
     title: 'CodePet Remote', debugShowCheckedModeBanner: false,
     builder: (context, child) => AppToastHost(child: child!),
-    theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF326B66)), useMaterial3: true, scaffoldBackgroundColor: const Color(0xFFF7F9F8), inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder())),
+    theme: AppTheme.light,
+    darkTheme: AppTheme.dark,
+    themeMode: _themeMode,
     home: _loading ? const Scaffold(body: Center(child: CircularProgressIndicator())) : RemoteHomeScreen(
       sessions: _sessions, selectedIndex: _selectedIndex,
       onSelectDevice: (index) => setState(() => _selectedIndex = index), onAddDevice: _openAddDevice, onOpenSettings: _openSettings,

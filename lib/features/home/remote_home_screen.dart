@@ -1,3 +1,5 @@
+import '../../ui/layout/app_layout.dart';
+import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -128,7 +130,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
             '${session.device.deviceId}\u0000${session.selectedProviderId ?? 'no-provider'}',
             _DeviceHomeViewState.new,
           );
-    return Scaffold(
+    return AppScaffold(
       appBar: AppBar(
         title: const Text('CodePet Remote'),
         actions: [
@@ -157,7 +159,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
               key: const Key('remote-home'),
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  padding: EdgeInsets.fromLTRB(AppLayout.pageInset(context), AppLayout.gap, AppLayout.pageInset(context), 0),
                   child: _DeviceActions(
                     session: session!,
                     selectedProvider: selectedProvider,
@@ -165,7 +167,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: EdgeInsets.symmetric(horizontal: AppLayout.pageInset(context)),
                   child: ConnectionTrafficView(
                     key: const Key('home-connection-traffic'),
                     read: () => session.connectionTraffic,
@@ -178,7 +180,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     key: const Key('home-content-scroll'),
                     controller: viewState.scrollController,
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+                    padding: EdgeInsets.fromLTRB(AppLayout.pageInset(context), 4, AppLayout.pageInset(context), 32),
                     children: [
                       if (DeviceConnectionNotice.shouldShow(
                         session,
@@ -319,7 +321,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
     final widgets = <Widget>[];
     widgets.addAll(projects.take(visibleCount).map((project) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
+        padding: EdgeInsets.only(bottom: AppLayout.cardGap(context)),
         child: _ProjectCard(
             key: Key('project-card-${project.key}'),
             project: project,
@@ -997,7 +999,7 @@ class _ChatProjectCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
+    padding: EdgeInsets.only(bottom: AppLayout.cardGap(context)),
     child: Card(
       key: const Key('chat-project-card'),
       margin: EdgeInsets.zero,
@@ -1114,7 +1116,7 @@ class _ProjectConversationsScreenState
         _canLoadMore ||
         widget.session.isLoadingMoreConversations;
     final selectedProvider = widget.session.selectedProvider;
-    return Scaffold(
+    return AppScaffold(
       appBar: AppBar(
         leadingWidth: 48,
         titleSpacing: 0,

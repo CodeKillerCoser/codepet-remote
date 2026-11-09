@@ -1,3 +1,4 @@
+import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -87,7 +88,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     final connecting =
         session.connectionState == DeviceConnectionState.connecting;
     final online = session.connectionState == DeviceConnectionState.online;
-    return Scaffold(
+    return AppScaffold(
       appBar: AppBar(title: const Text('设备详情')),
       body: ListView(
         key: const Key('device-detail'),

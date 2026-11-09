@@ -1,3 +1,4 @@
+import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -122,7 +123,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     final online =
         widget.session.connectionState == DeviceConnectionState.online;
     final supported = online && _providers.isNotEmpty;
-    return Scaffold(
+    return AppScaffold(
       appBar: AppBar(
         title: const Text('搜索会话'),
         actions: [
