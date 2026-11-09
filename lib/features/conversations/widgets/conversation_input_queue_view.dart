@@ -39,7 +39,7 @@ class ConversationInputQueueView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
+        if (count > 0) Row(
           children: [
             Expanded(
               child: Text(
