@@ -1,3 +1,5 @@
+import '../../ui/layout/app_layout.dart';
+import '../../ui/theme/app_semantics.dart';
 import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
 
@@ -95,11 +97,11 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     if (!_controller.resultsAreCurrent) {
       AppToast.show(
         type: AppToastType.warning,
-        content: const TextSpan(
+        content: TextSpan(
           children: [
             TextSpan(
               text: '搜索结果已失效',
-              style: TextStyle(fontWeight: FontWeight.w600),
+              style: Theme.of(context).bodyEmphasis,
             ),
             TextSpan(text: '，请重新搜索'),
           ],
@@ -139,7 +141,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            padding: const EdgeInsets.fromLTRB(AppLayout.space16, AppLayout.space8, AppLayout.space16, AppLayout.space12),
             child: TextField(
               key: const Key('search-input'),
               controller: _searchController,
@@ -177,7 +179,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
       return Center(
         key: const Key('search-offline'),
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppLayout.space24),
           child: DeviceConnectionNotice(session: widget.session),
         ),
       );
@@ -221,7 +223,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     if (_conversations.isEmpty) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppLayout.space16),
         children: [
           const SizedBox(height: 80),
           _SearchMessage(
@@ -237,7 +239,7 @@ class _ConversationSearchScreenState extends State<ConversationSearchScreen> {
     }
     return ConversationList(
       key: const Key('search-results'),
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      padding: const EdgeInsets.fromLTRB(AppLayout.space16, AppLayout.space4, AppLayout.space16, AppLayout.space24),
       conversations: _conversations.take(visibleCount).toList(growable: false),
       itemKey: (conversation) => Key(
         'search-result-${conversationRoutingKey(conversation)}',
@@ -293,7 +295,7 @@ class _InlineError extends StatelessWidget {
         '加载失败：$message',
         key: const Key('search-inline-error'),
         textAlign: TextAlign.center,
-        style: TextStyle(color: Theme.of(context).colorScheme.error),
+        style: Theme.of(context).errorText,
       );
 }
 
@@ -316,21 +318,21 @@ class _SearchMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppLayout.space24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(icon, size: 44),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppLayout.space12),
               Text(
                 title,
                 style: Theme.of(context).textTheme.titleMedium,
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: AppLayout.space6),
               Text(message, textAlign: TextAlign.center),
               if (onAction != null) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: AppLayout.space12),
                 TextButton(onPressed: onAction, child: Text(actionLabel!)),
               ],
             ],

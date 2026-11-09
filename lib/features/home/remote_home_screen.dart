@@ -1,3 +1,5 @@
+import '../../ui/theme/app_semantics.dart';
+import '../../ui/components/app_navigation_drawer.dart';
 import '../../ui/layout/app_layout.dart';
 import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
@@ -131,27 +133,40 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
             _DeviceHomeViewState.new,
           );
     return AppScaffold(
-      appBar: AppBar(
-        title: const Text('CodePet Remote'),
-        actions: [
-          if (session != null)
-            _DeviceDropdown(
+      bottomBarBorder: false,
+      drawer: _HomeDrawer(
               sessions: sessions,
               selectedIndex: selectedIndex,
               onSelect: widget.onSelectDevice,
-            ),
-          PopupMenuButton<String>(
-            key: const Key('home-overflow-menu'),
-            onSelected: (value) {
-              if (value == 'connect') widget.onAddDevice();
-              if (value == 'settings') widget.onOpenSettings();
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'connect', child: Text('连接设备')),
-              PopupMenuItem(value: 'settings', child: Text('App 设置')),
-            ],
+        onAddDevice: widget.onAddDevice,
+        onManageDevices: widget.onAddDevice,
+        onOpenSettings: widget.onOpenSettings,
+      ),
+      appBar: AppBar(
+        leading: Builder(
+          builder: (context) => IconButton(
+            key: const Key('home-navigation-menu'),
+            tooltip: '打开导航菜单',
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(context).openDrawer(),
           ),
-        ],
+        ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              session?.displayDeviceName ?? 'CodePet',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (session != null)
+              Text(
+                _deviceMenuStateLabel(session),
+                key: Key('device-status-${session.device.deviceId}'),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+          ],
+        ),
       ),
       body: sessions.isEmpty
           ? _EmptyDevices(onAddDevice: widget.onAddDevice)
@@ -159,7 +174,8 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
               key: const Key('remote-home'),
               children: [
                 Padding(
-                  padding: EdgeInsets.fromLTRB(AppLayout.pageInset(context), AppLayout.gap, AppLayout.pageInset(context), 0),
+                  padding: EdgeInsets.fromLTRB(AppLayout.pageInset(context), AppLayout.gap, AppLayout.pageInset(context), 0,
+                  ),
                   child: _DeviceActions(
                     session: session!,
                     selectedProvider: selectedProvider,
@@ -167,7 +183,8 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                   ),
                 ),
                 Padding(
-                  padding: EdgeInsets.symmetric(horizontal: AppLayout.pageInset(context)),
+                  padding: EdgeInsets.symmetric(horizontal: AppLayout.pageInset(context),
+                  ),
                   child: ConnectionTrafficView(
                     key: const Key('home-connection-traffic'),
                     read: () => session.connectionTraffic,
@@ -180,14 +197,15 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                     key: const Key('home-content-scroll'),
                     controller: viewState.scrollController,
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: EdgeInsets.fromLTRB(AppLayout.pageInset(context), 4, AppLayout.pageInset(context), 32),
+                    padding: EdgeInsets.fromLTRB(AppLayout.pageInset(context), 4, AppLayout.pageInset(context), 32,
+                    ),
                     children: [
                       if (DeviceConnectionNotice.shouldShow(
                         session,
                         includeConnecting: true,
                       )) ...[
                         DeviceConnectionNotice(session: session),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: AppLayout.space12),
                       ],
                       ...[
                         _SectionTitle(
@@ -223,7 +241,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                           }),
                         ),
                         if (viewState.projectsExpanded) ...[
-                          const SizedBox(height: 10),
+                          const SizedBox(height: AppLayout.space10),
                           _ChatProjectCard(session: session),
                           if (session.selectedProviderSupportsProjects)
                             ..._projectWidgets(
@@ -234,7 +252,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                             ),
                         ],
                       ],
-                      const SizedBox(height: 28),
+                      const SizedBox(height: AppLayout.space28),
                       _SectionTitle(
                         key: Key('recent-section-${session.device.deviceId}'),
                         title: '最近',
@@ -246,7 +264,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                         }),
                       ),
                       if (viewState.recentExpanded) ...[
-                        const SizedBox(height: 10),
+                        const SizedBox(height: AppLayout.space10),
                         RecentConversationFeed(
                           key: ValueKey(viewState),
                           controller: session.selectedProviderRecent,
@@ -299,8 +317,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
             session.isLoadingMoreProjects)
           _PaginationControl(
             buttonKey: Key(
-              'show-more-projects-${session.device.deviceId}',
-            ),
+              'show-more-projects-${session.device.deviceId}'),
             label: '显示更多项目',
             loading: session.isLoadingMoreProjects,
             error: session.loadMoreProjectsError,
@@ -316,8 +333,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
         : projects.length;
     _scheduleProjectConversationCounts(
       session,
-      projects.take(visibleCount),
-    );
+      projects.take(visibleCount));
     final widgets = <Widget>[];
     widgets.addAll(projects.take(visibleCount).map((project) {
       return Padding(
@@ -337,7 +353,8 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
             ),
         ),
       );
-    }));
+    }),
+    );
     if (visibleCount < projects.length ||
         session.canLoadMoreSelectedProviderProjects ||
         session.isLoadingMoreProjects) {
@@ -353,7 +370,8 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
               session: session,
               hasLocalMore: visibleCount < projects.length,
               advance: () => viewState.projectPages++,
-            ));
+            ),
+            );
           },
         ),
       );
@@ -395,181 +413,87 @@ class _DeviceHomeViewState {
   final scrollController = ScrollController();
 }
 
-class _DeviceDropdown extends StatelessWidget {
-  const _DeviceDropdown({
+class _HomeDrawer extends StatelessWidget {
+  const _HomeDrawer({
     required this.sessions,
     required this.selectedIndex,
     required this.onSelect,
+    required this.onAddDevice,
+    required this.onManageDevices,
+    required this.onOpenSettings,
   });
 
   final List<DeviceSession> sessions;
   final int selectedIndex;
   final ValueChanged<int> onSelect;
+  final VoidCallback onAddDevice, onManageDevices, onOpenSettings;
 
-  @override
-  Widget build(BuildContext context) {
-    final selected = sessions[selectedIndex];
-    final colorScheme = Theme.of(context).colorScheme;
-    return PopupMenuButton<int>(
-      key: const Key('home-device-menu'),
-      tooltip: '切换设备',
-      onSelected: onSelect,
-      itemBuilder: (context) => [
-        for (var index = 0; index < sessions.length; index++)
-          PopupMenuItem<int>(
-            key: Key('device-${sessions[index].device.deviceId}'),
-            value: index,
-            child: _DeviceMenuItem(
-              session: sessions[index],
-              selected: index == selectedIndex,
-            ),
-          ),
-      ],
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 132),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _DeviceStateIcon(session: selected, size: 28),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      selected.displayDeviceName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                    Text(
-                      _deviceTriggerSubtitle(selected),
-                      key: Key(
-                        'device-status-${selected.device.deviceId}',
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.arrow_drop_down, size: 20),
-            ],
-          ),
-        ),
-      ),
-    );
+  void _selectDevice(BuildContext context, VoidCallback action) {
+    Navigator.of(context).pop();
+    action();
   }
-}
-
-class _DeviceMenuItem extends StatelessWidget {
-  const _DeviceMenuItem({required this.session, required this.selected});
-
-  final DeviceSession session;
-  final bool selected;
 
   @override
-  Widget build(BuildContext context) => Row(
+  Widget build(BuildContext context) => AppNavigationDrawer(
+        key: const Key('home-navigation-drawer'),
+        title: 'CodePet',
+        subtitle: '你的 AI 工作空间',
+        footer: ListTile(
+          key: const Key('drawer-settings'),
+          leading: const Icon(Icons.settings_outlined),
+          title: const Text('设置'),
+          onTap: onOpenSettings,
+        ),
         children: [
-          _DeviceStateIcon(session: session, size: 32),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  session.displayDeviceName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: selected
-                      ? const TextStyle(fontWeight: FontWeight.w700)
-                      : null,
-                ),
-                Text(
-                  '${session.displaySystemLabel} · ${_deviceMenuStateLabel(session)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ),
+          Padding(
+            padding: EdgeInsets.all(AppLayout.pageInset(context)),
+            child: Text('设备', style: Theme.of(context).textTheme.titleMedium),
           ),
-          if (selected) const Icon(Icons.check, size: 18),
+          if (sessions.isEmpty) const ListTile(title: Text('还没有设备')),
+          for (var i = 0; i < sessions.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: AppLayout.compactGap),
+              child: ListTile(
+                key: Key('device-${sessions[i].device.deviceId}'),
+                selected: i == selectedIndex,
+                leading: Icon(operatingSystemIconData(sessions[i].displaySystemLabel)),
+                title: Text(
+                  sessions[i].displayDeviceName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  '${sessions[i].displaySystemLabel} · ${_deviceMenuStateLabel(sessions[i])}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: i == selectedIndex ? const Icon(Icons.check) : null,
+                onTap: () => _selectDevice(context, () => onSelect(i)),
+              ),
+            ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: AppLayout.gap),
+            child: Divider(),
+          ),
+          ListTile(
+            key: const Key('drawer-add-device'),
+            leading: const Icon(Icons.add),
+            title: const Text('添加设备'),
+            onTap: onAddDevice,
+          ),
+          ListTile(
+            key: const Key('drawer-manage-devices'),
+            leading: const Icon(Icons.tune),
+            title: const Text('设备管理'),
+            onTap: onManageDevices,
+          ),
         ],
       );
-}
-
-class _DeviceStateIcon extends StatelessWidget {
-  const _DeviceStateIcon({required this.session, required this.size});
-
-  final DeviceSession session;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: colorScheme.primary.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(size * 0.28),
-          ),
-          alignment: Alignment.center,
-          child: Icon(
-            operatingSystemIconData(session.displaySystemLabel),
-            size: size * 0.62,
-            color: colorScheme.primary,
-          ),
-        ),
-        Positioned(
-          right: -1,
-          bottom: -1,
-          child: Container(
-            width: 9,
-            height: 9,
-            decoration: BoxDecoration(
-              color: _deviceStateColor(
-                colorScheme,
-                session.connectionState,
-              ),
-              shape: BoxShape.circle,
-              border: Border.all(color: colorScheme.surface, width: 1.5),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 String _deviceMenuStateLabel(DeviceSession session) => session.isReconnecting
     ? '重新连接中'
     : _deviceStateLabel(session.connectionState);
-
-String _deviceTriggerSubtitle(DeviceSession session) =>
-    session.connectionState == DeviceConnectionState.online
-        ? session.displaySystemLabel
-        : _deviceMenuStateLabel(session);
-
-Color _deviceStateColor(
-  ColorScheme colorScheme,
-  DeviceConnectionState state,
-) => switch (state) {
-      DeviceConnectionState.online => Colors.green.shade600,
-      DeviceConnectionState.connecting => colorScheme.tertiary,
-      DeviceConnectionState.offline => colorScheme.outline,
-      DeviceConnectionState.failed => colorScheme.error,
-    };
 
 class _DeviceActions extends StatelessWidget {
   const _DeviceActions({
@@ -594,7 +518,7 @@ class _DeviceActions extends StatelessWidget {
               key: const Key('connected-providers'),
               scrollDirection: Axis.horizontal,
               itemCount: providers.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              separatorBuilder: (_, _) => const SizedBox(width: AppLayout.space8),
               itemBuilder: (context, index) {
                 final provider = providers[index];
                 return _ProviderIdentity(
@@ -606,11 +530,12 @@ class _DeviceActions extends StatelessWidget {
               },
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: AppLayout.space4),
         ],
         if (selectedProvider != null)
           _ProviderDisclosure(
-            key: ValueKey('provider-details-${session.device.deviceId}-${selectedProvider!.id}'),
+            key: ValueKey('provider-details-${session.device.deviceId}-${selectedProvider!.id}',
+            ),
             provider: selectedProvider!,
             connectionState: session.connectionState,
           )
@@ -622,7 +547,8 @@ class _DeviceActions extends StatelessWidget {
 }
 
 class _ProviderDisclosure extends StatefulWidget {
-  const _ProviderDisclosure({super.key, required this.provider, required this.connectionState});
+  const _ProviderDisclosure({super.key, required this.provider, required this.connectionState,
+  });
 
   final GatewayProvider provider;
   final DeviceConnectionState connectionState;
@@ -652,7 +578,8 @@ class _ProviderDisclosureState extends State<_ProviderDisclosure> {
                 behavior: HitTestBehavior.opaque,
                 onTap: _close,
                 child: const SizedBox.expand(),
-              )),
+              ),
+                ),
               CompositedTransformFollower(
                 link: _link,
                 showWhenUnlinked: false,
@@ -663,9 +590,10 @@ class _ProviderDisclosureState extends State<_ProviderDisclosure> {
                   width: constraints.maxWidth,
                   child: FloatingDetailPanel(
                     child: ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.45),
+                      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.45,
+                        ),
                       child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                        padding: const EdgeInsets.fromLTRB(AppLayout.space16, AppLayout.space14, AppLayout.space16, AppLayout.space4),
                         child: ProviderDetails(provider: provider),
                       ),
                     ),
@@ -676,26 +604,30 @@ class _ProviderDisclosureState extends State<_ProviderDisclosure> {
           ),
           child: InkWell(
             onTap: _toggle,
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(AppLayout.subtleRadius),
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.symmetric(vertical: AppLayout.space8),
               child: Row(children: [
                 Expanded(child: Text(
                   '${provider.displayName} · ${provider.runtimeVersion == null ? '版本未提供' : 'v${provider.runtimeVersion}'} · ${_providerStateLabel(provider, widget.connectionState)}',
                   style: Theme.of(context).textTheme.bodySmall,
-                )),
+                ),
+                    ),
                 AnimatedRotation(
                   turns: _controller.isShowing ? 0.5 : 0,
                   duration: const Duration(milliseconds: 200),
                   child: Icon(Icons.expand_more, size: 20,
-                    semanticLabel: _controller.isShowing ? '收起 Provider 信息' : '展开 Provider 信息'),
+                    semanticLabel: _controller.isShowing ? '收起 Provider 信息' : '展开 Provider 信息',
+                      ),
+                    ),
+                  ],
                 ),
-              ]),
+              ),
             ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 }
 
@@ -734,7 +666,7 @@ class _ProviderIdentity extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(provider.displayName),
-          const SizedBox(width: 8),
+          const SizedBox(width: AppLayout.space8),
           Semantics(
             label: _providerStateLabel(provider, connectionState),
             child: Container(
@@ -744,9 +676,9 @@ class _ProviderIdentity extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: switch (_providerStateLabel(provider, connectionState)) {
-                  '在线' => Colors.green.shade600,
-                  '连接中' => Colors.amber.shade600,
-                  _ => Colors.red.shade600,
+                  '在线' => Theme.of(context).semantics.success,
+                  '连接中' => Theme.of(context).semantics.warning,
+                  _ => Theme.of(context).colorScheme.error,
                 },
               ),
             ),
@@ -755,7 +687,7 @@ class _ProviderIdentity extends StatelessWidget {
       ),
       side: BorderSide(
         color: ready
-            ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.35)
+            ? Theme.of(context).selectedOutline
             : Theme.of(context).colorScheme.outlineVariant,
       ),
     );
@@ -783,28 +715,29 @@ class _SectionTitle extends StatelessWidget {
     color: Colors.transparent,
     child: InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(AppLayout.compactRadius),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(vertical: AppLayout.space4),
         child: Row(children: [
           Expanded(
             child: Row(children: [
               Text(
                 title,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                style: Theme.of(context).textTheme.titleLarge,
               ),
-              const SizedBox(width: 8),
-              Text(countLabel, style: Theme.of(context).textTheme.bodySmall),
-            ]),
+              const SizedBox(width: AppLayout.space8),
+              Text(countLabel, style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
           ),
           ?action,
           Icon(
             expanded ? Icons.expand_less : Icons.expand_more,
             semanticLabel: expanded ? '折叠$title' : '展开$title',
           ),
-        ]),
+        ],
+        ),
       ),
     ),
   );
@@ -841,7 +774,7 @@ class _ProjectCard extends StatelessWidget {
         key: Key('project-${project.key}'),
         onTap: onOpenProject,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+          padding: const EdgeInsets.fromLTRB(AppLayout.space16, AppLayout.space14, AppLayout.space8, AppLayout.space14),
           child: Row(
             children: [
               Expanded(
@@ -850,22 +783,28 @@ class _ProjectCard extends StatelessWidget {
                   children: [
                     Row(children: [
                       const Icon(Icons.folder_outlined, size: 20),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: AppLayout.space8),
                       Flexible(child: Text(project.name, maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium)),
-                      const SizedBox(width: 8),
+                        style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                      const SizedBox(width: AppLayout.space8),
                       Text(conversationCount ?? '…',
                         key: Key('project-conversation-count-${project.key}'),
-                        style: Theme.of(context).textTheme.bodySmall),
+                        style: Theme.of(context).textTheme.bodySmall,
+                        ),
                       ConversationIndicators(
                         running: conversations.any(
-                          (item) => item.status == ConversationStatus.running),
+                          (item) => item.status == ConversationStatus.running,
+                          ),
                         unread: conversations.any(
-                          (item) => item.readState.unread),
-                      ),
-                    ]),
-                    const SizedBox(height: 4),
+                          (item) => item.readState.unread,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppLayout.space4),
                     HeadTailPath(roots.isEmpty ? '未关联目录' : roots),
                   ],
                 ),
@@ -880,7 +819,8 @@ class _ProjectCard extends StatelessWidget {
                         session: session,
                         provider: provider,
                         project: project,
-                      ));
+                      ),
+                      );
                     }
                     if (value == 'delete') {
                       unawaited(_confirmDeleteProject(
@@ -888,7 +828,8 @@ class _ProjectCard extends StatelessWidget {
                         session: session,
                         provider: provider,
                         project: project,
-                      ));
+                      ),
+                      );
                     }
                   },
                   itemBuilder: (_) => [
@@ -897,7 +838,7 @@ class _ProjectCard extends StatelessWidget {
                     if (canDelete)
                       const PopupMenuItem(value: 'delete', child: Text('删除项目')),
                   ],
-                )
+                ),
             ],
           ),
         ),
@@ -929,11 +870,11 @@ class _PaginationControl extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (error != null) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: AppLayout.space4),
               Text(
                 '加载失败：$error',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                style: Theme.of(context).errorText,
               ),
             ],
             TextButton.icon(
@@ -953,7 +894,8 @@ class _PaginationControl extends StatelessWidget {
 }
 
 class _MessageCard extends StatelessWidget {
-  const _MessageCard({required this.icon, required this.title, required this.message});
+  const _MessageCard({required this.icon, required this.title, required this.message,
+  });
   final IconData icon;
   final String title;
   final String message;
@@ -962,14 +904,18 @@ class _MessageCard extends StatelessWidget {
     margin: EdgeInsets.zero,
     elevation: 0,
     child: Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppLayout.space16),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Icon(icon), const SizedBox(width: 12),
+        Icon(icon), const SizedBox(width: AppLayout.space12),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 4), Text(message),
-        ])),
-      ]),
+          Text(title, style: Theme.of(context).bodyEmphasis,
+                ),
+          const SizedBox(height: AppLayout.space4), Text(message),
+        ],
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }
@@ -979,17 +925,20 @@ class _EmptyDevices extends StatelessWidget {
   final VoidCallback onAddDevice;
   @override
   Widget build(BuildContext context) => Center(child: Padding(
-    padding: const EdgeInsets.all(24),
+    padding: const EdgeInsets.all(AppLayout.space24),
     child: Column(mainAxisSize: MainAxisSize.min, children: [
       const Icon(Icons.devices_other_outlined, size: 48),
-      const SizedBox(height: 16),
+      const SizedBox(height: AppLayout.space16),
       const Text('还没有设备'),
-      const SizedBox(height: 8),
-      const Text('扫描 CodePet Host 显示的二维码，安全配对这台设备。', textAlign: TextAlign.center),
-      const SizedBox(height: 20),
+      const SizedBox(height: AppLayout.space8),
+      const Text('扫描 CodePet Host 显示的二维码，安全配对这台设备。', textAlign: TextAlign.center,
+          ),
+      const SizedBox(height: AppLayout.space20),
       FilledButton(onPressed: onAddDevice, child: const Text('连接设备')),
-    ]),
-  ));
+    ],
+      ),
+    ),
+  );
 }
 
 class _ChatProjectCard extends StatelessWidget {
@@ -1132,11 +1081,13 @@ class _ProjectConversationsScreenState
       body: ConversationList(
         key: const Key('project-conversation-list'),
         conversations: conversations.take(visibleCount).toList(growable: false),
-        itemKey: (conversation) => Key('project-screen-conversation-${conversationRoutingKey(conversation)}'),
+        itemKey: (conversation) => Key('project-screen-conversation-${conversationRoutingKey(conversation)}',
+        ),
         onTap: (current) => _openConversation(context, widget.session, current),
         leading: [
           if (conversations.isEmpty && !hasMore)
-            const _MessageCard(icon: Icons.forum_outlined, title: '还没有会话', message: '点击新建开始聊天。'),
+            const _MessageCard(icon: Icons.forum_outlined, title: '还没有会话', message: '点击新建开始聊天。',
+            ),
         ],
         trailing: [
           if (hasMore) _PaginationControl(
@@ -1156,7 +1107,8 @@ class _ProjectConversationsScreenState
             selectedProvider?.isAvailable == true &&
             selectedProvider?.methods.contains('conversation.create') == true,
         onSearch: () =>
-            _openSearch(context, widget.session, project: _project?.resource, standaloneOnly: _project == null),
+            _openSearch(context, widget.session, project: _project?.resource, standaloneOnly: _project == null,
+        ),
         onCreate: selectedProvider == null
             ? null
             : () => _startConversation(
@@ -1192,7 +1144,7 @@ class _ProjectConversationTitle extends StatelessWidget {
             color: Theme.of(context).colorScheme.primary,
             semanticLabel: provider?.displayName ?? 'Provider',
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: AppLayout.space10),
           Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1201,8 +1153,7 @@ class _ProjectConversationTitle extends StatelessWidget {
                 Text(
                   project.name,
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                  overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 1),
                 Text(
                   '${session.displayDeviceName} · ${session.displaySystemLabel}',
@@ -1238,31 +1189,27 @@ class _ConversationActionsBar extends StatelessWidget {
   final VoidCallback? onCreate;
 
   @override
-  Widget build(BuildContext context) => Material(
-        elevation: 8,
-        color: Theme.of(context).colorScheme.surface,
-        child: SafeArea(
-          top: false,
-          minimum: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  key: searchKey,
-                  onPressed: canSearch ? onSearch : null,
-                  icon: const Icon(Icons.search),
-                  label: const Text('搜索'),
-                ),
+  Widget build(BuildContext context) => SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(AppLayout.space16, AppLayout.space8, AppLayout.space16, AppLayout.space10),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextButton.icon(
+                key: searchKey,
+                onPressed: canSearch ? onSearch : null,
+                icon: const Icon(Icons.search),
+                label: const Text('搜索对话'),
               ),
-              const SizedBox(width: 12),
-              FilledButton.icon(
-                key: createKey,
-                onPressed: canCreate ? onCreate : null,
-                icon: const Icon(Icons.add),
-                label: const Text('新建'),
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(width: AppLayout.space8),
+            FilledButton.icon(
+              key: createKey,
+              onPressed: canCreate ? onCreate : null,
+              icon: const Icon(Icons.add),
+              label: const Text('新建'),
+            ),
+          ],
         ),
       );
 }
@@ -1356,7 +1303,7 @@ class _ProjectEditorDialogState extends State<_ProjectEditorDialog> {
                 enabled: !_saving,
                 decoration: const InputDecoration(labelText: '项目名称'),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppLayout.space12),
               TextField(
                 key: const Key('project-roots'),
                 controller: _rootsController,
@@ -1369,10 +1316,10 @@ class _ProjectEditorDialogState extends State<_ProjectEditorDialog> {
                 ),
               ),
               if (_error != null) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: AppLayout.space12),
                 Text(
                   _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  style: Theme.of(context).errorText,
                 ),
               ],
             ],
@@ -1533,10 +1480,9 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                   controller: _titleController,
                   enabled: !_creating,
                   decoration: const InputDecoration(
-                    labelText: '标题（可选）',
-                  ),
+                    labelText: '标题（可选）'),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: AppLayout.space12),
               ],
               if (_supportsProjects) ...[
                 DropdownButtonFormField<String>(
@@ -1557,8 +1503,7 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                         value: project.key,
                         child: Text(
                           project.name,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                          overflow: TextOverflow.ellipsis),
                       ),
                   ],
                   onChanged: _creating
@@ -1569,7 +1514,7 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                             _error = null;
                           }),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: AppLayout.space12),
               ],
               if (_selectedProject == null)
                 TextField(
@@ -1582,7 +1527,7 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                   ),
                 ),
               if (_createCapabilities?.workspaceMode != null) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: AppLayout.space12),
                 _choiceField(
                   key: const Key('new-conversation-workspace-mode'),
                   label: '工作区模式',
@@ -1594,7 +1539,7 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                 ),
               ],
               if (_selectionCapabilities?.accessMode != null) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: AppLayout.space12),
                 _choiceField(
                   key: const Key('new-conversation-access-mode'),
                   label: '访问模式',
@@ -1606,7 +1551,7 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                 ),
               ],
               if (_selectionCapabilities?.reasoningEffort != null) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: AppLayout.space12),
                 _choiceField(
                   key: const Key('new-conversation-reasoning-effort'),
                   label: '推理强度',
@@ -1618,7 +1563,7 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                 ),
               ],
               if (_selectionCapabilities?.modelCatalog != null) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: AppLayout.space12),
                 DropdownButtonFormField<String>(
                   key: const Key('new-conversation-model'),
                   initialValue: _model,
@@ -1648,12 +1593,10 @@ class _NewConversationDialogState extends State<_NewConversationDialog> {
                 ),
               ],
               if (_error != null) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: AppLayout.space12),
                 Text(
                   _error!,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
+                  style: Theme.of(context).errorText,
                 ),
               ],
             ],
@@ -1753,7 +1696,8 @@ void _openSearch(
   Navigator.of(context).push<void>(
     MaterialPageRoute(
       builder: (_) =>
-          ConversationSearchScreen(session: session, project: project, standaloneOnly: standaloneOnly),
+          ConversationSearchScreen(session: session, project: project, standaloneOnly: standaloneOnly,
+      ),
     ),
   );
 }
@@ -1790,8 +1734,12 @@ String? _newStandaloneWorkspace(String? parent) {
   return '$trimmed${needsSeparator ? separator : ''}task$separator$taskName';
 }
 
-void _openConversation(BuildContext context, DeviceSession session, ConversationSummary conversation) {
-  Navigator.of(context).push<void>(MaterialPageRoute(settings: ConversationDetailScreen.routeSettings(session, conversation), builder: (_) => ConversationDetailScreen(session: session, conversation: conversation)));
+void _openConversation(BuildContext context, DeviceSession session, ConversationSummary conversation,
+) {
+  Navigator.of(context).push<void>(MaterialPageRoute(settings: ConversationDetailScreen.routeSettings(session, conversation), builder: (_) => ConversationDetailScreen(session: session, conversation: conversation,
+      ),
+    ),
+  );
 }
 
 String _deviceStateLabel(DeviceConnectionState state) => switch (state) {
@@ -1801,7 +1749,8 @@ String _deviceStateLabel(DeviceConnectionState state) => switch (state) {
   DeviceConnectionState.failed => '连接失败',
 };
 
-String _providerStateLabel(GatewayProvider provider, DeviceConnectionState state) {
+String _providerStateLabel(GatewayProvider provider, DeviceConnectionState state,
+) {
   if (state == DeviceConnectionState.connecting) return '连接中';
   if (state != DeviceConnectionState.online || provider.connectionStatus == 'offline') {
     return '不可用';

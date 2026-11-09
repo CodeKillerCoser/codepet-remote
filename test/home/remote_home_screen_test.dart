@@ -21,11 +21,15 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final first = _TrafficClient(const ConnectionTraffic(channel: 'ipv6-direct', sentBytes: 1024));
-    final second = _TrafficClient(const ConnectionTraffic(channel: 'relay', receivedBytes: 4096));
-    final sessions = [_sessionForClient('first', first), _sessionForClient('second', second)];
+    final first = _TrafficClient(const ConnectionTraffic(channel: 'ipv6-direct', sentBytes: 1024),
+      );
+    final second = _TrafficClient(const ConnectionTraffic(channel: 'relay', receivedBytes: 4096),
+      );
+    final sessions = [_sessionForClient('first', first), _sessionForClient('second', second),
+      ];
     for (final session in sessions) { await session.connect(); }
-    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: sessions)));
+    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: sessions)),
+      );
     await tester.pumpAndSettle();
     final traffic = find.byKey(const Key('home-connection-traffic'));
     final content = find.byKey(const Key('home-content-scroll'));
@@ -36,18 +40,25 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(traffic), position);
     expect(find.text('IPv6 直连'), findsOneWidget);
-    expect(find.descendant(of: find.byKey(const Key('traffic-total')), matching: find.text('1.0')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('home-device-menu')));
+    expect(find.descendant(of: find.byKey(const Key('traffic-total')), matching: find.text('1.0'),
+        ),
+        findsOneWidget,
+      );
+    await tester.tap(find.byKey(const Key('home-navigation-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('device-second')));
     await tester.pumpAndSettle();
     expect(find.text('中继'), findsOneWidget);
-    expect(find.descendant(of: find.byKey(const Key('traffic-total')), matching: find.text('4.0')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('traffic-total')), matching: find.text('4.0'),
+        ),
+        findsOneWidget,
+      );
     expect(find.text('IPv6 直连'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     for (final session in sessions) { session.dispose(); }
-  });
+  },
+  );
 
   testWidgets('connection failure after scrolling keeps recovery actions usable', (tester) async {
     tester.view.physicalSize = const Size(360, 800);
@@ -55,46 +66,56 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final session = DeviceSession(
-      device: const PairedDevice(deviceId: 'scroll-failure', displayName: 'Phone host', connectionKind: DeviceConnectionKind.demo),
+      device: const PairedDevice(deviceId: 'scroll-failure', displayName: 'Phone host', connectionKind: DeviceConnectionKind.demo,
+        ),
       clientFactory: () => DemoGatewayClient(profileId: 'recent'),
       autoReconnect: false,
     );
     final connecting = session.connect();
     await tester.pump(const Duration(seconds: 1));
     await connecting;
-    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: [session])));
+    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: [session])),
+      );
     await _pumpAnimatedUi(tester);
-    await tester.drag(find.byKey(const Key('home-content-scroll')), const Offset(0, -1500));
+    await tester.drag(find.byKey(const Key('home-content-scroll')), const Offset(0, -1500),
+      );
     await _pumpAnimatedUi(tester);
     session.disconnect();
     session.connectionState = DeviceConnectionState.failed;
     session.error = 'Gateway timed out';
     await _pumpAnimatedUi(tester);
     expect(tester.takeException(), isNull);
-    expect(find.byKey(const Key('device-connection-reconnect')).hitTestable(), findsOneWidget);
-    await tester.tap(find.byKey(const Key('home-overflow-menu')));
+    expect(find.byKey(const Key('device-connection-reconnect')).hitTestable(), findsOneWidget,
+      );
+    await tester.tap(find.byKey(const Key('home-navigation-menu')));
     await _pumpAnimatedUi(tester);
-    expect(find.text('App 设置'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
-  });
+  },
+  );
 
   testWidgets('chat retains old standalone history and excludes project conversations', (tester) async {
     _useTallSurface(tester);
-    final old = _conversation('old-chat', '旧聊天', updatedMilliseconds: -const Duration(days: 30).inMilliseconds);
+    final old = _conversation('old-chat', '旧聊天', updatedMilliseconds: -const Duration(days: 30).inMilliseconds,
+      );
     final session = _sessionForClient('chat-history', _PagedClient(
       ({required cursor, required limit}) async => ConversationPage(
         conversations: [old], snapshotCursor: 'handshake',
       ),
-    ));
+    ),
+      );
     await session.connect();
     session.conversations = [old, ConversationSummary(
       id: 'project-chat', providerId: 'test', title: '项目对话',
       status: ConversationStatus.idle, permissionLevel: PermissionLevel.readOnly,
       createdAt: _testNow, updatedAt: _testNow,
-      project: const RoutedResourceId(providerId: 'test', nativeResourceId: 'project'),
-    )];
-    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: [session])));
+      project: const RoutedResourceId(providerId: 'test', nativeResourceId: 'project',
+          ),
+        ),
+      ];
+    await tester.pumpWidget(MaterialApp(home: _HomeHarness(sessions: [session])),
+      );
     expect(find.text('最近'), findsOneWidget);
     expect(find.text('旧聊天'), findsNothing);
     expect(find.text('项目对话'), findsNothing);
@@ -104,7 +125,8 @@ void main() {
     expect(find.text('项目对话'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
-  });
+  },
+  );
 
 
   testWidgets('shows default chat when project.list is absent even with cwd values',
@@ -143,19 +165,23 @@ void main() {
     expect(find.text('只有 cwd 的会话'), findsOneWidget);
     expect(find.byIcon(Icons.chat_bubble_outline), findsNothing);
     final path = tester.widgetList<Text>(find.byType(Text)).firstWhere(
-      (text) => text.semanticsLabel == '/Users/wangxin/Documents/very-long-workspace-directory/remote-project');
+      (text) => text.semanticsLabel == '/Users/wangxin/Documents/very-long-workspace-directory/remote-project',
+          );
     final pathParts = path.data!.split('…');
     expect(pathParts, hasLength(2));
     expect(pathParts.every((part) => part.isNotEmpty), isTrue);
     expect(path.semanticsLabel, startsWith(pathParts.first));
     expect(path.semanticsLabel, endsWith(pathParts.last));
     final title = find.text('只有 cwd 的会话');
-    final time = find.text(relativeConversationTime(session.selectedProviderConversations.single.updatedAt));
+    final time = find.text(relativeConversationTime(session.selectedProviderConversations.single.updatedAt,
+        ),
+      );
     expect(tester.getCenter(time).dy, closeTo(tester.getCenter(title).dy, 1));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
-  });
+  },
+  );
 
   testWidgets('shows project.list results and loads project conversations by id',
       (tester) async {
@@ -176,7 +202,8 @@ void main() {
     );
 
     final project = session.selectedProviderProjects.single;
-    expect(find.byKey(const Key('projects-section-demo-studio')), findsOneWidget);
+    expect(find.byKey(const Key('projects-section-demo-studio')), findsOneWidget,
+      );
     expect(find.byKey(Key('project-card-${project.key}')), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 200));
     expect(
@@ -210,10 +237,12 @@ void main() {
     );
     await tester.pumpWidget(const SizedBox());
     session.dispose();
-  });
+  },
+  );
 
-  testWidgets('exposes project create edit and delete controls independently',
-      (tester) async {
+  testWidgets('exposes project create edit and delete controls independently', (
+    tester,
+  ) async {
     _useTallSurface(tester);
     final session = DeviceSession(
       device: const PairedDevice(
@@ -247,13 +276,15 @@ void main() {
     await _pumpAnimatedUi(tester);
 
     expect(session.selectedProviderProjects.map((item) => item.name),
-        contains('新项目'));
+        contains('新项目'),
+    );
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
 
   testWidgets('does not infer one project CRUD capability from another',
-      (tester) async {
+      (tester,
+  ) async {
     _useTallSurface(tester);
     final session = DeviceSession(
       device: const PairedDevice(
@@ -290,7 +321,8 @@ void main() {
   });
 
   testWidgets('new conversation exposes provider-declared create options',
-      (tester) async {
+      (tester,
+  ) async {
     _useTallSurface(tester);
     final client = _PagedClient(
       ({required cursor, required limit}) async => const ConversationPage(
@@ -336,7 +368,8 @@ void main() {
   });
 
   testWidgets('project screen creates a conversation with its routed project',
-      (tester) async {
+      (tester,
+  ) async {
     _useTallSurface(tester);
     final project = _homeProject();
     final client = _ProjectConversationCreateClient(project);
@@ -363,7 +396,8 @@ void main() {
   });
 
   testWidgets('home conversation can choose a project or stay standalone',
-      (tester) async {
+      (tester,
+  ) async {
     _useTallSurface(tester);
     final project = _homeProject();
     final client = _ProjectConversationCreateClient(project);
@@ -408,7 +442,8 @@ void main() {
   });
 
   testWidgets('standalone conversation uses its own managed task directory',
-      (tester) async {
+      (tester,
+  ) async {
     _useTallSurface(tester);
     final client = _ProjectConversationCreateClient(_homeProject());
     final session = _sessionForClient('standalone-task-directory', client);
@@ -437,14 +472,20 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final client = _PagedClient(({required cursor, required limit}) async =>
-      const ConversationPage(conversations: [], snapshotCursor: 'handshake'));
+      const ConversationPage(conversations: [], snapshotCursor: 'handshake',
+        ),
+      );
     final session = _sessionForClient('provider-health-ui', client);
     await session.connect();
-    await tester.pumpWidget(MaterialApp(home: DeviceDetailScreen(session: session)));
+    await tester.pumpWidget(MaterialApp(home: DeviceDetailScreen(session: session)),
+      );
     client.controller.add(GatewayProviderChangedEvent(eventCursor: 'health-offline',
       provider: GatewayProvider(id: _homeRoute, displayName: 'Codex Work',
         status: ProviderStatus.ready, connectionStatus: 'offline',
-        capabilities: _homeListProvider.capabilities)));
+        capabilities: _homeListProvider.capabilities,
+          ),
+        ),
+      );
     await tester.pumpAndSettle();
     expect(find.text('离线 · 可用'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -456,9 +497,12 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
-  });
+  },
+  );
 
-  testWidgets('shows Provider identity from the Host handshake', (tester) async {
+  testWidgets('shows Provider identity from the Host handshake', (
+    tester,
+  ) async {
     _useTallSurface(tester);
     final client = _PagedClient(
       ({required cursor, required limit}) async =>
@@ -478,10 +522,7 @@ void main() {
     expect(find.text('Codex Work'), findsOneWidget);
     expect(
       find.text(
-        'Codex Work · v0.151.0 · 在线',
-      ),
-      findsOneWidget,
-    );
+        'Codex Work · v0.151.0 · 在线'), findsOneWidget);
     expect(find.text('/usr/local/bin/codex'), findsNothing);
     final sectionTop = tester.getTopLeft(find.text('最近'));
     await tester.tap(find.text('Codex Work · v0.151.0 · 在线'));
@@ -491,20 +532,13 @@ void main() {
     expect(find.text('Signed in'), findsOneWidget);
     expect(find.text('72% remaining'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    expect(find.byIcon(Icons.terminal), findsOneWidget);
     expect(find.byKey(const Key('device-selector')), findsNothing);
     expect(
       find.descendant(
         of: find.byType(AppBar),
-        matching: find.byKey(const Key('home-device-menu')),
+        matching: find.byKey(const Key('home-navigation-menu')),
       ),
       findsOneWidget,
-    );
-    expect(
-      tester.getTopLeft(find.byKey(const Key('home-device-menu'))).dx,
-      lessThan(
-        tester.getTopLeft(find.byKey(const Key('home-overflow-menu'))).dx,
-      ),
     );
     expect(
       tester
@@ -516,7 +550,8 @@ void main() {
     session.dispose();
   });
 
-  testWidgets('failed state can reconnect directly from the shared notice', (tester) async {
+  testWidgets('failed state can reconnect directly from the shared notice', (tester,
+  ) async {
     _useTallSurface(tester);
     var clientBuilds = 0;
     final reconnect = Completer<GatewayHandshake>();
@@ -543,7 +578,8 @@ void main() {
     expect(session.connectionState, DeviceConnectionState.failed);
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(find.text('设备连接已断开'), findsOneWidget);
-    expect(find.textContaining('all Gateway candidates timed out'), findsOneWidget);
+    expect(find.textContaining('all Gateway candidates timed out'), findsOneWidget,
+    );
     expect(find.widgetWithText(TextButton, '重新连接'), findsOneWidget);
     expect(find.byTooltip('设备管理'), findsNothing);
     expect(clientBuilds, 0);
@@ -566,7 +602,8 @@ void main() {
         operatingSystem: 'TestOS',
         systemVersion: '9',
       ),
-    ));
+    ),
+    );
     await tester.pumpAndSettle();
 
     expect(session.connectionState, DeviceConnectionState.online);
@@ -609,10 +646,12 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
     session.dispose();
-  });
+  },
+  );
 
-  testWidgets('shows an explicit state while reconnecting a live connection',
-      (tester) async {
+  testWidgets('shows an explicit state while reconnecting a live connection', (
+    tester,
+  ) async {
     _useTallSurface(tester);
     final connected = _ReconnectEventClient();
     final reconnect = Completer<GatewayHandshake>();
@@ -664,23 +703,31 @@ void main() {
         operatingSystem: 'TestOS',
         systemVersion: '10',
       ),
-    ));
+    ),
+    );
     await tester.pump();
   });
 
   testWidgets('listens to events from a device added to the same list instance', (tester) async {
     final client = _EventClient();
-    await tester.pumpWidget(MaterialApp(home: _MutableSessionsHarness(client: client)));
+    await tester.pumpWidget(MaterialApp(home: _MutableSessionsHarness(client: client)),
+      );
 
     await tester.tap(find.byKey(const Key('add-dynamic-session')));
     await tester.pumpAndSettle();
     expect(find.text('动态事件会话'), findsNothing);
     expect(find.text('Host Metadata'), findsOneWidget);
-    expect(find.text('TestOS 9'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('home-navigation-menu')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('TestOS 9'), findsOneWidget);
+      await tester.tapAt(const Offset(700, 300));
+      await tester.pumpAndSettle();
 
     // Seed membership as if received from list; stream events update that row.
-    tester.state<_MutableSessionsHarnessState>(find.byType(_MutableSessionsHarness))
-        .sessions.single.conversations = [_conversation('dynamic', '原始标题')];
+    tester.state<_MutableSessionsHarnessState>(find.byType(_MutableSessionsHarness),
+          )
+        .sessions.single.conversations = [_conversation('dynamic', '原始标题'),
+      ];
 
     client.emit(ConversationUpsertedEvent(
       eventCursor: 'event-1',
@@ -689,7 +736,8 @@ void main() {
         '动态事件会话',
         updatedMilliseconds: 3000,
       ),
-    ));
+    ),
+      );
     await tester.pumpAndSettle();
 
     expect(find.text('动态事件会话'), findsNothing);
@@ -704,12 +752,14 @@ void main() {
         '刷新后的标题',
         updatedMilliseconds: 2000,
       ),
-    ));
+    ),
+      );
     await tester.pumpAndSettle();
 
     expect(find.text('动态事件会话'), findsNothing);
     expect(find.text('刷新后的标题'), findsOneWidget);
-  });
+  },
+  );
 }
 
 void _useTallSurface(WidgetTester tester) {
@@ -765,7 +815,8 @@ class _MutableSessionsHarnessState extends State<_MutableSessionsHarness> {
 
   void addSession() {
     final session = DeviceSession(
-      device: const PairedDevice(deviceId: 'dynamic', displayName: '动态设备', connectionKind: DeviceConnectionKind.demo),
+      device: const PairedDevice(deviceId: 'dynamic', displayName: '动态设备', connectionKind: DeviceConnectionKind.demo,
+      ),
       clientFactory: () => widget.client,
     );
     setState(() {
@@ -795,9 +846,11 @@ class _MutableSessionsHarnessState extends State<_MutableSessionsHarness> {
     Positioned(
       left: 8,
       bottom: 8,
-      child: ElevatedButton(key: const Key('add-dynamic-session'), onPressed: addSession, child: const Text('add')),
-    ),
-  ]);
+      child: ElevatedButton(key: const Key('add-dynamic-session'), onPressed: addSession, child: const Text('add'),
+        ),
+      ),
+    ],
+  );
 }
 
 ConversationSummary _conversation(
@@ -825,14 +878,23 @@ class _EventClient implements GatewayClient {
   @override Stream<GatewayEvent> get events => controller.stream;
   @override String? get latestEventCursor => 'handshake';
   @override GatewayEventWindow openEventWindow() => GatewayEventWindow.forStream('handshake', events);
-  @override Future<GatewayHandshake> connect() async => onConnect?.call() ?? const GatewayHandshake(protocolVersion: 1, providers: [], eventCursor: 'handshake', deviceDescriptor: DeviceDescriptor(deviceName: 'Host Metadata', operatingSystem: 'TestOS', systemVersion: '9'));
+  @override Future<GatewayHandshake> connect() async => onConnect?.call() ?? const GatewayHandshake(protocolVersion: 1, providers: [], eventCursor: 'handshake', deviceDescriptor: DeviceDescriptor(deviceName: 'Host Metadata', operatingSystem: 'TestOS', systemVersion: '9',
+        ),
+      );
   @override Future<GatewayProvider> describeProvider(String providerId) => throw UnimplementedError();
-  @override Future<ConversationPage> listConversations({required String providerId, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50}) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
-  @override Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
-  @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: 'handshake');
-  @override Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async => const ConversationInteraction(selection: TurnSendSelection());
-  @override Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
-  @override Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
+  @override Future<ConversationPage> listConversations({required String providerId, required ConversationProjectFilter projectFilter, String? cursor, int limit = 50,
+  }) async => const ConversationPage(conversations: [], snapshotCursor: 'handshake');
+  @override Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50,
+  }) => throw UnimplementedError();
+  @override Future<ConversationSnapshot> getConversation(ConversationSummary conversation,
+  ) async => ConversationSnapshot(detail: ConversationDetail(summary: conversation), snapshotCursor: 'handshake',
+  );
+  @override Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation,
+  ) async => const ConversationInteraction(selection: TurnSendSelection());
+  @override Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project,
+  }) => throw UnimplementedError();
+  @override Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection,
+  }) => throw UnimplementedError();
   @override Future<void> close() => controller.close();
 }
 
@@ -894,7 +956,8 @@ class _PagedClient implements GatewayClient {
   }
 
   @override
-  Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
+  Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50,
+  }) => throw UnimplementedError();
 
   @override
   Future<ConversationSnapshot> getConversation(
@@ -905,14 +968,17 @@ class _PagedClient implements GatewayClient {
       );
 
   @override
-  Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async =>
+  Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation,
+  ) async =>
       const ConversationInteraction(selection: TurnSendSelection());
 
   @override
-  Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
+  Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project,
+  }) => throw UnimplementedError();
 
   @override
-  Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
+  Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection,
+  }) => throw UnimplementedError();
 
   @override
   Future<void> close() => controller.close();
@@ -953,8 +1019,7 @@ class _ProjectConversationCreateClient extends _PagedClient
     int limit = 50,
   }) async => ProjectPage(
         projects: [project],
-        snapshotCursor: 'handshake',
-      );
+        snapshotCursor: 'handshake');
 
   @override
   Future<ConversationSummary> createConversation({
@@ -1034,14 +1099,14 @@ const _homeListProvider = GatewayProvider(
     methods: [
       'conversation.list',
       'conversation.get',
-      'conversation.create',
-    ],
+      'conversation.create'],
     conversationCreate: ConversationCreateCapabilities(
       supportsTitle: false,
       selection: TurnSendCapabilities(
         accessMode: ProviderChoiceSet(
           options: [
-            ProviderChoice(id: 'workspace-write', displayName: 'Workspace write'),
+            ProviderChoice(id: 'workspace-write', displayName: 'Workspace write',
+            ),
           ],
           defaultId: 'workspace-write',
         ),

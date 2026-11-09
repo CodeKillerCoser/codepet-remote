@@ -1,3 +1,5 @@
+import '../../ui/layout/app_layout.dart';
+import '../../ui/theme/app_semantics.dart';
 import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
 
@@ -403,7 +405,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
               key: const Key('conversation-actions'),
               tooltip: '会话操作',
               onSelected: (_) => unawaited(_controller.releaseImmediately()),
-              itemBuilder: (_) => const [
+              itemBuilder: (_) => [
                 PopupMenuItem(
                   value: 'release',
                   key: Key('release-immediately'),
@@ -411,7 +413,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('立即释放'),
-                      Text('停止此 Provider 的所有会话任务', style: TextStyle(fontSize: 12)),
+                      Text('停止此 Provider 的所有会话任务', style: Theme.of(context).textTheme.bodySmall),
                     ],
                   ),
                 ),
@@ -540,7 +542,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       )) {
         return Center(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(AppLayout.space24),
             child: DeviceConnectionNotice(session: widget.session),
           ),
         );
@@ -550,12 +552,12 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     if (detail == null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppLayout.space24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(_error!, textAlign: TextAlign.center),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppLayout.space16),
               OutlinedButton(
                 onPressed: () => unawaited(_bindRuntime()),
                 child: const Text('重试'),
@@ -600,7 +602,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         center: _messagesCenterKey,
         slivers: [
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            padding: const EdgeInsets.fromLTRB(AppLayout.space16, AppLayout.space8, AppLayout.space16, 0),
             sliver: SliverList(
               delegate: SliverChildListDelegate.fixed([
                 if (_hiddenMessageCount > 0 || _controller.hasEarlier) ...[
@@ -614,14 +616,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                   ),
                   if (_controller.historyError != null)
                     Text(_controller.historyError!, textAlign: TextAlign.center),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppLayout.space12),
                 ],
               ]),
             ),
           ),
           if (earlierVisibleBlockCount > 0)
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              padding: const EdgeInsets.fromLTRB(AppLayout.space16, 0, AppLayout.space16, 0),
               sliver: SliverList(
                 delegate: SliverChildListDelegate.fixed([
                   for (var index = 0;
@@ -631,7 +633,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                       final block = timeline[centerBlockIndex - index - 1];
                       return Padding(
                         key: block.id == _notificationBlockId ? _notificationAnchor : Key('message-${block.id}'),
-                        padding: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.only(bottom: AppLayout.space10),
                         child: ConversationTimelineBlockView(
                           key: ValueKey(block.id),
                           block: block,
@@ -645,7 +647,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             ),
           SliverPadding(
             key: _messagesCenterKey,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+            padding: const EdgeInsets.fromLTRB(AppLayout.space16, 0, AppLayout.space16, AppLayout.space28),
             sliver: timeline.isEmpty
                 ? const SliverToBoxAdapter(child: _NoHistoryNotice())
                 : SliverList(
@@ -663,7 +665,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                                 padding: EdgeInsets.only(
                                   bottom: index == centerBlockCount - 1
                                       ? 0
-                                      : 10,
+                                      : AppLayout.space10,
                                 ),
                                 child: ConversationTimelineBlockView(
                                   key: ValueKey(block.id),
@@ -689,7 +691,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         child: SafeArea(
           top: false,
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppLayout.space16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -717,7 +719,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         child: SafeArea(
           top: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            padding: const EdgeInsets.fromLTRB(AppLayout.space16, AppLayout.space14, AppLayout.space16, AppLayout.space12),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -726,7 +728,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                   size: 20,
                   color: Theme.of(context).colorScheme.error,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: AppLayout.space10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -740,7 +742,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                         ),
                       ),
                       if (_controller.canForceTakeover) ...[
-                        const SizedBox(height: 8),
+                        const SizedBox(height: AppLayout.space8),
                         const Text('强制接管会结束电脑上非 Codepet 管理的 Codex 进程及其任务。'),
                         TextButton(
                           key: const Key('force-takeover'),
@@ -766,7 +768,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+          padding: const EdgeInsets.fromLTRB(AppLayout.space12, AppLayout.space10, AppLayout.space12, AppLayout.space8),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -776,7 +778,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
               if (_notificationHint != null) ...[
                 Text(_notificationHint!, key: const Key('notification-status-hint'),
                   style: Theme.of(context).textTheme.bodySmall),
-                const SizedBox(height: 6),
+                const SizedBox(height: AppLayout.space6),
               ],
               if (_pendingApproval != null) ...[
                 _ApprovalActions(
@@ -787,7 +789,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                   onApprove: () => unawaited(_resolveApproval(ApprovalDecision.approve)),
                   onDeny: () => unawaited(_resolveApproval(ApprovalDecision.deny)),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppLayout.space8),
               ],
               if (_controller.supportsInputQueue) ...[
                 ConversationInputQueueView(queue: _controller.inputQueue,
@@ -821,7 +823,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                 ),
               ),
               if (_sendError != null) ...[
-                const SizedBox(height: 4),
+                const SizedBox(height: AppLayout.space4),
                 Text(
                   _sendError!,
                   key: const Key('turn-send-error'),
@@ -851,7 +853,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                   ),
               ],
               if (_controller.controlError != null) ...[
-                const SizedBox(height: 4),
+                const SizedBox(height: AppLayout.space4),
                 Text(
                   _controller.controlError!,
                   key: const Key('conversation-control-error'),
@@ -860,7 +862,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                       ),
                 ),
               ],
-              const SizedBox(height: 6),
+              const SizedBox(height: AppLayout.space6),
               Row(
                 key: const Key('composer-toolbar'),
                 children: [
@@ -884,7 +886,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                             ),
                           if (capabilities?.accessMode != null &&
                               capabilities?.reasoningEffort != null)
-                            const SizedBox(width: 4),
+                            const SizedBox(width: AppLayout.space4),
                           if (capabilities?.reasoningEffort != null)
                             _ChoiceSelector(
                               key: const Key('reasoning-effort-selector'),
@@ -900,7 +902,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                           if ((capabilities?.accessMode != null ||
                                   capabilities?.reasoningEffort != null) &&
                               capabilities?.modelCatalog != null)
-                            const SizedBox(width: 4),
+                            const SizedBox(width: AppLayout.space4),
                           if (capabilities?.modelCatalog != null)
                             _ModelSelector(
                               key: const Key('model-selector'),
@@ -915,7 +917,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppLayout.space8),
                   if (_controller.canInterrupt || _controller.interrupting)
                     IconButton.filled(
                       key: const Key('turn-interrupt'),
@@ -966,36 +968,35 @@ class _ApprovalActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: colorScheme.tertiaryContainer,
-        borderRadius: BorderRadius.circular(12),
+        color: Theme.of(context).approvalSurface,
+        borderRadius: BorderRadius.circular(AppLayout.radius),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+        padding: const EdgeInsets.fromLTRB(AppLayout.space12, AppLayout.space10, AppLayout.space8, AppLayout.space8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(approval.title ?? '需要审批', key: const Key('pending-approval-title'),
               style: Theme.of(context).textTheme.titleSmall),
             if (approval.approvalDescription?.isNotEmpty == true) ...[
-              const SizedBox(height: 2),
+              const SizedBox(height: AppLayout.space2),
               Text(approval.approvalDescription!,
                 key: const Key('pending-approval-description'),
                 maxLines: 3, overflow: TextOverflow.ellipsis),
             ],
-            const SizedBox(height: 6),
+            const SizedBox(height: AppLayout.space6),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 if (resolving)
-                  const Padding(padding: EdgeInsets.only(right: 12),
+                  const Padding(padding: EdgeInsets.only(right: AppLayout.space12),
                     child: SizedBox.square(dimension: 18,
                       child: CircularProgressIndicator(strokeWidth: 2))),
                 TextButton(key: const Key('approval-deny'),
                   onPressed: canDeny ? onDeny : null, child: const Text('拒绝')),
-                const SizedBox(width: 4),
+                const SizedBox(width: AppLayout.space4),
                 FilledButton(key: const Key('approval-approve'),
                   onPressed: canApprove ? onApprove : null, child: const Text('批准')),
               ],
@@ -1028,8 +1029,8 @@ class _ConversationTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final statusColor = switch (status) {
-      ConversationStatus.running => Colors.green,
-      ConversationStatus.waitingApproval => colorScheme.tertiary,
+      ConversationStatus.running => Theme.of(context).semantics.success,
+      ConversationStatus.waitingApproval => Theme.of(context).semantics.warning,
       ConversationStatus.waitingUserInput => colorScheme.primary,
       ConversationStatus.error => colorScheme.error,
       ConversationStatus.idle ||
@@ -1038,7 +1039,7 @@ class _ConversationTitle extends StatelessWidget {
     return InkWell(
       key: const Key('conversation-title-metadata-toggle'),
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(AppLayout.compactRadius),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1046,7 +1047,7 @@ class _ConversationTitle extends StatelessWidget {
           Row(
             children: [
               providerIcon,
-              const SizedBox(width: 10),
+              const SizedBox(width: AppLayout.space10),
               Expanded(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1071,7 +1072,7 @@ class _ConversationTitle extends StatelessWidget {
                                 ?.copyWith(color: colorScheme.onSurfaceVariant),
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: AppLayout.space8),
                         Container(
                           width: 6,
                           height: 6,
@@ -1102,7 +1103,7 @@ class _ConversationTitle extends StatelessWidget {
                   semanticLabel: expanded ? '收起会话信息' : '展开会话信息',
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppLayout.space8),
             ],
           ),
           ConnectionTrafficView(
@@ -1140,7 +1141,7 @@ class _ConversationMetadataPanel extends StatelessWidget {
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.45),
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          padding: const EdgeInsets.fromLTRB(AppLayout.space16, AppLayout.space10, AppLayout.space16, AppLayout.space12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -1148,7 +1149,7 @@ class _ConversationMetadataPanel extends StatelessWidget {
               Row(
                 children: [
                   const Icon(Icons.shield_outlined, size: 16),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: AppLayout.space6),
                   Expanded(child: Text(
                     '权限 · ${summary.permissionLevel}',
                     style: secondaryStyle,
@@ -1156,7 +1157,7 @@ class _ConversationMetadataPanel extends StatelessWidget {
                 ],
               ),
               if (_hasPreview) ...[
-                const SizedBox(height: 6),
+                const SizedBox(height: AppLayout.space6),
                 Text(
                   summary.preview!,
                   maxLines: 2,
@@ -1165,7 +1166,7 @@ class _ConversationMetadataPanel extends StatelessWidget {
                 ),
               ],
               if (_hasModel) ...[
-                const SizedBox(height: 6),
+                const SizedBox(height: AppLayout.space6),
                 Text(
                   [summary.model, summary.reasoningEffort]
                       .whereType<String>()
@@ -1176,12 +1177,12 @@ class _ConversationMetadataPanel extends StatelessWidget {
                 ),
               ],
               if (_hasWorkspace) ...[
-                const SizedBox(height: 6),
+                const SizedBox(height: AppLayout.space6),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Icon(Icons.folder_outlined, size: 16),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: AppLayout.space6),
                     Expanded(
                       child: SelectableText(
                         summary.workspaceRoot!,
@@ -1318,7 +1319,7 @@ class _ModelSelector extends StatelessWidget {
             ),
             enabled: model.enabled,
             child: Padding(
-              padding: const EdgeInsets.only(left: 12),
+              padding: const EdgeInsets.only(left: AppLayout.space12),
               child: _OptionLabel(
                 title: model.displayName,
                 description: model.enabled
@@ -1363,7 +1364,7 @@ class _SelectorFace extends StatelessWidget {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 180),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: AppLayout.space6, vertical: AppLayout.space8),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1413,16 +1414,16 @@ class _NoHistoryNotice extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppLayout.space16),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppLayout.radius),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Icon(Icons.info_outline, size: 20),
-          const SizedBox(width: 10),
+          const SizedBox(width: AppLayout.space10),
           Expanded(
             child: Text(
               'Host 当前没有返回已提交的历史内容；连接后的实时输出仍会显示在这里。',

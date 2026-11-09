@@ -9,10 +9,10 @@ void main() {
   testWidgets('shows isolated multi-device projections', (tester) async {
     await tester.pumpWidget(const CodePetRemoteApp(includeDemoDevices: true));
     await _pumpDemoFrames(tester);
-    expect(find.text('CodePet Remote'), findsOneWidget);
-    expect(find.byKey(const Key('home-device-menu')), findsOneWidget);
+    expect(find.text('演示工作室 Mac'), findsOneWidget);
+    expect(find.byKey(const Key('home-navigation-menu')), findsOneWidget);
     expect(find.byKey(const Key('device-demo-studio')), findsNothing);
-    await tester.tap(find.byKey(const Key('home-device-menu')));
+    await tester.tap(find.byKey(const Key('home-navigation-menu')));
     await _pumpDemoFrames(tester);
     expect(find.byKey(const Key('device-demo-studio')), findsOneWidget);
     expect(find.byKey(const Key('device-demo-laptop')), findsOneWidget);
@@ -20,8 +20,7 @@ void main() {
     await _pumpDemoFrames(tester);
     expect(find.text('Gateway 协议契约核对'), findsNothing);
     final harnessTop = tester.getTopLeft(
-      find.byKey(const Key('connected-providers')),
-    ).dy;
+      find.byKey(const Key('connected-providers'))).dy;
     await tester.scrollUntilVisible(
       find.text('无项目临时会话'),
       240,
@@ -41,7 +40,7 @@ void main() {
     ).first;
     await tester.drag(homeScroll, const Offset(0, 1000));
     await _pumpDemoFrames(tester);
-    await tester.tap(find.byKey(const Key('home-device-menu')));
+    await tester.tap(find.byKey(const Key('home-navigation-menu')));
     await _pumpDemoFrames(tester);
     await tester.tap(find.byKey(const Key('device-demo-studio')));
     await _pumpDemoFrames(tester);
@@ -57,26 +56,80 @@ void main() {
     expect(find.text('无项目临时会话'), findsNothing);
   });
 
-  testWidgets('overflow exposes connection and settings entries', (tester) async {
+  testWidgets('edge swipe opens drawer and settings stays anchored', (
+    tester,
+  ) async {
     await tester.pumpWidget(const CodePetRemoteApp(includeDemoDevices: true));
     await _pumpDemoFrames(tester);
-    await tester.tap(find.byKey(const Key('home-overflow-menu')));
+    await tester.dragFrom(const Offset(1, 250), const Offset(320, 0));
     await _pumpDemoFrames(tester);
-    expect(find.text('连接设备'), findsOneWidget);
-    expect(find.text('App 设置'), findsOneWidget);
-    await tester.tap(find.text('连接设备'));
+    expect(
+      find.byKey(const Key('drawer-settings')).hitTestable(),
+      findsOneWidget,
+    );
+    final settingsPosition = tester.getTopLeft(
+      find.byKey(const Key('drawer-settings')),
+    );
+    await tester.drag(
+      find.byKey(const Key('device-demo-studio')),
+      const Offset(0, -150),
+    );
+    await _pumpDemoFrames(tester);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('drawer-settings'))),
+      settingsPosition,
+    );
+    await tester.tapAt(const Offset(700, 300));
+    await _pumpDemoFrames(tester);
+    expect(
+      find.byKey(const Key('drawer-settings')).hitTestable(),
+      findsNothing,
+    );
+  });
+
+  testWidgets('drawer exposes connection and settings entries', (tester) async {
+    await tester.pumpWidget(const CodePetRemoteApp(includeDemoDevices: true));
+    await _pumpDemoFrames(tester);
+    await tester.tap(find.byKey(const Key('home-navigation-menu')));
+    await _pumpDemoFrames(tester);
+    expect(find.text('添加设备'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
+    await tester.tap(find.text('添加设备'));
     await _pumpDemoFrames(tester);
     expect(find.text('配对 CodePet Host'), findsOneWidget);
     expect(find.byKey(const Key('manual-add-device')), findsOneWidget);
     expect(find.byKey(const Key('manual-qr-scanner')), findsNothing);
   });
 
-  testWidgets('offers QR and passcode methods behind manual add', (tester) async {
+  for (final entry in ['drawer-settings', 'drawer-add-device', 'drawer-manage-devices']) {
+    testWidgets('returning from $entry preserves drawer navigation stack', (tester) async {
+      await tester.pumpWidget(const CodePetRemoteApp(includeDemoDevices: true));
+      await _pumpDemoFrames(tester);
+      await tester.tap(find.byKey(const Key('home-navigation-menu')));
+      await _pumpDemoFrames(tester);
+      await tester.tap(find.byKey(Key(entry)));
+      await _pumpDemoFrames(tester);
+      expect(find.byKey(const Key('drawer-settings')).hitTestable(), findsNothing);
+
+      await tester.binding.handlePopRoute();
+      await _pumpDemoFrames(tester);
+      expect(find.byKey(const Key('drawer-settings')).hitTestable(), findsOneWidget);
+      expect(find.byKey(const Key('drawer-manage-devices')).hitTestable(), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await _pumpDemoFrames(tester);
+      expect(find.byKey(const Key('drawer-settings')).hitTestable(), findsNothing);
+      expect(find.byKey(const Key('home-navigation-menu')).hitTestable(), findsOneWidget);
+    });
+  }
+
+  testWidgets('offers QR and passcode methods behind manual add', (tester,
+  ) async {
     await tester.pumpWidget(const CodePetRemoteApp(includeDemoDevices: true));
     await _pumpDemoFrames(tester);
-    await tester.tap(find.byKey(const Key('home-overflow-menu')));
+    await tester.tap(find.byKey(const Key('home-navigation-menu')));
     await _pumpDemoFrames(tester);
-    await tester.tap(find.text('连接设备'));
+    await tester.tap(find.text('添加设备'));
     await _pumpDemoFrames(tester);
     await tester.tap(find.byKey(const Key('manual-add-device')));
     await _pumpDemoFrames(tester);
@@ -90,7 +143,8 @@ void main() {
   });
 
   testWidgets('settings exports diagnostics and shows the archive path',
-      (tester) async {
+      (tester,
+  ) async {
     const shareChannel = MethodChannel('dev.fluttercommunity.plus/share');
     final shareResult = Completer<String>();
     final shareCalls = <MethodCall>[];
@@ -110,11 +164,12 @@ void main() {
     await tester.pumpWidget(CodePetRemoteApp(
       includeDemoDevices: true,
       logExporter: () async => '/local/codepet-logs.zip',
-    ));
+    ),
+    );
     await _pumpDemoFrames(tester);
-    await tester.tap(find.byKey(const Key('home-overflow-menu')));
+    await tester.tap(find.byKey(const Key('home-navigation-menu')));
     await _pumpDemoFrames(tester);
-    await tester.tap(find.text('App 设置'));
+    await tester.tap(find.text('设置'));
     await _pumpDemoFrames(tester);
 
     await tester.tap(find.byKey(const Key('export-logs')));

@@ -1,3 +1,4 @@
+import '../../../ui/theme/app_semantics.dart';
 import '../../../ui/layout/app_layout.dart';
 import 'package:flutter/material.dart';
 
@@ -14,7 +15,7 @@ class ConversationList extends StatelessWidget {
     this.leading = const [],
     this.trailing = const [],
     this.embedded = false,
-    this.padding = const EdgeInsets.all(16),
+    this.padding = const EdgeInsets.all(AppLayout.space16),
   });
 
   final List<ConversationSummary> conversations;
@@ -32,7 +33,7 @@ class ConversationList extends StatelessWidget {
     physics: embedded ? const NeverScrollableScrollPhysics() : null,
     padding: padding,
     itemCount: leading.length + conversations.length + trailing.length,
-    separatorBuilder: (_, _) => const SizedBox(height: 8),
+    separatorBuilder: (_, _) => const SizedBox(height: AppLayout.space8),
     itemBuilder: (_, index) {
       if (index < leading.length) return leading[index];
       final dataIndex = index - leading.length;
@@ -86,7 +87,7 @@ class _ConversationTile extends StatelessWidget {
     onTap: onTap,
     borderRadius: BorderRadius.circular(AppLayout.radius),
     child: Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppLayout.space16),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -101,12 +102,7 @@ class _ConversationTile extends StatelessWidget {
                         conversation.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              fontWeight: conversation.readState.unread
-                                  ? FontWeight.w700
-                                  : FontWeight.w400,
-                            ),
+                        style: conversation.readState.unread ? Theme.of(context).titleStrong : Theme.of(context).titleRegular,
                       ),
                     ),
                     ConversationIndicators(
@@ -115,7 +111,7 @@ class _ConversationTile extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: AppLayout.space4),
                 if (conversation.preview != null)
                   Text(
                     conversation.preview!,
@@ -130,12 +126,11 @@ class _ConversationTile extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: AppLayout.space12),
           // Match the title line height to keep the timestamp centered with it.
           Text(
             relativeConversationTime(conversation.updatedAt),
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w400,
+            style: Theme.of(context).titleRegular.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
@@ -160,7 +155,7 @@ class ConversationIndicators extends StatelessWidget {
     children: [
       if (running)
         const Padding(
-          padding: EdgeInsets.only(left: 6),
+          padding: EdgeInsets.only(left: AppLayout.space6),
           child: Tooltip(
             message: '运行中',
             child: SizedBox(
@@ -175,15 +170,15 @@ class ConversationIndicators extends StatelessWidget {
         ),
       if (unread)
         Padding(
-          padding: const EdgeInsets.only(left: 6),
+          padding: const EdgeInsets.only(left: AppLayout.space6),
           child: Semantics(
             label: '未读',
             child: Container(
               width: 7,
               height: 7,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.blue,
+                color: Theme.of(context).semantics.unread,
               ),
             ),
           ),

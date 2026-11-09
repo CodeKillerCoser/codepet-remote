@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../ui/theme/app_semantics.dart';
+import '../../ui/layout/app_layout.dart';
 import 'package:sonner_toast/sonner_toast.dart';
 
 enum AppToastType { info, success, warning, error }
@@ -23,8 +25,8 @@ class AppToastHost extends StatelessWidget {
             alignment: Alignment.topCenter,
             variant: SonnerVariant.top,
             width: stackWidth,
-            outerPadding: EdgeInsets.only(top: mediaQuery.padding.top + 12),
-            innerPadding: const EdgeInsets.symmetric(vertical: 4),
+            outerPadding: EdgeInsets.only(top: mediaQuery.padding.top + AppLayout.space12),
+            innerPadding: const EdgeInsets.symmetric(vertical: AppLayout.space4),
             collapsedOffset: 10,
             expandedSpacing: 8,
             maxVisibleToasts: 3,
@@ -60,42 +62,36 @@ class _AppToastCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final accent = _accentColor(type, colors);
-    final foreground = colors.onSurface;
+    final accent = _accentColor(type, Theme.of(context));
     return Semantics(
       container: true,
       liveRegion: true,
       child: Material(
         key: const Key('app-toast-card'),
-        elevation: 5,
-        shadowColor: colors.shadow.withValues(alpha: 0.18),
+        elevation: AppLayout.toastElevation,
+        shadowColor: colors.shadow.withValues(alpha: AppEffects.toastShadowOpacity),
         color: Color.alphaBlend(
-          accent.withValues(alpha: 0.07),
+          accent.withValues(alpha: AppEffects.toastSurfaceOpacity),
           colors.surface,
         ),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: accent.withValues(alpha: 0.28)),
+          borderRadius: BorderRadius.circular(AppLayout.radius),
+          side: BorderSide(color: accent.withValues(alpha: AppEffects.toastBorderOpacity)),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: AppLayout.space12, vertical: AppLayout.space10),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(_icon(type), size: 20, color: accent),
-              const SizedBox(width: 9),
+              const SizedBox(width: AppLayout.space9),
               Flexible(
                 child: Text.rich(
                   content,
                   key: const Key('app-toast-content'),
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: foreground,
-                    fontSize: 14,
-                    height: 1.25,
-                    decoration: TextDecoration.none,
-                  ),
+                  style: Theme.of(context).toastText,
                 ),
               ),
             ],
@@ -105,12 +101,12 @@ class _AppToastCard extends StatelessWidget {
     );
   }
 
-  static Color _accentColor(AppToastType type, ColorScheme colors) =>
+  static Color _accentColor(AppToastType type, ThemeData theme) =>
       switch (type) {
-        AppToastType.info => colors.primary,
-        AppToastType.success => const Color(0xFF238636),
-        AppToastType.warning => const Color(0xFFB26A00),
-        AppToastType.error => colors.error,
+        AppToastType.info => theme.colorScheme.primary,
+        AppToastType.success => theme.semantics.success,
+        AppToastType.warning => theme.semantics.warning,
+        AppToastType.error => theme.colorScheme.error,
       };
 
   static IconData _icon(AppToastType type) => switch (type) {

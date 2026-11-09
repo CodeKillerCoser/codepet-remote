@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../layout/app_layout.dart';
+import '../theme/app_semantics.dart';
 
 /// Grouped content surface used by settings, summaries and transient panels.
 class AppSurface extends StatelessWidget {
   const AppSurface({
     super.key,
     required this.child,
-    this.padding = const EdgeInsets.all(12),
+    this.padding = const EdgeInsets.all(AppLayout.space12),
     this.color,
     this.border = false,
   });
@@ -24,7 +25,7 @@ class AppSurface extends StatelessWidget {
         color: color ?? colors.surfaceContainerLow,
         borderRadius: BorderRadius.circular(AppLayout.radius),
         border: border
-            ? Border.all(color: colors.outlineVariant.withValues(alpha: .5))
+            ? Border.all(color: Theme.of(context).subtleBorder)
             : null,
       ),
       child: child,

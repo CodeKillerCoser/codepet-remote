@@ -1,3 +1,4 @@
+import '../../ui/layout/app_layout.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -152,11 +153,11 @@ class _RecentConversationFeedState extends State<RecentConversationFeed> {
             conversation: conversation,
             onTap: widget.onTap,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppLayout.space8),
         ],
         if (controller.loading)
           const Padding(
-            padding: EdgeInsets.all(16),
+            padding: EdgeInsets.all(AppLayout.space16),
             child: Center(child: CircularProgressIndicator()),
           ),
         if (controller.error != null)

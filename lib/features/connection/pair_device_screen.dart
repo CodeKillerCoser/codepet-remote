@@ -1,3 +1,5 @@
+import '../../ui/layout/app_layout.dart';
+import '../../ui/theme/app_semantics.dart';
 import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
 
@@ -289,15 +291,15 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
     return AppScaffold(
       constrainContent: false,
       appBar: AppBar(title: const Text('配对 CodePet Host')),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
+      body: ListView(padding: const EdgeInsets.all(AppLayout.space16), children: [
       if (_busy && _qrPairing) Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
+        padding: const EdgeInsets.symmetric(vertical: AppLayout.space16),
         child: Column(children: [
           const CircularProgressIndicator(),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppLayout.space12),
           const Text('正在配对，请在 Host 上确认此设备。'),
           if (_qrConfirmationCode != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: AppLayout.space8),
             Text(_qrConfirmationCode!, style: Theme.of(context).textTheme.headlineMedium),
           ],
         ]),
@@ -306,36 +308,36 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
         Card(
           color: Theme.of(context).colorScheme.secondaryContainer,
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppLayout.space16),
             child: Column(children: [
               const Text('请在 Host 上确认以下配对码'),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppLayout.space8),
               Text(
                 _attempt!.confirmationCode,
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppLayout.space4),
               Text(_attempt!.candidate.displayName),
             ]),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppLayout.space12),
       ],
-      if (_error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-      const SizedBox(height: 8),
+      if (_error != null) Padding(padding: const EdgeInsets.only(top: AppLayout.space12), child: Text(_error!, style: Theme.of(context).errorText)),
+      const SizedBox(height: AppLayout.space8),
       Text(
         '已连接设备',
         key: const Key('connected-devices-title'),
         style: Theme.of(context).textTheme.titleMedium,
       ),
-      const SizedBox(height: 10),
+      const SizedBox(height: AppLayout.space10),
       _ConnectedDevicesTable(
         sessions: _sessions,
         onForgetDevice: widget.onForgetDevice == null ? null : _forgetDevice,
       ),
-      const SizedBox(height: 28),
+      const SizedBox(height: AppLayout.space28),
       const Divider(),
-      const SizedBox(height: 10),
+      const SizedBox(height: AppLayout.space10),
       Row(
         children: [
           Expanded(
@@ -366,7 +368,7 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: AppLayout.space8),
       if (discoveredHosts.isEmpty)
         const _EmptyDiscovery()
       else
@@ -387,14 +389,14 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
               ),
             ),
           ),
-      const SizedBox(height: 20),
+      const SizedBox(height: AppLayout.space20),
       OutlinedButton.icon(
         key: const Key('manual-add-device'),
         onPressed: _busy ? null : () => _openManualPairing(discoveredHosts),
         icon: const Icon(Icons.add_link),
         label: const Text('手动添加设备'),
       ),
-      const SizedBox(height: 6),
+      const SizedBox(height: AppLayout.space6),
       Text(
         '扫码、粘贴二维码内容或输入 Host 配对口令',
         textAlign: TextAlign.center,
@@ -402,7 +404,7 @@ class _PairDeviceScreenState extends State<PairDeviceScreen> {
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
       ),
-      const SizedBox(height: 24),
+      const SizedBox(height: AppLayout.space24),
     ]),
     );
   }
@@ -416,15 +418,15 @@ class _ManualPairingSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          padding: const EdgeInsets.fromLTRB(AppLayout.space16, 0, AppLayout.space16, AppLayout.space16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('手动添加设备', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppLayout.space8),
               const Text('选择一种配对方式。相机只会在扫码页面中启用。'),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppLayout.space12),
               ListTile(
                 key: const Key('manual-scan-qr'),
                 leading: const Icon(Icons.qr_code_scanner),
@@ -477,15 +479,15 @@ class _QrScannerScreenState extends State<_QrScannerScreen> {
         appBar: AppBar(title: const Text('扫描配对二维码')),
         body: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppLayout.space16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Text('将 Host 显示的配对二维码放入取景框'),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppLayout.space16),
                 Expanded(
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(AppLayout.bubbleRadius),
                     child: MobileScanner(
                       key: const Key('manual-qr-scanner'),
                       controller: _scanner,
@@ -536,7 +538,7 @@ class _QrPayloadDialogState extends State<_QrPayloadDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('内容仍会经过证书 pin、身份和 endpoint 校验。'),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppLayout.space12),
               TextField(
                 key: const Key('qr-json-field'),
                 controller: _payload,
@@ -576,15 +578,15 @@ class _PasscodeHostPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          padding: const EdgeInsets.fromLTRB(AppLayout.space16, 0, AppLayout.space16, AppLayout.space16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('选择 Host', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppLayout.space8),
               const Text('选择后，Host 会弹出本次配对使用的 6 位口令。'),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppLayout.space12),
               for (final host in hosts)
                 ListTile(
                   key: Key('manual-passcode-host-${host.deviceId}'),
@@ -626,7 +628,7 @@ class _PairingCodeDialogState extends State<_PairingCodeDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('请输入 ${widget.hostName} 上显示的 6 位数字。'),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppLayout.space12),
             TextField(
               key: const Key('pairing-code-field'),
               controller: _code,
@@ -674,7 +676,7 @@ class _ConnectedDevicesTable extends StatelessWidget {
           children: [
             Container(
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: AppLayout.space14, vertical: AppLayout.space10),
               child: const _DeviceTableRow(
                 name: '名称',
                 system: '系统',
@@ -684,7 +686,7 @@ class _ConnectedDevicesTable extends StatelessWidget {
             ),
             if (sessions.isEmpty)
               const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                padding: EdgeInsets.symmetric(horizontal: AppLayout.space16, vertical: AppLayout.space20),
                 child: Text('暂无已连接设备'),
               )
             else
@@ -702,13 +704,13 @@ class _ConnectedDevicesTable extends StatelessWidget {
                   ),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
+                      horizontal: AppLayout.space14,
+                      vertical: AppLayout.space12,
                     ),
                     child: Row(
                       children: [
                         Expanded(child: _DeviceTableRow.fromSession(sessions[index])),
-                        const SizedBox(width: 4),
+                        const SizedBox(width: AppLayout.space4),
                         const Icon(Icons.chevron_right, size: 20),
                       ],
                     ),
@@ -756,9 +758,9 @@ class _DeviceTableRow extends StatelessWidget {
     return Row(
       children: [
         Expanded(flex: 5, child: _TableText(name, style: style)),
-        const SizedBox(width: 8),
+        const SizedBox(width: AppLayout.space8),
         Expanded(flex: 4, child: _TableText(system, style: style)),
-        const SizedBox(width: 8),
+        const SizedBox(width: AppLayout.space8),
         Expanded(
           flex: 4,
           child: header
@@ -798,7 +800,7 @@ class _ConnectionStatus extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final color = switch (state) {
-      DeviceConnectionState.online => Colors.green.shade700,
+      DeviceConnectionState.online => Theme.of(context).semantics.success,
       DeviceConnectionState.connecting => colorScheme.primary,
       DeviceConnectionState.failed => colorScheme.error,
       DeviceConnectionState.offline => colorScheme.outline,
@@ -807,15 +809,14 @@ class _ConnectionStatus extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(Icons.circle, size: 9, color: color),
-        const SizedBox(width: 6),
+        const SizedBox(width: AppLayout.space6),
         Flexible(
           child: Text(
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            style: Theme.of(context).statusLabel.copyWith(
                   color: color,
-                  fontWeight: FontWeight.w600,
                 ),
           ),
         ),
@@ -829,19 +830,19 @@ class _EmptyDiscovery extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 20),
+        padding: const EdgeInsets.symmetric(vertical: AppLayout.space20),
         child: Column(
           children: [
             Icon(
               Icons.radar,
               color: Theme.of(context).colorScheme.outline,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppLayout.space8),
             Text(
               '暂未发现可配对设备',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppLayout.space4),
             Text(
               '请确认 Host 与此设备位于同一局域网',
               textAlign: TextAlign.center,

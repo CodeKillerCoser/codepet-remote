@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../layout/app_layout.dart';
+import 'app_semantics.dart';
+import 'app_typography.dart';
 
 /// One theme factory for all screens, overlays and system brightness modes.
 abstract final class AppTheme {
@@ -55,27 +57,23 @@ abstract final class AppTheme {
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(AppLayout.radius),
     );
-    final text = base.textTheme.copyWith(
-      titleLarge: base.textTheme.titleLarge?.copyWith(
-        fontSize: 20,
-        fontWeight: FontWeight.w600,
-      ),
-      titleMedium: base.textTheme.titleMedium?.copyWith(
-        fontWeight: FontWeight.w600,
-      ),
-      bodyLarge: base.textTheme.bodyLarge?.copyWith(fontSize: 16, height: 1.45),
-      bodyMedium: base.textTheme.bodyMedium?.copyWith(
-        fontSize: 14,
-        height: 1.4,
-      ),
-      bodySmall: base.textTheme.bodySmall?.copyWith(
-        height: 1.4,
-        color: colors.onSurfaceVariant,
-      ),
-    );
+    final text = AppTypography.apply(base.textTheme, colors.onSurfaceVariant);
     return base.copyWith(
       textTheme: text,
+      primaryTextTheme: AppTypography.apply(base.primaryTextTheme, colors.onPrimary),
+      extensions: [AppSemantics.forBrightness(brightness)],
       scaffoldBackgroundColor: colors.surface,
+      drawerTheme: DrawerThemeData(
+        backgroundColor: colors.surface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shape: const RoundedRectangleBorder(),
+        width: AppLayout.drawerMaxWidth,
+      ),
+      iconTheme: IconThemeData(
+        color: colors.onSurfaceVariant,
+        size: AppLayout.iconSize,
+      ),
       appBarTheme: AppBarTheme(
         backgroundColor: colors.surface,
         foregroundColor: colors.onSurface,
@@ -84,7 +82,7 @@ abstract final class AppTheme {
         scrolledUnderElevation: 0,
         centerTitle: false,
         titleTextStyle: text.titleLarge,
-        iconTheme: IconThemeData(color: colors.onSurfaceVariant, size: 22),
+        iconTheme: IconThemeData(color: colors.onSurfaceVariant, size: AppLayout.iconSize),
       ),
       cardTheme: CardThemeData(
         color: colors.surfaceContainerLow,
@@ -102,6 +100,8 @@ abstract final class AppTheme {
         minTileHeight: 52,
         horizontalTitleGap: 12,
         iconColor: colors.onSurfaceVariant,
+        selectedColor: colors.onSecondaryContainer,
+        selectedTileColor: colors.secondaryContainer,
         titleTextStyle: text.bodyLarge,
         subtitleTextStyle: text.bodySmall,
         shape: shape,
@@ -129,18 +129,21 @@ abstract final class AppTheme {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
+          textStyle: text.labelLarge,
           minimumSize: const Size(0, AppLayout.controlHeight),
           shape: shape,
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
+          textStyle: text.labelLarge,
           minimumSize: const Size(0, AppLayout.controlHeight),
           shape: shape,
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
+          textStyle: text.labelLarge,
           minimumSize: const Size(0, AppLayout.controlHeight),
           shape: shape,
         ),
@@ -172,6 +175,7 @@ abstract final class AppTheme {
         ),
       ),
       chipTheme: base.chipTheme.copyWith(
+        labelStyle: text.labelLarge,
         shape: shape,
         side: BorderSide.none,
         backgroundColor: colors.surfaceContainerLow,

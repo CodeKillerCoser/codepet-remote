@@ -1,3 +1,4 @@
+import '../../ui/theme/app_semantics.dart';
 import '../../ui/layout/app_layout.dart';
 import 'package:flutter/material.dart';
 
@@ -13,11 +14,11 @@ class FloatingDetailPanel extends StatelessWidget {
     return Material(
       color: colors.surfaceContainerLow.withAlpha(255),
       surfaceTintColor: Colors.transparent,
-      elevation: 3,
-      shadowColor: colors.shadow.withValues(alpha: 0.18),
+      elevation: AppLayout.overlayElevation,
+      shadowColor: Theme.of(context).overlayShadow,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppLayout.radius),
-        side: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.7)),
+        side: BorderSide(color: Theme.of(context).overlayOutline),
       ),
       clipBehavior: Clip.antiAlias,
       child: child,

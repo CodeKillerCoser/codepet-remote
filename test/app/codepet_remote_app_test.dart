@@ -13,18 +13,21 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('forget removes a failed saved device from connection page and registry', (tester) async {
-    final registry = DeviceRegistry(metadata: _Metadata(), credentials: _Credentials());
+    final registry = DeviceRegistry(metadata: _Metadata(), credentials: _Credentials(),
+      );
     await registry.save([_persistedDevice]);
     await tester.pumpWidget(CodePetRemoteApp(
       registry: registry,
       descriptorProvider: const _DescriptorProvider(),
-    ));
+    ),
+      );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-overflow-menu')));
+    await tester.tap(find.byKey(const Key('home-navigation-menu')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('连接设备'));
+    await tester.tap(find.text('添加设备'));
     await tester.pumpAndSettle();
-    final row = find.byKey(Key('connected-device-${_persistedDevice.deviceId}'));
+    final row = find.byKey(Key('connected-device-${_persistedDevice.deviceId}'),
+      );
     await tester.ensureVisible(row);
     await tester.tap(row);
     await tester.pumpAndSettle();
@@ -36,11 +39,20 @@ void main() {
     expect(await registry.load(), isEmpty);
     await tester.pageBack();
     await tester.pumpAndSettle();
+    expect(find.descendant(
+      of: find.byKey(const Key('home-navigation-drawer')),
+      matching: find.text('还没有设备'),
+    ), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
     expect(find.text('还没有设备'), findsOneWidget);
     expect(tester.takeException(), isNull);
-  });
+  },
+  );
 
-  testWidgets('App owns the continuous Host discovery lifecycle', (tester) async {
+  testWidgets('App owns the continuous Host discovery lifecycle', (
+    tester,
+  ) async {
     final directory = _HostDirectory();
 
     await tester.pumpWidget(CodePetRemoteApp(
@@ -56,7 +68,8 @@ void main() {
         required clientDevice,
         required debugAndroidEmulatorGatewayUri,
       }) => _GatewayClient(),
-    ));
+    ),
+    );
     await tester.pumpAndSettle();
 
     expect(directory.startCalls, 1);
@@ -69,7 +82,8 @@ void main() {
   });
 
   testWidgets('Host pairing advertisement opens a Remote confirmation prompt',
-      (tester) async {
+      (tester,
+  ) async {
     final directory = _HostDirectory();
     await tester.pumpWidget(CodePetRemoteApp(
       registry: DeviceRegistry(
@@ -84,7 +98,8 @@ void main() {
         required clientDevice,
         required debugAndroidEmulatorGatewayUri,
       }) => _GatewayClient(),
-    ));
+    ),
+    );
     await tester.pumpAndSettle();
 
     directory.advertisements.add(DiscoveredCodePetHost(
@@ -99,7 +114,8 @@ void main() {
         'vmax': '1',
         'pair': '1',
       },
-    ));
+    ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('收到设备配对请求'), findsOneWidget);
@@ -138,19 +154,24 @@ void main() {
               restoredCredentials.add(credential);
               return _GatewayClient(onConnect: () {
                 connections++;
-              });
+              },
+              );
             },
           );
 
       await tester.pumpWidget(app(DeviceRegistry(
         metadata: metadata,
-        credentials: credentials,
-      )));
+        credentials: credentials)),
+      );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('home-device-menu')), findsOneWidget);
+      expect(find.byKey(const Key('home-navigation-menu')), findsOneWidget);
       expect(find.text('Real Host Name'), findsOneWidget);
-      expect(find.text('TestOS 1'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('home-navigation-menu')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('TestOS 1'), findsOneWidget);
+      await tester.tapAt(const Offset(700, 300));
+      await tester.pumpAndSettle();
       expect(restoredCredentials, ['restored-credential']);
       expect(connections, 1);
 
@@ -158,11 +179,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.pumpWidget(app(DeviceRegistry(
         metadata: metadata,
-        credentials: credentials,
-      )));
+        credentials: credentials)),
+      );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('home-device-menu')), findsOneWidget);
+      expect(find.byKey(const Key('home-navigation-menu')), findsOneWidget);
       expect(restoredCredentials, [
         'restored-credential',
         'restored-credential',
@@ -173,11 +194,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.pumpWidget(app(DeviceRegistry(
         metadata: _Metadata(),
-        credentials: _Credentials(),
-      )));
+        credentials: _Credentials())),
+      );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('home-device-menu')), findsNothing);
+      expect(find.byKey(const Key('home-navigation-menu')), findsOneWidget);
       expect(find.text('还没有设备'), findsOneWidget);
       expect(connections, 2);
     },
@@ -208,10 +229,11 @@ void main() {
           clientBuilds++;
           return _GatewayClient();
         },
-      ));
+      ),
+      );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('home-device-menu')), findsOneWidget);
+      expect(find.byKey(const Key('home-navigation-menu')), findsOneWidget);
       expect(find.text('设备连接已断开'), findsOneWidget);
       expect(find.textContaining('安全凭据不存在'), findsOneWidget);
       expect(clientBuilds, 0);
@@ -249,13 +271,13 @@ void main() {
           aliases.add(debugAndroidEmulatorGatewayUri);
           return _GatewayClient();
         },
-      ));
+      ),
+      );
       await tester.pumpAndSettle();
 
       expect(aliases, [
         Uri.parse(
-          'wss://10.0.2.2:43210/custom/gateway?mode=paired',
-        ),
+          'wss://10.0.2.2:43210/custom/gateway?mode=paired'),
       ]);
       final reloaded = await DeviceRegistry(
         metadata: metadata,
@@ -377,11 +399,11 @@ class _GatewayClient implements GatewayClient {
     int limit = 50,
   }) async => const ConversationPage(
         conversations: [],
-        snapshotCursor: 'handshake',
-      );
+        snapshotCursor: 'handshake');
 
   @override
-  Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50}) => throw UnimplementedError();
+  Future<ConversationPage> searchConversations({required String providerId, required String searchTerm, String? cursor, int limit = 50,
+  }) => throw UnimplementedError();
 
   @override
   Future<ConversationSnapshot> getConversation(
@@ -392,14 +414,17 @@ class _GatewayClient implements GatewayClient {
       );
 
   @override
-  Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation) async =>
+  Future<ConversationInteraction> acquireInteraction(ConversationSummary conversation,
+  ) async =>
       const ConversationInteraction(selection: TurnSendSelection());
 
   @override
-  Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project}) => throw UnimplementedError();
+  Future<ConversationSummary> createConversation({required String providerId, String? title, required String permissionLevel, String? model, String? reasoningEffort, String? workspaceRoot, String? workspaceMode, RoutedResourceId? project,
+  }) => throw UnimplementedError();
 
   @override
-  Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection}) => throw UnimplementedError();
+  Future<TurnSendReceipt> sendTurn({required String providerId, required ConversationSummary conversation, required String clientRequestId, required String capabilityRevision, required String text, required TurnSendSelection selection,
+  }) => throw UnimplementedError();
 
   @override
   Future<void> close() async {

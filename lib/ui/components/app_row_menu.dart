@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../layout/app_layout.dart';
+import '../theme/app_semantics.dart';
 
 /// Compact secondary action, with one shared icon, tint and hit area.
 class AppRowMenu<T> extends StatelessWidget {
@@ -21,8 +22,7 @@ class AppRowMenu<T> extends StatelessWidget {
     ),
     icon: Icon(
       Icons.keyboard_arrow_down,
-      color: Theme.of(context).colorScheme.onSurfaceVariant
-          .withValues(alpha: .45),
+      color: Theme.of(context).secondaryActionIcon,
     ),
     onSelected: onSelected,
     itemBuilder: itemBuilder,

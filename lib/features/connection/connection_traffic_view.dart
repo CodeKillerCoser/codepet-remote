@@ -1,3 +1,5 @@
+import '../../ui/theme/app_semantics.dart';
+import '../../ui/layout/app_layout.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -63,7 +65,7 @@ class _ConnectionTrafficViewState extends State<ConnectionTrafficView> {
         child: Tooltip(
           message: '本机视角的应用数据量；速度为最近 3 秒平均值，不代表带宽上限',
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
+            padding: const EdgeInsets.symmetric(vertical: AppLayout.space2),
             child: DefaultTextStyle(
               style: theme.textTheme.labelSmall!.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
@@ -77,10 +79,7 @@ class _ConnectionTrafficViewState extends State<ConnectionTrafficView> {
                 children: [
                   Text(
                     connectionChannelLabel(traffic.channel),
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurface,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: theme.trafficLabel,
                   ),
                   _TrafficValue(
                     key: const Key('traffic-upload'),
@@ -115,7 +114,7 @@ class _ConnectionTrafficViewState extends State<ConnectionTrafficView> {
           color: theme.colorScheme.onSurfaceVariant,
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          padding: const EdgeInsets.symmetric(vertical: AppLayout.space10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -125,10 +124,7 @@ class _ConnectionTrafficViewState extends State<ConnectionTrafficView> {
                 children: [
                   Text(
                     connectionChannelLabel(traffic.channel),
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurface,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: theme.trafficBody,
                   ),
                   Text('↑ ${formatTrafficBytes(traffic.sentBytesPerSecond)}/s'),
                   Text(
@@ -136,7 +132,7 @@ class _ConnectionTrafficViewState extends State<ConnectionTrafficView> {
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppLayout.space4),
               Text('本次连接 ${formatTrafficBytes(traffic.totalBytes)}'),
               Text(
                 '上传 ${formatTrafficBytes(traffic.sentBytes)} · 下载 ${formatTrafficBytes(traffic.receivedBytes)}',
@@ -191,7 +187,7 @@ class _TrafficValue extends StatelessWidget {
             const SizedBox(width: 1),
           ],
           Text(number, maxLines: 1),
-          const SizedBox(width: 2),
+          const SizedBox(width: AppLayout.space2),
           Text(suffix, maxLines: 1),
         ],
       ),

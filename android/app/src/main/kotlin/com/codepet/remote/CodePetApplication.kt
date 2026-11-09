@@ -16,6 +16,7 @@ class CodePetApplication : Application() {
         flutterEngine?.let { return it }
         val engine = FlutterEngine(this)
         flutterEngine = engine
+        ThemeBridge(this, engine)
         MdnsBridge(this, engine)
         NetworkDiagnosticsBridge(this, engine)
         NetworkChangesBridge(this, engine)

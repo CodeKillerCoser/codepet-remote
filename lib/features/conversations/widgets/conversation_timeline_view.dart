@@ -1,3 +1,5 @@
+import '../../../ui/theme/app_markdown_theme.dart';
+import '../../../ui/theme/app_semantics.dart';
 import '../../../ui/components/app_surface.dart';
 import '../../../ui/layout/app_layout.dart';
 import 'dart:convert';
@@ -47,23 +49,22 @@ class _TurnFailure extends StatelessWidget {
     return Semantics(
       container: true,
       child: AppSurface(
-        color: Color.alphaBlend(colors.error.withValues(alpha: .06), colors.surface),
+        color: Theme.of(context).errorSurface,
         border: true,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Icon(Icons.error_outline, color: colors.error, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text('执行失败', style: TextStyle(
-              color: colors.error, fontWeight: FontWeight.w600))),
+            const SizedBox(width: AppLayout.space8),
+            Expanded(child: Text('执行失败', style: Theme.of(context).bodyEmphasis.copyWith(color: colors.error))),
           ]),
-          const SizedBox(height: 8),
-          SelectableText(block.message, style: TextStyle(color: colors.error)),
+          const SizedBox(height: AppLayout.space8),
+          SelectableText(block.message, style: Theme.of(context).errorText),
           if (block.retryable) ...[
-            const SizedBox(height: 8),
-            Text('可稍后重新发送。', style: TextStyle(color: colors.error)),
+            const SizedBox(height: AppLayout.space8),
+            Text('可稍后重新发送。', style: Theme.of(context).errorText),
           ],
           if (block.completedAt != null) ...[
-            const SizedBox(height: 4),
+            const SizedBox(height: AppLayout.space4),
             Text('${MaterialLocalizations.of(context).formatShortDate(block.completedAt!.toLocal())} '
               '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(block.completedAt!.toLocal()))}',
               style: Theme.of(context).textTheme.labelSmall?.copyWith(color: colors.error)),
@@ -98,13 +99,13 @@ class _UserMessage extends StatelessWidget {
                   topLeft: Radius.circular(AppLayout.bubbleRadius),
                   topRight: Radius.circular(AppLayout.bubbleRadius),
                   bottomLeft: Radius.circular(AppLayout.bubbleRadius),
-                  bottomRight: Radius.circular(5),
+                  bottomRight: Radius.circular(AppLayout.bubbleTailRadius),
                 ),
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
+                  horizontal: AppLayout.space16,
+                  vertical: AppLayout.space12,
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -120,7 +121,7 @@ class _UserMessage extends StatelessWidget {
                         ],
                       ),
                     if (block.attachments.isNotEmpty && block.text.isNotEmpty)
-                      const SizedBox(height: 8),
+                      const SizedBox(height: AppLayout.space8),
                     if (block.text.isNotEmpty)
                       _MarkdownContent(
                         data: block.text,
@@ -181,7 +182,7 @@ class _AssistantMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: AppLayout.space4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -195,7 +196,7 @@ class _AssistantMessage extends StatelessWidget {
               children: [
                 if (allowCopy && !block.isRunning) _CopyAction(text: block.text),
                 if (block.isRunning) ...[
-                  const SizedBox(width: 4),
+                  const SizedBox(width: AppLayout.space4),
                   const SizedBox.square(
                     dimension: 14,
                     child: CircularProgressIndicator(strokeWidth: 2),
@@ -247,7 +248,7 @@ class _TurnProcessState extends State<_TurnProcess> {
     final content = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       if (expanded)
         for (final child in block.children)
-          Padding(padding: const EdgeInsets.only(bottom: 4),
+          Padding(padding: const EdgeInsets.only(bottom: AppLayout.space4),
             child: ConversationTimelineBlockView(key: ValueKey(child.id), block: child, allowCopy: false)),
     ]);
     if (!block.completed) return content;
@@ -258,10 +259,10 @@ class _TurnProcessState extends State<_TurnProcess> {
       child: InkWell(
         key: Key('process-toggle-${block.id}'),
         onTap: _toggle,
-        child: Padding(padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Padding(padding: const EdgeInsets.symmetric(vertical: AppLayout.space10),
           child: Row(children: [
-            Text(label, style: TextStyle(color: Theme.of(context).colorScheme.outline)),
-            const SizedBox(width: 4),
+            Text(label, style: Theme.of(context).mutedText),
+            const SizedBox(width: AppLayout.space4),
             Icon(expanded ? Icons.expand_more : Icons.chevron_right, size: 18,
               color: Theme.of(context).colorScheme.outline),
           ]))),
@@ -282,7 +283,7 @@ class FileChangeSummaryView extends StatelessWidget {
       onPressed: summary.details.isEmpty ? null : () => showModalBottomSheet<void>(
         context: context, showDragHandle: true, useSafeArea: true,
         builder: (context) => SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppLayout.space16),
           child: SelectableText(summary.details.join('\n\n')),
         )),
     ),
@@ -405,19 +406,19 @@ class _ToolActivityLauncher extends StatelessWidget {
           InkWell(
             onTap: onOpen,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: AppLayout.space4, vertical: AppLayout.space8),
               child: Row(children: [
                 Icon(icon, size: 16, color: Theme.of(context).colorScheme.outline),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppLayout.space8),
                 Flexible(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Theme.of(context).colorScheme.outline))),
+                  style: Theme.of(context).mutedText)),
                 if (command.isNotEmpty) ...[
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppLayout.space8),
                   Expanded(flex: 2, child: Text(command.replaceAll('\n', ' '),
                     maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: Theme.of(context).colorScheme.outline))),
+                    style: Theme.of(context).mutedText)),
                 ] else const Spacer(),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppLayout.space8),
                 if (running)
                   SizedBox.square(dimension: 13, child: CircularProgressIndicator(
                     strokeWidth: 1.5, color: Theme.of(context).colorScheme.outline))
@@ -432,7 +433,7 @@ class _ToolActivityLauncher extends StatelessWidget {
           ),
           if (approval != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
+              padding: const EdgeInsets.fromLTRB(AppLayout.space4, AppLayout.space2, AppLayout.space4, AppLayout.space8),
               child: _AttachedApproval(approval: approval!),
             ),
         ],
@@ -497,11 +498,11 @@ class _ToolDetailSheet extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 8, 12),
+          padding: const EdgeInsets.fromLTRB(AppLayout.space20, 0, AppLayout.space8, AppLayout.space12),
           child: Row(
             children: [
               Icon(icon, size: 22, color: colors.primary),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppLayout.space12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -512,21 +513,19 @@ class _ToolDetailSheet extends StatelessWidget {
                             color: colors.onSurfaceVariant,
                           ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: AppLayout.space2),
                     Text(
                       title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                      style: Theme.of(context).titleStrong,
                     ),
                   ],
                 ),
               ),
               if (running)
                 const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  padding: EdgeInsets.symmetric(horizontal: AppLayout.space10),
                   child: SizedBox.square(
                     dimension: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
@@ -534,7 +533,7 @@ class _ToolDetailSheet extends StatelessWidget {
                 )
               else if (status != null)
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: AppLayout.space6),
                   child: _StatusLabel(status: status!),
                 ),
               IconButton(
@@ -549,7 +548,7 @@ class _ToolDetailSheet extends StatelessWidget {
         Expanded(
           child: SingleChildScrollView(
             controller: scrollController,
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+            padding: const EdgeInsets.fromLTRB(AppLayout.space20, AppLayout.space16, AppLayout.space20, AppLayout.space32),
             child: child,
           ),
         ),
@@ -741,12 +740,9 @@ class _ToolDetailSection extends StatelessWidget {
         children: [
           Text(
             label,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(context).labelStrong.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppLayout.space8),
           _CodePanel(text: text),
         ],
       );
@@ -765,16 +761,16 @@ class _FileChangesActivity extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: colors.surfaceContainer,
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(AppLayout.pillRadius),
           border: Border.all(color: colors.outlineVariant),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: AppLayout.space16, vertical: AppLayout.space9),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.difference_outlined, size: 18),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppLayout.space8),
               Flexible(
                 child: Text(
                   block.summary.isEmpty
@@ -785,7 +781,7 @@ class _FileChangesActivity extends StatelessWidget {
                 ),
               ),
               if (block.isRunning) ...[
-                const SizedBox(width: 10),
+                const SizedBox(width: AppLayout.space10),
                 const SizedBox.square(
                   dimension: 14,
                   child: CircularProgressIndicator(strokeWidth: 2),
@@ -806,32 +802,31 @@ class _ApprovalActivity extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: colors.tertiaryContainer.withValues(alpha: 0.55),
+        color: Theme.of(context).approvalSurface,
         borderRadius: BorderRadius.circular(AppLayout.radius),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(AppLayout.space12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 const Icon(Icons.approval_outlined, size: 19),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppLayout.space8),
                 Expanded(
                   child: Text(
                     block.title,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                    style: Theme.of(context).bodyStrong,
                   ),
                 ),
                 if (block.status != null) _StatusLabel(status: block.status!),
               ],
             ),
             if (block.description.isNotEmpty) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppLayout.space8),
               _MarkdownContent(data: block.description),
             ],
           ],
@@ -937,31 +932,7 @@ class _MarkdownContentState extends State<_MarkdownContent> {
           ),
         ),
       ),
-      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-        p: body,
-        pPadding: EdgeInsets.zero,
-        blockSpacing: 10,
-        listBullet: body,
-        code: body.copyWith(
-          fontFamily: 'monospace',
-          fontSize: (body.fontSize ?? 14) * 0.9,
-          backgroundColor: colors.surfaceContainerHighest,
-        ),
-        codeblockPadding: const EdgeInsets.all(12),
-        codeblockDecoration: BoxDecoration(
-          color: colors.surfaceContainer,
-          borderRadius: BorderRadius.circular(AppLayout.radius),
-          border: Border.all(color: colors.outlineVariant),
-        ),
-        blockquotePadding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
-        blockquoteDecoration: BoxDecoration(
-          color: colors.surfaceContainer,
-          border: Border(
-            left: BorderSide(color: colors.primary, width: 3),
-          ),
-        ),
-        tableBorder: TableBorder.all(color: colors.outlineVariant),
-      ),
+      styleSheet: AppMarkdownTheme.style(theme, body),
     );
   }
 }
@@ -1005,7 +976,7 @@ class _ExpandableActivity extends StatelessWidget {
               : CrossFadeState.showFirst,
           firstChild: const SizedBox(width: double.infinity),
           secondChild: Padding(
-            padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
+            padding: const EdgeInsets.fromLTRB(AppLayout.space4, AppLayout.space2, AppLayout.space4, AppLayout.space8),
             child: child,
           ),
         ),
@@ -1038,23 +1009,20 @@ class _ActivityHeader extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppLayout.radius),
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: AppLayout.space4, vertical: AppLayout.space8),
         child: Row(
           children: [
             Icon(icon, size: 19, color: colors.onSurfaceVariant),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppLayout.space8),
             Expanded(
               child: Text(
                 title,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: colors.onSurfaceVariant,
-                      fontWeight: FontWeight.w600,
-                    ),
+                style: Theme.of(context).bodyEmphasis.copyWith(color: colors.onSurfaceVariant),
               ),
             ),
             if (running)
               const Padding(
-                padding: EdgeInsets.only(right: 8),
+                padding: EdgeInsets.only(right: AppLayout.space8),
                 child: SizedBox.square(
                   dimension: 13,
                   child: CircularProgressIndicator(strokeWidth: 2),
@@ -1062,7 +1030,7 @@ class _ActivityHeader extends StatelessWidget {
               )
             else if (status != null)
               Padding(
-                padding: const EdgeInsets.only(right: 6),
+                padding: const EdgeInsets.only(right: AppLayout.space6),
                 child: _StatusLabel(status: status!),
               ),
             if (onTap != null)
@@ -1085,18 +1053,17 @@ class _AttachedApproval extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: colors.tertiaryContainer.withValues(alpha: 0.45),
+        color: Theme.of(context).approvalSurface,
         borderRadius: BorderRadius.circular(AppLayout.radius),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: AppLayout.space10, vertical: AppLayout.space8),
         child: Row(
           children: [
             const Icon(Icons.approval_outlined, size: 17),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppLayout.space8),
             Expanded(
               child: Text(
                 approval.description?.isNotEmpty == true
@@ -1129,7 +1096,7 @@ class _CodePanel extends StatelessWidget {
         border: Border.all(color: colors.outlineVariant),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 10, 6, 12),
+        padding: const EdgeInsets.fromLTRB(AppLayout.space14, AppLayout.space10, AppLayout.space6, AppLayout.space12),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1137,10 +1104,7 @@ class _CodePanel extends StatelessWidget {
               child: SelectionArea(
                 child: Text(
                   text,
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    height: 1.45,
-                  ),
+                  style: Theme.of(context).codeText,
                 ),
               ),
             ),
@@ -1170,11 +1134,11 @@ class _CopyAction extends StatelessWidget {
                 AppToast.show(
                   type: AppToastType.success,
                   duration: const Duration(seconds: 2),
-                  content: const TextSpan(
+                  content: TextSpan(
                     children: [
                       TextSpan(
                         text: '已复制',
-                        style: TextStyle(fontWeight: FontWeight.w600),
+                        style: Theme.of(context).bodyEmphasis,
                       ),
                       TextSpan(text: '到剪贴板'),
                     ],

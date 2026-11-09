@@ -8,6 +8,8 @@ class AppScaffold extends StatelessWidget {
   const AppScaffold({
     super.key,
     this.appBar,
+    this.drawer,
+    this.bottomBarBorder = true,
     required this.body,
     this.bottomNavigationBar,
     this.floatingActionButton,
@@ -15,6 +17,8 @@ class AppScaffold extends StatelessWidget {
     this.constrainContent = true,
   });
   final PreferredSizeWidget? appBar;
+  final Widget? drawer;
+  final bool bottomBarBorder;
   final Widget body;
   final Widget? bottomNavigationBar, floatingActionButton;
   final bool resizeToAvoidBottomInset, constrainContent;
@@ -42,11 +46,16 @@ class AppScaffold extends StatelessWidget {
           ),
       child: Scaffold(
         appBar: appBar,
+        drawer: drawer,
+        // Leave a usable swipe area inside Android’s system back-gesture edge.
+        drawerEdgeDragWidth: 72,
         body: _content(body),
         resizeToAvoidBottomInset: resizeToAvoidBottomInset,
         bottomNavigationBar: bottomNavigationBar == null
             ? null
-            : _BottomBar(child: _content(bottomNavigationBar!)),
+            : bottomBarBorder
+            ? _BottomBar(child: _content(bottomNavigationBar!))
+            : _content(bottomNavigationBar!),
         floatingActionButton: floatingActionButton,
       ),
     );

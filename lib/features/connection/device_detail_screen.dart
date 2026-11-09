@@ -1,3 +1,4 @@
+import '../../ui/layout/app_layout.dart';
 import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -92,11 +93,11 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       appBar: AppBar(title: const Text('设备详情')),
       body: ListView(
         key: const Key('device-detail'),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppLayout.space16),
         children: [
           Text(session.device.effectiveName,
               style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppLayout.space16),
           _DetailCard(
             title: '设备信息',
             children: [
@@ -108,13 +109,13 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
             ],
           ),
           if (DeviceConnectionNotice.shouldShow(session)) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: AppLayout.space12),
             DeviceConnectionNotice(
               session: session,
               showReconnectAction: false,
             ),
           ],
-          const SizedBox(height: 12),
+          const SizedBox(height: AppLayout.space12),
           Row(
             children: [
               Expanded(
@@ -130,7 +131,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   label: Text(connecting ? '连接中' : '重新连接'),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppLayout.space12),
               OutlinedButton.icon(
                 key: const Key('device-disconnect'),
                 onPressed: online && !_forgetting ? () => unawaited(session.disconnect()) : null,
@@ -148,9 +149,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
               label: Text(_forgetting ? '正在忘记设备…' : '忘记设备'),
               style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
             ),
-          const SizedBox(height: 28),
+          const SizedBox(height: AppLayout.space28),
           Text('Provider', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 10),
+          const SizedBox(height: AppLayout.space10),
           if (providers.isEmpty)
             const _DetailCard(
               title: '暂无 Provider 信息',
@@ -159,7 +160,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           else
             for (final provider in providers) ...[
               _ProviderDetailCard(provider: provider),
-              const SizedBox(height: 10),
+              const SizedBox(height: AppLayout.space10),
             ],
         ],
       ),
@@ -176,7 +177,7 @@ class _ProviderDetailCard extends StatelessWidget {
   Widget build(BuildContext context) => Card(
         margin: EdgeInsets.zero,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppLayout.space16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -188,7 +189,7 @@ class _ProviderDetailCard extends StatelessWidget {
                     size: 22,
                     semanticLabel: provider.displayName,
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: AppLayout.space10),
                   Expanded(
                     child: Text(provider.displayName,
                         style: Theme.of(context).textTheme.titleMedium),
@@ -196,7 +197,7 @@ class _ProviderDetailCard extends StatelessWidget {
 
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: AppLayout.space6),
               Text('${provider.connectionLabel} · ${_providerStatusLabel(provider.status)}'),
               const Divider(height: 24),
               ProviderDetails(provider: provider),
@@ -254,7 +255,7 @@ class _DetailCard extends StatelessWidget {
   Widget build(BuildContext context) => Card(
         margin: EdgeInsets.zero,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppLayout.space16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -275,7 +276,7 @@ class _DetailRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.only(bottom: AppLayout.space10),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

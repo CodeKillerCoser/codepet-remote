@@ -1,3 +1,5 @@
+import '../../ui/layout/app_layout.dart';
+import '../../ui/theme/app_semantics.dart';
 import 'package:flutter/material.dart';
 
 import '../../application/errors/application_failures.dart';
@@ -50,12 +52,12 @@ class _SignalingServiceSettingsState extends State<SignalingServiceSettings> {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    padding: const EdgeInsets.symmetric(horizontal: AppLayout.space16, vertical: AppLayout.space12),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('信令服务', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppLayout.space12),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -78,7 +80,7 @@ class _SignalingServiceSettingsState extends State<SignalingServiceSettings> {
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppLayout.space8),
             TextButton(
               key: const Key('save-signaling-service'),
               onPressed: _saving ? null : _save,
@@ -86,7 +88,7 @@ class _SignalingServiceSettingsState extends State<SignalingServiceSettings> {
             ),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppLayout.space8),
         const Text(
           '填写 IP 或域名即可自动登记，默认 HTTPS、8443 端口；也可填写完整 HTTPS 地址。留空使用配对提供的地址。已有连接在下次重连时切换；更换服务后需重新连接或配对电脑。',
         ),
@@ -95,7 +97,7 @@ class _SignalingServiceSettingsState extends State<SignalingServiceSettings> {
         if (_error != null)
           Text(
             _error!,
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
+            style: Theme.of(context).errorText,
           ),
       ],
     ),

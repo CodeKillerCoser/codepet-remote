@@ -1,3 +1,4 @@
+import '../../ui/layout/app_layout.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -78,7 +79,7 @@ class _DeviceConnectionNoticeState extends State<DeviceConnectionNotice> {
           ? colorScheme.errorContainer
           : colorScheme.surfaceContainerHighest,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppLayout.space16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -97,7 +98,7 @@ class _DeviceConnectionNoticeState extends State<DeviceConnectionNotice> {
                         ? colorScheme.onErrorContainer
                         : colorScheme.onSurfaceVariant,
                   ),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppLayout.space12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -112,7 +113,7 @@ class _DeviceConnectionNoticeState extends State<DeviceConnectionNotice> {
                                 : '设备连接已断开',
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppLayout.space4),
                       Text(
                         connecting
                             ? reconnecting
@@ -130,7 +131,7 @@ class _DeviceConnectionNoticeState extends State<DeviceConnectionNotice> {
               ],
             ),
             if (widget.showReconnectAction) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppLayout.space8),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(

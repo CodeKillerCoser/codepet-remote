@@ -57,10 +57,10 @@ class ConversationInputQueueView extends StatelessWidget {
                       key: ValueKey('queue-item-${item.id}'),
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
+                        horizontal: AppLayout.space8,
+                        vertical: AppLayout.space2,
                       ),
-                      margin: const EdgeInsets.only(bottom: 4),
+                      margin: const EdgeInsets.only(bottom: AppLayout.space4),
                       decoration: BoxDecoration(
                         color: Theme.of(context)
                             .colorScheme
@@ -123,7 +123,7 @@ class ConversationInputQueueView extends StatelessWidget {
                     ListTile(
                       key: ValueKey('queue-recover-${item.id}'),
                       dense: true,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: AppLayout.space8),
                       title: Text(
                         item.text,
                         maxLines: 1,
