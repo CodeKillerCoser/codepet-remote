@@ -9,6 +9,7 @@ import '../application/errors/application_failures.dart';
 import '../security/pinned_tls.dart';
 import '../diagnostics/app_log.dart';
 import 'transport.dart';
+import 'request_deadline.dart';
 
 final AppLog _log = AppLog.named('gateway.websocket');
 
@@ -190,7 +191,7 @@ class PinnedWebSocketGatewayTransport implements GatewayTransport, MetricsGatewa
       socket.add(encodedRequest);
       _traffic.sent(requestBytes);
       final response = await completer.future.timeout(
-        const Duration(seconds: 30),
+        gatewayRequestDeadline(method),
         onTimeout: () {
           throw GatewayConnectionException(
             '$method request timed out',

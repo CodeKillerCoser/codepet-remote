@@ -743,7 +743,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
                       ),
                       if (_controller.canForceTakeover) ...[
                         const SizedBox(height: AppLayout.space8),
-                        const Text('强制接管会结束电脑上非 Codepet 管理的 Codex 进程及其任务。'),
+                        const Text('强制接管将先结束符合条件的 Codex / ChatGPT App，再结束其他非 CodePet 管理的 Codex 进程及其任务。'),
                         TextButton(
                           key: const Key('force-takeover'),
                           onPressed: _controller.forceTakeover,

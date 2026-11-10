@@ -10,6 +10,7 @@ import '../../core/domain/connection_traffic.dart';
 import '../connection_traffic_meter.dart';
 import '../../core/domain/models.dart';
 import '../transport.dart';
+import '../request_deadline.dart';
 import 'framing.dart';
 import 'rtc_diagnostics.dart';
 import 'signaling.dart';
@@ -438,7 +439,7 @@ final class WebRtcGatewayTransport
     _queuedBytes += bytes.length;
     final result = completer.future
         .timeout(
-          requestTimeout,
+          gatewayRequestDeadline(request['method'], ordinary: requestTimeout),
           onTimeout: () {
             final error = GatewayConnectionException(
               '${request['method']} request timed out',

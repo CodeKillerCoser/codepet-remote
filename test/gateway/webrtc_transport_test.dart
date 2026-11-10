@@ -186,7 +186,7 @@ class FakeChannel extends RTCDataChannel {
   Future<int> getBufferedAmount() async => buffer;
   @override
   Future<void> send(RTCDataChannelMessage message) async {
-    expect(message.isBinary, isTrue);
+    expectSync(message.isBinary, isTrue);
     sent.add(message.binary);
     if (blockAfterFirstFrame && sent.length == 1) buffer = 100000;
     final decoded = decoder.push(message.binary);
@@ -584,6 +584,49 @@ void main() {
       expect(peer.disposed, isTrue);
     },
   );
+
+  for (final method in ['conversation.acquireInteraction', 'conversation.resume']) {
+    testWidgets('$method receives a late acquisition result without timing out ordinary calls', (tester) async {
+      final peer = FakePeer()..channel.autoReply = false;
+      final transport = WebRtcGatewayTransport(
+        signaling: FakeSignaling(), peerFactory: () async => peer,
+      );
+      await transport.connect();
+      Object? acquired;
+      Object? acquisitionError;
+      Object? ordinaryError;
+      final acquisition = transport.request({'id': 'acquire', 'method': method})
+          .then((value) { acquired = value; }, onError: (Object error) { acquisitionError = error; });
+      final ordinary = transport.request({'id': 'history', 'method': 'conversation.get'})
+          .catchError((Object error) { ordinaryError = error; return null; });
+      await tester.pump(const Duration(seconds: 31));
+      expect(ordinaryError, isA<GatewayConnectionException>());
+      expect(acquisitionError, isNull);
+      expect(acquired, isNull);
+      peer.channel.emit({'jsonrpc': '2.0', 'id': 'acquire', 'result': {'interactionAcquired': true}});
+      await tester.pump();
+      await Future.wait([acquisition, ordinary]);
+      expect((acquired as Map)['result']['interactionAcquired'], isTrue);
+      expect(peer.disposed, isFalse);
+      await transport.close();
+    });
+  }
+
+  testWidgets('acquisition still has a deadline and never infers success from a timeout', (tester) async {
+    final peer = FakePeer()..channel.autoReply = false;
+    final transport = WebRtcGatewayTransport(signaling: FakeSignaling(), peerFactory: () async => peer);
+    await transport.connect();
+    Object? failure;
+    final result = transport.request({'id': 'stalled', 'method': 'conversation.resume'})
+        .catchError((Object error) { failure = error; return null; });
+    await tester.pump(const Duration(seconds: 76));
+    await result;
+    expect(failure, isA<GatewayConnectionException>().having((e) => e.outcomeUnknown, 'outcomeUnknown', isTrue));
+    peer.channel.emit({'jsonrpc': '2.0', 'id': 'stalled', 'result': {}});
+    peer.channel.autoReply = true;
+    expect(await transport.request({'id': 'next', 'method': 'provider.list'}), isA<Map>());
+    await transport.close();
+  });
 
   test(
     'slow fragments survive five seconds and sampling stops only on close',

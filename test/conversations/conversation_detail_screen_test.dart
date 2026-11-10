@@ -1314,7 +1314,7 @@ void main() {
     await _pumpDetail(tester, client, conversation: _idleConversation());
     await tester.pump();
     expect(client.resumeForces, [false]);
-    expect(find.text('强制接管会结束电脑上非 Codepet 管理的 Codex 进程及其任务。'), findsOneWidget);
+    expect(find.text('强制接管将先结束符合条件的 Codex / ChatGPT App，再结束其他非 CodePet 管理的 Codex 进程及其任务。'), findsOneWidget);
     await tester.tap(find.byKey(const Key('force-takeover')));
     await tester.pump();
     expect(client.resumeForces, [false, true]);
