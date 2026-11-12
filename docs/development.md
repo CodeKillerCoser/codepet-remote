@@ -58,26 +58,37 @@ lib/
 sdk/
   gateway/                     cp-sdk-gen --package gateway --role client 输出
   lan/                         cp-sdk-gen --package lan-channel --role models 输出
+  channel-control/             cp-sdk-gen --package channel-control --role models 输出
 ```
 
 ## 协议与生成 SDK
 
-Gateway v1 的事实来源是 CodePet 的 `protocol/gateway/v1` 与 `protocol/core/v1`；配对 DTO 来自 `protocol/channel/lan/v1`。`sdk/gateway` 和 `sdk/lan` 是 `cp-sdk-gen` 的签入输出，不手工修改。Remote 使用四段 `RoutedResourceId` 处理 wire 身份，再映射为 UI 所需的最小领域投影。
+Gateway v1 的权威源是 CodePet 的 `protocol/v1/gateway` 功能模块，共享对象来自 `protocol/v1/{common,agent-domain}`；配对位于 `gateway/pairing`，不从属于 LAN。旧 gateway/channel 路径是生成兼容视图。`sdk/gateway` 和 `sdk/lan` 是 `cp-sdk-gen` 的签入输出，不手工修改。Remote 使用 opaque `providerId + nativeResourceId` 的 `RoutedResourceId` 处理 wire 身份，再映射为 UI 所需的最小领域投影。
 
-同步时应从 CodePet 主工作区运行以下命令（假设两个仓库为相邻目录），并将 SDK 与 `cp-sdk-gen.lock.json` 一起更新：
+从本次改动所在的 CodePet 工作区统一同步三套合同（目标路径必须指向 Remote 仓库）：
 
 ```sh
-bun tools/cp-sdk-gen/cp-sdk-gen.mjs --package gateway --role client --lang dart --protocol protocol --output ../codepet-remote/sdk/gateway
-bun tools/cp-sdk-gen/cp-sdk-gen.mjs --package lan-channel --role models --lang dart --protocol protocol --output ../codepet-remote/sdk/lan
+npm exec --yes --package=bun -- bun scripts/sync_remote_sdk.mjs /path/to/codepet-remote
+npm exec --yes --package=bun -- bun scripts/sync_remote_sdk.mjs /path/to/codepet-remote --check
 ```
 
-两条命令分别加 `--check` 可核对 Remote 的生成输出及协议摘要；CodePet 自身还需运行 `npm run protocol:check`。同为协议 v1 不代表字段相同，严格解码器会拒绝新增字段。2026-09-09 手机日志中的 `capabilities.usageDatasets: unknown field` 使三个 Provider 的能力描述整体加载失败，继而阻断最近、项目及详情的能力检查。`runtime.usage` 是独立的 Provider 用量概览，桌面在引入详情查询时误删，现已恢复完整采集转发链路及手机展示映射；不能用详情查询替代它。
+脚本复用同一模块加载器与生成器，更新 sdk/gateway、sdk/lan 和 sdk/channel-control，以及三份 lock 摘要；无需手工复制通道控制文件。兼容 SDK 包名保留，但其配对类型的源归属已迁移。CodePet 自身还需运行 `npm run protocol:check`。单独导出仍可使用 cp-sdk-gen 的 gateway/client、lan-channel/models 和 channel-control/models（Dart）。
+
+同为协议 v1 不代表字段相同，严格解码器会拒绝新增字段。2026-09-09 手机日志中的 `capabilities.usageDatasets: unknown field` 使三个 Provider 的能力描述整体加载失败，继而阻断最近、项目及详情的能力检查。`runtime.usage` 是独立的 Provider 用量概览，桌面在引入详情查询时误删，现已恢复完整采集转发链路及手机展示映射；不能用详情查询替代它。
 
 同步后运行 `flutter analyze --no-pub` 及 Gateway、DeviceSession、最近和会话详情测试。`test/gateway/gateway_client_test.dart` 的公共 Provider 描述样本包含 `usageDatasets`，覆盖握手、最近、列表及详情的实际客户端解码路径。发布时仍需安装新手机包，源码同步不会更新已安装 App。
 
 领域模型是协议的子集；适配器应显式投影 revision、methods、turnSend 和 conversationCreate，不能把包含 usageDatasets 的完整 wire 对象再交给领域模型的字段白名单。正式 SDK 已负责 wire 校验。
 
 本次检查中，协议生成检查 20 项通过，Flutter 静态分析通过。扩大回归发现独立的既有失败：`home_recent_conversations_test.dart` 仍期待 standalone，而主分支提交 `f8328b0` 已让不支持项目的 Provider 使用 all；本次未改动该筛选行为或测试。新增 nullable 用量 DTO 的 Dart 编译问题在 CodePet 生成器修复后重新生成。客户端测试同时使用 runtime.usage 与 capabilities.usageDatasets，验证概览展示与业务能力加载可以共存。
+
+## 桌面 Host 原生联调
+
+`integration_test/desktop_host_app_test.dart` 通过 `CODEPET_HOST_APP_QA` 显式启用，仅连接独立测试数据目录、只加载三个 independent Echo Provider 的真实桌面 App。所需 defines 为 `QA_HOST_ID`、`QA_HOST_PIN`、`QA_GATEWAY_URI` 和启用开关，不传私钥或 credential。配对使用正式 adapter 并由桌面确认；测试覆盖 LAN/WSS、原生 WebRTC、三种 Provider profile、delta/历史/分页、队列、应用心跳、生产界面与凭据撤销。默认测试不连接用户的 Host。
+
+2026-11-12 在 API 36 ARM64 模拟器上通过；桌面、手机 SDK 来自同一 `protocol/v1`，普通 APK 也已重新构建。`flutter analyze --no-pub` 无 issue，`flutter test --no-pub` 503 项通过。若本机代理或 DDS 阻碍测试 runner，可先构建 integration_test APK，以 `flutter run --use-application-binary=... --no-resident --no-dds` 启动，在设备中等待断言完成；仅启动成功不能判定通过。验收须核对当前运行日志和 `app_flutter/protocol-qa-result.json` 的 `passed:true`、空 failures。复跑前保存并移除旧结果，测试后重建并安装普通 `lib/main.dart` APK。
+
+完整隔离、启动与恢复步骤见 CodePet 仓库 `knowledge/40-runbooks/desktop-android-protocol-joint-test.md`。Echo 不支持的最近会话能力、公网信令、TURN、真机及蜂窝网络不在本次验收结论中。
 
 ## 本地演示
 

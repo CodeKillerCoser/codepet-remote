@@ -1,0 +1,9 @@
+{
+  "generator": "cp-sdk-gen",
+  "generatorVersion": "0.1.0",
+  "package": "channel-control",
+  "role": "models",
+  "protocolVersion": 1,
+  "protocolDigest": "sha256:a7be44d1085ac701b29b01f52eb3ca87f1d2d72537a32aa67ddd2d2963808f33",
+  "language": "dart"
+}
