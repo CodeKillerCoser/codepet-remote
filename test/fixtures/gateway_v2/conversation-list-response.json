@@ -1,0 +1,23 @@
+{
+  "protocolVersion": 1,
+  "id": "conversation-list-1",
+  "method": "conversation.list",
+  "response": {
+    "status": "ok",
+    "result": {
+      "conversations": [
+        {
+          "resource": {
+            "providerId": "codex-work",
+            "nativeResourceId": "thread-01"
+          },
+          "project": null,
+          "title": "Gateway protocol foundation",
+          "status": "running"
+        }
+      ],
+      "pageInfo": {},
+      "snapshotCursor": "opaque-gateway-cursor-U05BUFNIT1Q"
+    }
+  }
+}

@@ -26,6 +26,14 @@ typedef _ItemParts = ({
 final class GeneratedGatewayMapper {
   const GeneratedGatewayMapper();
 
+  bool isUnsupportedEvent(sdk.ProtocolEventEnvelope envelope) {
+    final payload = envelope.payload;
+    return payload is sdk.TurnOutputDeltaEvent && !payload.kind.isKnown
+        || payload is sdk.ConversationItemUpsertedEvent && payload.item is sdk.UnrecognizedConversationItem
+        || payload is sdk.ProjectChangedEvent && !payload.changeType.isKnown;
+  }
+
+
   GatewayProvider provider(
     sdk.ProviderSummary value, {
     sdk.GatewayCapabilities? capabilities,
@@ -57,8 +65,8 @@ final class GeneratedGatewayMapper {
             : GatewayCapabilities.fromJson(
                 {
                   'revision': capabilities.revision,
-                  'methods': capabilities.methods.map((method) => method.wireValue).toList(),
-                  if (capabilities.turnSend != null)
+                  'methods': capabilities.methods.where((method) => method.isKnown).map((method) => method.wireValue).toList(),
+                  if (capabilities.turnSend != null && capabilities.turnSend!.modelCatalog is! sdk.UnrecognizedModelCatalog)
                     'turnSend': capabilities.turnSend!.toJson(),
                   if (capabilities.conversationCreate != null)
                     'conversationCreate': capabilities.conversationCreate!.toJson(),
@@ -164,7 +172,7 @@ final class GeneratedGatewayMapper {
 
   GatewayMessage message(sdk.ConversationItem value, int index) {
     final parts = _itemParts(value);
-    final contents = parts.contents.map(_content).toList(growable: false);
+    final contents = parts.contents.where((block) => block is! sdk.UnrecognizedContentBlock).map(_content).toList(growable: false);
     final mappedTool = parts.tool == null ? null : tool(parts.tool!, itemMeta: parts.meta);
     final text = contents
         .map((content) => content.displayText)
@@ -198,10 +206,10 @@ final class GeneratedGatewayMapper {
       approvalDescription: parts.approval?.description,
       resource: resourceId(parts.resource),
       approvalDecisions: parts.approval?.decisions
-              .map(_approvalDecision)
+              .where((decision) => decision.isKnown).map(_approvalDecision)
               .toList(growable: false) ??
           const [],
-      approvalDecision: parts.approval?.decision == null
+      approvalDecision: parts.approval?.decision == null || !parts.approval!.decision!.isKnown
           ? null
           : _approvalDecision(parts.approval!.decision!),
       relatedItemId: parts.relatedItem == null
@@ -214,6 +222,7 @@ final class GeneratedGatewayMapper {
   }
 
   _ItemParts _itemParts(sdk.ConversationItem value) => switch (value) {
+        sdk.UnrecognizedConversationItem() => throw const FormatException("Unsupported conversation item"),
         sdk.MessageConversationItem item => (
             meta: item.meta,
             resource: item.resource,
@@ -335,6 +344,7 @@ final class GeneratedGatewayMapper {
 
   GatewayMessageContent _content(sdk.ContentBlock value, {GatewayContentTruncation? itemTruncation}) {
     final truncation = switch (value) {
+      sdk.UnrecognizedContentBlock() => null,
       sdk.TextContentBlock block => block.truncation,
       sdk.ReasoningSummaryContentBlock block => block.truncation,
       sdk.OutputContentBlock block => block.truncation,
@@ -346,6 +356,7 @@ final class GeneratedGatewayMapper {
       sdk.EmbeddedResourceContentBlock block => block.truncation,
     };
     return switch (value) {
+      sdk.UnrecognizedContentBlock() => throw const FormatException("Unsupported content block"),
       sdk.TextContentBlock block => GatewayMessageContent(
           id: block.contentId,
           kind: block.kind.wireValue,
@@ -440,6 +451,7 @@ final class GeneratedGatewayMapper {
       );
 
   GatewayToolInput _toolInput(sdk.ToolInput value, sdk.JsonObject? itemMeta) => switch (value) {
+        sdk.UnrecognizedToolInput input => GatewayOpaqueToolInput(value: "不支持的工具输入：${input.kind}"),
         sdk.CommandToolInput input => GatewayCommandToolInput(
             command: input.command,
             cwd: input.cwd,
@@ -460,15 +472,16 @@ final class GeneratedGatewayMapper {
       };
 
   GatewayToolOutcome _toolOutcome(sdk.ToolOutcome value, sdk.JsonObject? itemMeta) => switch (value) {
+        sdk.UnrecognizedToolOutcome() => GatewayToolFailure(content: const [], error: const GatewayToolError(code: "unsupported_tool_outcome", message: "不支持的工具结果", retryable: false)),
         sdk.ToolSuccessOutcome outcome => GatewayToolSuccess(
             content: [for (var index = 0; index < outcome.content.length; index++)
-              _content(outcome.content[index], itemTruncation: _itemTruncation(itemMeta, '/tool/outcome/content/$index'))],
+              if (outcome.content[index] is! sdk.UnrecognizedContentBlock) _content(outcome.content[index], itemTruncation: _itemTruncation(itemMeta, '/tool/outcome/content/$index'))],
             exitCode: outcome.exitCode,
             processId: outcome.processId,
           ),
         sdk.ToolFailureOutcome outcome => GatewayToolFailure(
             content: [for (var index = 0; index < outcome.content.length; index++)
-              _content(outcome.content[index], itemTruncation: _itemTruncation(itemMeta, '/tool/outcome/content/$index'))],
+              if (outcome.content[index] is! sdk.UnrecognizedContentBlock) _content(outcome.content[index], itemTruncation: _itemTruncation(itemMeta, '/tool/outcome/content/$index'))],
             error: GatewayToolError(
               code: outcome.error.code,
               message: outcome.error.message,
@@ -529,8 +542,8 @@ final class GeneratedGatewayMapper {
         approvalDescription: value.description,
         resource: resourceId(value.resource),
         approvalDecisions:
-            value.decisions.map(_approvalDecision).toList(growable: false),
-        approvalDecision: value.decision == null
+            value.decisions.where((decision) => decision.isKnown).map(_approvalDecision).toList(growable: false),
+        approvalDecision: value.decision == null || !value.decision!.isKnown
             ? null
             : _approvalDecision(value.decision!),
       );
@@ -577,6 +590,7 @@ final class GeneratedGatewayMapper {
             sdk.ProjectChangeType.created => ProjectChangeType.created,
             sdk.ProjectChangeType.updated => ProjectChangeType.updated,
             sdk.ProjectChangeType.deleted => ProjectChangeType.deleted,
+            _ => throw const FormatException("Unsupported project change"),
           },
         );
       case sdk.ProtocolEventName.providerChanged:
@@ -682,7 +696,9 @@ final class GeneratedGatewayMapper {
           expectedDeviceId: expectedDeviceId,
           expectedProviderRouteKeys: expectedProviderRouteKeys,
         );
-    }
+          default:
+        throw const FormatException('Unsupported Gateway event');
+}
   }
 
   ApprovalChangedEvent _approvalEvent(
@@ -721,6 +737,7 @@ final class GeneratedGatewayMapper {
       switch (value) {
         sdk.ApprovalDecision.approve => ApprovalDecision.approve,
         sdk.ApprovalDecision.deny => ApprovalDecision.deny,
+        _ => throw const FormatException("Unsupported approval decision"),
       };
 
   String resourceKey(sdk.RoutedResourceId value) =>

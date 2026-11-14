@@ -351,7 +351,7 @@ class FakeRoute
     switch (request['method']) {
       case 'protocol.handshake':
         result = {
-          'protocol': {'version': 1},
+          'protocol': {'version': 2, 'minVersion': 2, 'selectedVersion': 2},
           'device': {
             'name': 'Host',
             'operatingSystem': 'Test',

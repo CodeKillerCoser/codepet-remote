@@ -225,7 +225,7 @@ void main() {
     expect(transport.requests[0].method, 'protocol.handshake');
     expect(transport.requests[0].params['device'], _clientDevice.toJson());
     expect(transport.requests[0].params, isNot(contains('clientName')));
-    expect(transport.requests[0].params['supportedVersions'], {'minVersion': 1, 'maxVersion': 1});
+    expect(transport.requests[0].params['protocol'], {'version': 2, 'minVersion': 2});
     expect(transport.requests[1].method, 'event.subscribe');
     expect(transport.requests[1].params['afterCursor'], 'opaque-handshake');
     expect(transport.requests[2].method, 'provider.describe');
@@ -1809,6 +1809,58 @@ void main() {
     await client.close();
   });
 
+  test('v2 skips future events and items while advancing valid cursors', () async {
+    final transport = _FakeTransport({'protocol.handshake': _handshakeJson(), 'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'}});
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'v2-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect();
+    final received = <GatewayEvent>[];
+    final errors = <Object>[];
+    final sub = client.events.listen(received.add, onError: errors.add);
+    transport.emit({'event': 'future.event', 'eventCursor': 'future-1', 'payload': {'vendor': 17}});
+    expect(client.latestEventCursor, 'future-1');
+    transport.emit({'event': 'conversation.itemUpserted', 'eventCursor': 'future-2', 'payload': {'item': {'kind': 'future-kind', 'vendor': 17}}});
+    expect(client.latestEventCursor, 'future-2');
+    transport.emit({'event': 'turn.outputDelta', 'eventCursor': 'future-delta', 'payload': {'conversation': _resourceJson(const RoutedResourceId(providerId: 'codex-work', nativeResourceId: 'thread-1')), 'turn': _resourceJson(const RoutedResourceId(providerId: 'codex-work', nativeResourceId: 'turn-1')), 'itemId': 'item-1', 'contentId': 'content-1', 'kind': 'future-content-kind', 'delta': 'unsupported'}});
+    expect(client.latestEventCursor, 'future-delta');
+    transport.emit({'event': 'conversation.upserted', 'eventCursor': 'known-3', 'payload': {'conversation': _conversationJson()}});
+    await Future<void>.delayed(Duration.zero);
+    expect(received.map((event) => event.eventCursor), ['known-3']);
+    expect(errors, isEmpty);
+    expect(client.latestEventCursor, 'known-3');
+    await sub.cancel(); await client.close();
+  });
+
+  test('v2 range negotiation validates selection before subscription or writes', () async {
+    for (final range in [
+      {'version': 4, 'minVersion': 2, 'selectedVersion': 2},
+      {'version': 4, 'minVersion': 2, 'selectedVersion': 3},
+      {'version': 4, 'minVersion': 3, 'selectedVersion': 3},
+    ]) {
+      final transport = _FakeTransport({'protocol.handshake': {..._handshakeJson(), 'protocol': range}, 'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'}});
+      final client = ProtocolGatewayClient(transport: transport, clientId: 'v2-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+      if (range['selectedVersion'] == 2) { expect((await client.connect()).protocolVersion, 2); }
+      else {
+        await expectLater(client.connect(), throwsA(isA<GatewayConnectionException>()));
+        expect(transport.requests.map((r) => r.method), ['protocol.handshake']);
+      }
+      await client.close();
+    }
+  });
+
+  test('future receive values stay raw and cannot become executable choices', () {
+    final raw = {'kind':'future-kind', 'vendor':{'raw':17}};
+    final item = sdk.ConversationItem.fromJson(raw);
+    expect(item, isA<sdk.UnrecognizedConversationItem>());
+    expect(item.toJson(), raw);
+    expect(() => sdk.ConversationItem.fromJson({'kind':'message', 'status':'completed'}), throwsA(isA<sdk.ProtocolCodecException>()));
+    final decision = sdk.ApprovalDecision.fromJson('future-authorization');
+    expect(decision.wireValue, 'future-authorization');
+    expect(() => sdk.ProtocolRequestEnvelope(id: 'unsafe', method: sdk.ProtocolMethod.approvalResolve,
+      params: sdk.ApprovalResolveRequest(approval: sdk.RoutedResourceId(providerId:'codex-work', nativeResourceId:'a'), decision: decision)), throwsFormatException);
+    expect(ConversationStatus.fromWire('future-status'), ConversationStatus.unknown);
+    expect(TurnStatus.fromWire('future-status').isTerminal, isFalse);
+  });
+
   group('snapshot cursor fence', () {
     test('S equals H applies the complete subscribed suffix', () async {
       final controller = StreamController<GatewayEvent>.broadcast(sync: true);
@@ -2071,7 +2123,7 @@ final class _FixedTraceRecorder implements TraceRecorder {
 
 JsonMap _handshakeJson() {
   return {
-    'protocol': {'version': 1},
+    'protocol': {'version': 2, 'minVersion': 2, 'selectedVersion': 2},
     'device': {
       'name': 'Test Host',
       'operatingSystem': 'TestOS',
@@ -2245,8 +2297,9 @@ const _clientDevice = DeviceDescriptor(
 
 JsonMap _fixtureResult(String name) {
   final decoded = jsonDecode(
-    File('test/fixtures/gateway_v1/$name').readAsStringSync(),
+    File('test/fixtures/gateway_v2/$name').readAsStringSync(),
   ) as Map;
+  if (decoded['result'] case final Map result) return Map<String, dynamic>.from(result);
   final response = Map<String, dynamic>.from(decoded['response'] as Map);
   return Map<String, dynamic>.from(response['result'] as Map);
 }

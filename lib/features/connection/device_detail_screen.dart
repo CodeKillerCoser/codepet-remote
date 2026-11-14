@@ -295,6 +295,7 @@ String _connectionLabel(DeviceConnectionState state) => switch (state) {
     };
 
 String _providerStatusLabel(ProviderStatus status) => switch (status) {
+      ProviderStatus.unknown => "状态未知",
       ProviderStatus.connecting => '连接中',
       ProviderStatus.ready => '可用',
       ProviderStatus.stopped => '已停止',

@@ -1,0 +1,43 @@
+{
+  "jsonrpc": "2.0",
+  "id": "gateway-handshake-1",
+  "result": {
+    "protocol": {
+      "version": 2,
+      "minVersion": 2,
+      "selectedVersion": 2
+    },
+    "device": {
+      "name": "MacBook",
+      "operatingSystem": "macOS",
+      "systemVersion": "15.6"
+    },
+    "providers": [
+      {
+        "id": "codex-work",
+        "identity": {
+          "displayName": "Codex Work",
+          "icon": "https://cdn.example.com/codex.png",
+          "defaultWorkspaceRoot": "/Users/test/.codepet/remote_workspace/codex"
+        },
+        "runtime": {
+          "status": "ready",
+          "version": "0.151.0",
+          "executablePath": "/usr/local/bin/codex",
+          "authentication": {
+            "status": "signed-in",
+            "displayText": "Signed in"
+          },
+          "usage": {
+            "displayText": "72% remaining",
+            "details": []
+          }
+        },
+        "capabilities": {
+          "revision": "codex-catalog-1"
+        }
+      }
+    ],
+    "eventCursor": "event-40"
+  }
+}

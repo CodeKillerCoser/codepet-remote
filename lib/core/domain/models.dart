@@ -2,7 +2,7 @@ import 'dart:convert';
 
 typedef JsonMap = Map<String, dynamic>;
 
-const gatewayProtocolVersion = 1;
+const gatewayProtocolVersion = 2;
 
 /// Stable, protocol-independent identity for a resource owned by a Provider.
 ///
@@ -64,6 +64,7 @@ class DeviceDescriptor {
 }
 
 enum ProviderStatus {
+  unknown('unknown'),
   connecting('connecting'),
   ready('ready'),
   stopped('stopped'),
@@ -77,12 +78,13 @@ enum ProviderStatus {
   static ProviderStatus fromWire(Object? value) {
     return ProviderStatus.values.firstWhere(
       (status) => status.wireValue == value,
-      orElse: () => throw FormatException('Unknown provider status: $value'),
+      orElse: () => ProviderStatus.unknown,
     );
   }
 }
 
 enum ConversationStatus {
+  unknown('unknown'),
   idle('idle'),
   running('running'),
   waitingApproval('waiting-approval'),
@@ -97,7 +99,7 @@ enum ConversationStatus {
   static ConversationStatus fromWire(Object? value) {
     return ConversationStatus.values.firstWhere(
       (status) => status.wireValue == value,
-      orElse: () => throw FormatException('Unknown conversation status: $value'),
+      orElse: () => ConversationStatus.unknown,
     );
   }
 }
@@ -109,6 +111,7 @@ abstract final class PermissionLevel {
 }
 
 enum TurnStatus {
+  unknown('unknown'),
   queued('queued'),
   running('running'),
   waitingApproval('waiting-approval'),
@@ -128,7 +131,7 @@ enum TurnStatus {
   static TurnStatus fromWire(Object? value) {
     return TurnStatus.values.firstWhere(
       (status) => status.wireValue == value,
-      orElse: () => throw FormatException('Unknown turn status: $value'),
+      orElse: () => TurnStatus.unknown,
     );
   }
 }
@@ -1128,6 +1131,7 @@ class ConversationSummary {
         providerId: providerId,
         title: title,
         status: switch (turn.status) {
+          TurnStatus.unknown => ConversationStatus.unknown,
           TurnStatus.queued || TurnStatus.running => ConversationStatus.running,
           TurnStatus.waitingApproval => ConversationStatus.waitingApproval,
           TurnStatus.failed => ConversationStatus.error,
@@ -1360,6 +1364,7 @@ class ConversationDetail {
     final turn = activeTurn;
     if (turn == null) return summary.status;
     return switch (turn.status) {
+      TurnStatus.unknown => ConversationStatus.unknown,
       TurnStatus.queued || TurnStatus.running => ConversationStatus.running,
       TurnStatus.waitingApproval => ConversationStatus.waitingApproval,
       TurnStatus.failed => ConversationStatus.error,
@@ -1811,6 +1816,7 @@ TurnTask _newerTurn(TurnTask current, TurnTask incoming) {
 }
 
 int _turnStatusRank(TurnStatus status) => switch (status) {
+      TurnStatus.unknown => -1,
       TurnStatus.queued => 0,
       TurnStatus.running => 1,
       TurnStatus.waitingApproval => 2,

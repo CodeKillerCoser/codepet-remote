@@ -116,6 +116,10 @@ final class ProtocolGatewayClient
       (raw) {
         try {
           final envelope = sdk.ProtocolEventEnvelope.fromJson(raw);
+          if (!envelope.event.isKnown || _mapper.isUnsupportedEvent(envelope)) {
+            if (_seenEventCursors.add(envelope.eventCursor)) _latestEventCursor = envelope.eventCursor;
+            return;
+          }
           final event = _mapper.event(
             envelope,
             expectedDeviceId: expectedDeviceId,
@@ -190,14 +194,14 @@ final class ProtocolGatewayClient
             systemVersion: clientDevice.systemVersion,
           ),
           clientVersion: clientVersion,
-          supportedVersions: sdk.VersionRange(
-            minVersion: sdk.protocolVersion,
-            maxVersion: sdk.protocolVersion,
+          protocol: sdk.ProtocolVersionOffer(
+            minVersion: sdk.minProtocolVersion,
+            version: sdk.protocolVersion,
           ),
         ),
       ),
     );
-    if (generated.protocol.version != sdk.protocolVersion) {
+    if (!sdk.ProtocolVersionOffer(version: sdk.protocolVersion, minVersion: sdk.minProtocolVersion).accepts(generated.protocol)) {
       await transport.close();
       throw const GatewayConnectionException(
         'Gateway identity mismatch',
@@ -256,7 +260,7 @@ final class ProtocolGatewayClient
     }
     _startHeartbeat();
     return GatewayHandshake(
-      protocolVersion: sdk.protocolVersion,
+      protocolVersion: generated.protocol.selectedVersion,
       providers: providers,
       eventCursor: generated.eventCursor,
       deviceDescriptor: descriptor,
@@ -756,7 +760,7 @@ final class ProtocolGatewayClient
             !_mapper.hasSameRoute(responseActiveTurn.resource, requested))) {
       throw const FormatException('Conversation active turn providerId mismatch');
     }
-    for (final item in response.items) {
+    for (final item in response.items.where((item) => item is! sdk.UnrecognizedConversationItem)) {
       final approval = _mapper.itemApproval(item);
       final itemConversation = _mapper.itemConversation(item);
       final itemResource = _mapper.itemResource(item);
@@ -794,7 +798,7 @@ final class ProtocolGatewayClient
     final mappingStopwatch = Stopwatch()..start();
     final committedMessages = [
       for (var index = 0; index < response.items.length; index++)
-        _mapper.message(response.items[index], index),
+        if (response.items[index] is! sdk.UnrecognizedConversationItem) _mapper.message(response.items[index], index),
     ];
     final snapshot = ConversationSnapshot(
       detail: ConversationDetail(

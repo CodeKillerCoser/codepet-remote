@@ -5,7 +5,7 @@ import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, dynamic> fixture(String name) => jsonDecode(
-  File('test/fixtures/gateway_v1/$name.json').readAsStringSync(),
+  File('test/fixtures/gateway_v2/$name.json').readAsStringSync(),
 ) as Map<String, dynamic>;
 
 void main() {
@@ -25,10 +25,10 @@ void main() {
     expect(event.payload, isA<sdk.ConversationRecentChangedEvent>());
   });
 
-  test('recent rejects an injected scope, missing fence and missing revision', () {
-    expect(() => sdk.ConversationRecentRequest.fromJson({
+  test('recent ignores unknown scope and still requires fence and revision', () {
+    expect(sdk.ConversationRecentRequest.fromJson({
       'providerId': 'codex-work', 'readerScope': 'other-reader',
-    }), throwsA(isA<sdk.ProtocolCodecException>()));
+    }).providerId, 'codex-work');
     final page = Map<String, dynamic>.from(fixture('conversation-recent-response')['result'] as Map);
     page.remove('snapshotCursor');
     expect(() => sdk.ConversationRecentResponse.fromJson(page), throwsA(isA<sdk.ProtocolCodecException>()));

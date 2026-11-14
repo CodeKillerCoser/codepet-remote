@@ -863,7 +863,7 @@ class ConversationDetailController extends ApplicationNotifier {
       ConversationStatus.running ||
       ConversationStatus.waitingApproval ||
       ConversationStatus.waitingUserInput ||
-      ConversationStatus.archived => true,
+      ConversationStatus.archived || ConversationStatus.unknown => true,
       ConversationStatus.idle || ConversationStatus.error => false,
     };
   }

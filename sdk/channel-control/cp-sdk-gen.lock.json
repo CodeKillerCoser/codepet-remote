@@ -4,6 +4,6 @@
   "package": "channel-control",
   "role": "models",
   "protocolVersion": 1,
-  "protocolDigest": "sha256:a7be44d1085ac701b29b01f52eb3ca87f1d2d72537a32aa67ddd2d2963808f33",
+  "protocolDigest": "sha256:c6c0f31d3a55769f38ef9a4bb2a28aec57e0d84b8103696622ca70c0f91876df",
   "language": "dart"
 }

@@ -1029,6 +1029,7 @@ class _ConversationTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final statusColor = switch (status) {
+      ConversationStatus.unknown => colorScheme.outline,
       ConversationStatus.running => Theme.of(context).semantics.success,
       ConversationStatus.waitingApproval => Theme.of(context).semantics.warning,
       ConversationStatus.waitingUserInput => colorScheme.primary,
@@ -1438,6 +1439,7 @@ class _NoHistoryNotice extends StatelessWidget {
 
 String _statusLabel(ConversationStatus status) {
   return switch (status) {
+    ConversationStatus.unknown => "状态未知",
     ConversationStatus.idle => '空闲',
     ConversationStatus.running => '运行中',
     ConversationStatus.waitingApproval => '等待审批',

@@ -195,7 +195,7 @@ final class EngineGatewayTransport
       final handshake =
           (envelope.response as sdk.ProtocolSuccess).result
               as sdk.HandshakeResponse;
-      if (handshake.protocol.version != sdk.protocolVersion) {
+      if (!sdk.ProtocolVersionOffer(version: sdk.protocolVersion, minVersion: sdk.minProtocolVersion).accepts(handshake.protocol)) {
         throw const ce.ConnectionFailure(
           'protocol_version_mismatch',
           permanent: true,
