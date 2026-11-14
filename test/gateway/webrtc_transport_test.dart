@@ -572,7 +572,7 @@ void main() {
         interval: const Duration(milliseconds: 10),
         requestTimeout: const Duration(milliseconds: 10),
         failureTimeout: const Duration(milliseconds: 50),
-        onProviders: (_) {},
+        onProviders: (_, _, _) {},
         onFailure: (_, _) {
           failed.complete();
         },

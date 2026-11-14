@@ -57,6 +57,7 @@ final class EngineGatewayTransport
   Map<String, Object?>? _handshake;
   _PreparedGateway? _active;
   String? _cursor;
+  String? _inventoryEpoch;
   int _environment = 0, _serial = 0, _inflight = 0, _waiting = 0;
   bool _optimize = true;
   bool _closed = false, _subscribed = false, _online = false;
@@ -201,6 +202,9 @@ final class EngineGatewayTransport
           permanent: true,
         );
       }
+      if ((handshake.inventoryEpoch == null) != (handshake.inventoryRevision == null)) {
+        throw const FormatException('Inventory revision and epoch must be provided together');
+      }
       candidate.handshake = handshake.toJson();
       candidate.handshakeCursor = handshake.eventCursor;
       if (kind == ce.ChannelKind.lan &&
@@ -250,6 +254,11 @@ final class EngineGatewayTransport
   ) async {
     final old = previous as _PreparedGateway?;
     final candidate = next as _PreparedGateway;
+    if (_subscribed && candidate.handshake['inventoryEpoch'] != _inventoryEpoch) {
+      // A new Host may reuse valid numeric cursors. Do not replay into an old business snapshot.
+      _events.addError(const GatewayConnectionException('Host inventory epoch changed; a fresh snapshot is required', retryable: true));
+      throw const ce.ConnectionFailure('gateway_epoch_changed', permanent: true);
+    }
     // Old peers cannot safely fence a healthy connection: recover only.
     if (old != null && (!old.supportsControl || !candidate.supportsControl)) {
       return false;
@@ -333,6 +342,7 @@ final class EngineGatewayTransport
         }
       }
       cancellation.check();
+      _inventoryEpoch = candidate.handshake['inventoryEpoch'] as String?;
       _active = candidate;
       candidate.buffering = false;
       for (final event in candidate.buffered) {

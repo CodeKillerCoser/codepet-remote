@@ -6,6 +6,9 @@ import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:codepet_connection_engine/codepet_connection_engine.dart' as ce;
+import 'package:codepet_remote/application/sessions/device_session.dart';
+import 'package:codepet_remote/gateway/connection/engine_gateway_transport.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:codepet_remote/app/codepet_remote_app.dart';
@@ -427,6 +430,32 @@ void main() {
       );
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
+      if (const bool.fromEnvironment('QA_HOST_RESTART')) {
+        var created = 0;
+        final session = DeviceSession(device: registered.device,
+          reconnectDelays: const [Duration(milliseconds: 100)],
+          clientFactory: () {
+            created++;
+            return clientFor(EngineGatewayTransport(targetId: hostId,
+              kinds: [ce.ChannelKind.lan, ce.ChannelKind.relay],
+              openTransport: (kind, _) async => transportFor(kind != ce.ChannelKind.lan)));
+          });
+        try {
+          await session.connect();
+          expect(session.connectionState.name, 'online');
+          debugPrint('HOST_APP_QA awaiting isolated desktop restart');
+          final deadline = DateTime.now().add(const Duration(seconds: 120));
+          while ((created < 2 || session.connectionState.name != 'online') && DateTime.now().isBefore(deadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 100));
+          }
+          expect(created, greaterThanOrEqualTo(2), reason: 'A different Host epoch must create a new business session');
+          expect(session.connectionState.name, 'online');
+          expect(session.handshake!.providers, hasLength(3));
+          debugPrint('HOST_APP_QA managed transport rebuilt snapshot after Host restart');
+        } finally {
+          session.dispose();
+        }
+      }
       // Revocation must be observed by both native channel implementations.
       final sockets = [transportFor(false), transportFor(true)];
       final clients = sockets.map(clientFor).toList();
@@ -443,6 +472,52 @@ void main() {
       try {
         for (final client in clients) {
           await client.connect();
+        }
+        if (const bool.fromEnvironment('QA_PROVIDER_LIFECYCLE')) {
+          const instance = 'independent-echo-lifecycle';
+          Future<GatewayProviderChangedEvent> added(ProtocolGatewayClient client) => client.events
+              .where((event) => event is GatewayProviderChangedEvent && event.provider.id == instance && event.provider.isAvailable && event.provider.features.contains('agent'))
+              .cast<GatewayProviderChangedEvent>().first.timeout(const Duration(seconds: 120));
+          final additions = clients.map(added).toList();
+          debugPrint('HOST_APP_QA awaiting isolated Provider import');
+          final imported = await Future.wait(additions);
+          for (final event in imported) {
+            expect(event.provider.pluginId, 'independent.echo.lifecycle');
+            expect(event.provider.features, ['agent']);
+            expect(event.inventoryRevision, isNotNull);
+          }
+          final removals = [for (final client in clients) client.events
+              .where((event) => event is GatewayProviderRemovedEvent && event.providerId == instance)
+              .cast<GatewayProviderRemovedEvent>().first.timeout(const Duration(seconds: 120))];
+          final snapshots = [for (final client in clients) client.providerSnapshots
+              .firstWhere((providers) => !providers.any((p) => p.id == instance))
+              .timeout(const Duration(seconds: 120))];
+          debugPrint('HOST_APP_QA awaiting isolated Provider removal');
+          final removed = await Future.wait(removals);
+          for (var i = 0; i < removed.length; i++) {
+            expect(removed[i].inventoryRevision, greaterThan(imported[i].inventoryRevision!));
+          }
+          for (final snapshot in await Future.wait(snapshots)) {
+            expect(snapshot.map((p) => p.id).toSet(), {
+              'independent-echo-jsonl', 'independent-echo-zstd', 'independent-echo-mux',
+            });
+          }
+          // Removal snapshots are immediate; the next snapshot on each client is its real heartbeat.
+          final heartbeatSnapshots = await Future.wait([
+            for (final client in clients) client.providerSnapshots.first.timeout(const Duration(seconds: 45)),
+          ]);
+          for (final snapshot in heartbeatSnapshots) {
+            expect(snapshot.any((provider) => provider.id == instance), isFalse);
+            expect(snapshot, hasLength(3));
+          }
+          debugPrint('HOST_APP_QA LAN and native RTC next heartbeat excludes removed Provider');
+          final readditions = clients.map(added).toList();
+          debugPrint('HOST_APP_QA awaiting isolated Provider reimport');
+          final reimported = await Future.wait(readditions);
+          for (var i = 0; i < reimported.length; i++) {
+            expect(reimported[i].inventoryRevision!, greaterThan(removed[i].inventoryRevision));
+          }
+          debugPrint('HOST_APP_QA LAN and native RTC import/removal/reimport passed');
         }
         final result = await PinnedTlsConnection(expectedSha256: pin)
             .jsonRequest(
@@ -473,6 +548,6 @@ void main() {
       }
     },
     skip: !enabled,
-    timeout: const Timeout(Duration(minutes: 6)),
+    timeout: const Timeout(Duration(minutes: 12)),
   );
 }

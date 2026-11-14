@@ -15,6 +15,137 @@ import 'package:codepet_remote/gateway/transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('a new Host epoch requires a fresh snapshot rather than applying a low-revision delta', () async {
+    final transport = _FakeTransport({
+      'protocol.handshake': {..._handshakeJson(), 'inventoryRevision': 100, 'inventoryEpoch': 'old-host'},
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    });
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'epoch', clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect();
+    final errors = <Object>[];
+    final events = <GatewayEvent>[];
+    final subscription = client.events.listen(events.add, onError: errors.add);
+    transport.emit({'event': 'provider.removed', 'eventCursor': 'new-1',
+      'payload': {'providerId': _providerId, 'inventoryRevision': 1, 'inventoryEpoch': 'new-host'}});
+    await Future<void>.delayed(Duration.zero);
+    expect(errors.single, isA<GatewayConnectionException>().having((e) => e.retryable, 'retryable', true));
+    expect(events, isEmpty);
+    await client.describeProvider(_providerId); // The incomplete new inventory was not installed.
+    await subscription.cancel(); await client.close();
+  });
+
+  test('inventory epoch and revision are an atomic optional pair for old/new Hosts', () async {
+    for (final fields in [{'inventoryRevision': 1}, {'inventoryEpoch': 'host'}]) {
+      final transport = _FakeTransport({'protocol.handshake': {..._handshakeJson(), ...fields}});
+      final client = ProtocolGatewayClient(transport: transport, clientId: 'epoch', clientDevice: _clientDevice,
+        expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+      await expectLater(client.connect(), throwsFormatException);
+      await client.close();
+    }
+  });
+
+  test('inventory removal rejects replayed upserts and permits a new lower-generation installation', () async {
+    final original = _providerSummaryJson()..['runtime']['generation'] = 9;
+    final transport = _FakeTransport({
+      'protocol.handshake': {..._handshakeJson(), 'inventoryRevision': 10, 'inventoryEpoch': 'qa-host-epoch', 'providers': [original]},
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    });
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'inventory', clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect();
+    final snapshots = <List<GatewayProvider>>[];
+    final observed = <GatewayEvent>[];
+    final errors = <Object>[];
+    final sub = client.providerSnapshots.listen(snapshots.add);
+    final events = client.events.listen(observed.add, onError: errors.add);
+    transport.emit({'event': 'provider.removed', 'eventCursor': 'remove-11',
+      'payload': {'providerId': _providerId, 'inventoryRevision': 11, 'inventoryEpoch': 'qa-host-epoch'}});
+    transport.emit({'event': 'provider.changed', 'eventCursor': 'replay-10',
+      'payload': {'provider': original, 'inventoryRevision': 10, 'inventoryEpoch': 'qa-host-epoch'}});
+    // An old unversioned update must not undo a versioned inventory either.
+    transport.emit({'event': 'provider.changed', 'eventCursor': 'old-legacy', 'payload': {'provider': original}});
+    await Future<void>.delayed(Duration.zero);
+    expect(snapshots.single, isEmpty);
+    expect(observed.whereType<GatewayProviderChangedEvent>(), isEmpty);
+    await expectLater(client.describeProvider(_providerId), throwsFormatException);
+    final reinstalled = _providerSummaryJson()
+      ..['pluginId'] = 'example.plugin'
+      ..['features'] = ['agent', 'observation', 'future-feature']
+      ..['runtime']['generation'] = 1;
+    transport.emit({'event': 'provider.changed', 'eventCursor': 'reinstall-12',
+      'payload': {'provider': reinstalled, 'inventoryRevision': 12, 'inventoryEpoch': 'qa-host-epoch'}});
+    await Future<void>.delayed(Duration.zero);
+    final current = observed.whereType<GatewayProviderChangedEvent>().single.provider;
+    expect(current.generation, 1);
+    expect(current.pluginId, 'example.plugin');
+    expect(current.features, ['agent', 'observation']);
+    expect(errors, isEmpty);
+    expect(client.latestEventCursor, 'reinstall-12');
+    await sub.cancel(); await events.cancel(); await client.close();
+  });
+
+  testWidgets('a heartbeat started before removal cannot resurrect its old inventory', (tester) async {
+    final pong = Completer<Object?>();
+    String? pingId;
+    var pings = 0;
+    final transport = _FakeTransport({
+      'protocol.handshake': {..._handshakeJson(), 'inventoryRevision': 10, 'inventoryEpoch': 'qa-host-epoch'},
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    }, responseBuilder: (method, params, id) {
+      if (method != 'protocol.ping') return null;
+      pings++;
+      if (pings == 1) { pingId = id; return pong.future; }
+      return {'jsonrpc': '2.0', 'id': id, 'result': {'sequence': params['sequence'], 'providers': [], 'inventoryRevision': 12, 'inventoryEpoch': 'qa-host-epoch'}};
+    });
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'inventory', clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect(); 
+    final snapshots = <List<GatewayProvider>>[];
+    final sub = client.providerSnapshots.listen(snapshots.add);
+    await tester.pump(const Duration(seconds: 20)); 
+    expect(pings, 1);
+    transport.emit({'event': 'provider.removed', 'eventCursor': 'remove-11',
+      'payload': {'providerId': _providerId, 'inventoryRevision': 11, 'inventoryEpoch': 'qa-host-epoch'}});
+    pong.complete({'jsonrpc': '2.0', 'id': pingId, 'result': {'sequence': 1,
+      'providers': [_providerSummaryJson()], 'inventoryRevision': 10, 'inventoryEpoch': 'qa-host-epoch'}});
+    await tester.pump(); 
+    expect(snapshots.length, 1);
+    expect(snapshots.single, isEmpty);
+    await tester.pump(const Duration(seconds: 20)); 
+    expect(pings, 2);
+    expect(snapshots.length, 2);
+    expect(snapshots.last, isEmpty);
+    await tester.runAsync(() async {
+      await sub.cancel();
+      await client.close();
+    }); 
+  });
+
+  test('a description finishing after removal cannot repopulate the provider cache', () async {
+    final pending = Completer<Object?>();
+    String? describeId;
+    final transport = _FakeTransport({
+      'protocol.handshake': {..._handshakeJson(), 'inventoryRevision': 10, 'inventoryEpoch': 'qa-host-epoch'},
+      'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'},
+    }, responseBuilder: (method, _, id) {
+      if (method != 'provider.describe') return null;
+      describeId = id;
+      return pending.future;
+    });
+    final client = ProtocolGatewayClient(transport: transport, clientId: 'inventory', clientDevice: _clientDevice,
+      expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
+    await client.connect();
+    final description = client.describeProvider(_providerId);
+    final rejected = expectLater(description, throwsStateError);
+    transport.emit({'event': 'provider.removed', 'eventCursor': 'remove-11',
+      'payload': {'providerId': _providerId, 'inventoryRevision': 11, 'inventoryEpoch': 'qa-host-epoch'}});
+    pending.complete({'jsonrpc': '2.0', 'id': describeId, 'result': _providerDescriptionJson()});
+    await rejected;
+    await expectLater(client.describeProvider(_providerId), throwsFormatException);
+    await client.close();
+  });
+
   test('restores structured failures without native message items and rejects foreign turns', () async {
     final failed = _turnJson('failed-turn', status: 'failed')..['error'] = {
       'code': 'quota_exceeded', 'message': 'Free usage limit reached', 'retryable': false,
@@ -225,7 +356,7 @@ void main() {
     expect(transport.requests[0].method, 'protocol.handshake');
     expect(transport.requests[0].params['device'], _clientDevice.toJson());
     expect(transport.requests[0].params, isNot(contains('clientName')));
-    expect(transport.requests[0].params['protocol'], {'version': 2, 'minVersion': 2});
+    expect(transport.requests[0].params['protocol'], {'version': sdk.protocolVersion, 'minVersion': sdk.minProtocolVersion});
     expect(transport.requests[1].method, 'event.subscribe');
     expect(transport.requests[1].params['afterCursor'], 'opaque-handshake');
     expect(transport.requests[2].method, 'provider.describe');
@@ -1834,11 +1965,11 @@ void main() {
     for (final range in [
       {'version': 4, 'minVersion': 2, 'selectedVersion': 2},
       {'version': 4, 'minVersion': 2, 'selectedVersion': 3},
-      {'version': 4, 'minVersion': 3, 'selectedVersion': 3},
+      {'version': 4, 'minVersion': 4, 'selectedVersion': 4},
     ]) {
       final transport = _FakeTransport({'protocol.handshake': {..._handshakeJson(), 'protocol': range}, 'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'}});
       final client = ProtocolGatewayClient(transport: transport, clientId: 'v2-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
-      if (range['selectedVersion'] == 2) { expect((await client.connect()).protocolVersion, 2); }
+      if (range['selectedVersion'] == 3) { expect((await client.connect()).protocolVersion, 3); }
       else {
         await expectLater(client.connect(), throwsA(isA<GatewayConnectionException>()));
         expect(transport.requests.map((r) => r.method), ['protocol.handshake']);

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:codepet_remote/application/errors/application_failures.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:codepet_connection_engine/codepet_connection_engine.dart' as ce;
@@ -25,6 +26,38 @@ Map<String, Object?> rpc(String method) => {
 Future<void> flush() => Future<void>.delayed(Duration.zero);
 
 void main() {
+  for (final nextEpoch in ['same-host', 'new-host']) {
+    test('handover checks inventory epoch $nextEpoch before reusing a cursor or submitting writes', () async {
+      final owner = Owner();
+      final ready = Completer<void>();
+      final routes = <FakeRoute>[];
+      final errors = <Object>[];
+      final transport = EngineGatewayTransport(targetId: 'host', kinds: [ce.ChannelKind.lan, ce.ChannelKind.relay],
+        policy: const ce.ConnectionPolicy(stability: Duration.zero, upgradeCooldown: Duration.zero),
+        openTransport: (kind, _) async {
+          final route = FakeRoute(owner, kind, kind.name,
+            ready: kind == ce.ChannelKind.lan ? ready.future : null,
+            inventoryEpoch: kind == ce.ChannelKind.lan ? nextEpoch : 'same-host');
+          routes.add(route); return route;
+        });
+      final subscription = transport.events.listen((_) {}, onError: errors.add);
+      await transport.request(handshake);
+      await transport.request({...rpc('event.subscribe'), 'params': {'afterCursor': 'cursor1'}});
+      ready.complete();
+      if (nextEpoch == 'same-host') {
+        await eventually(() => transport.connectionTraffic?.channel == 'lan');
+        expect(errors, isEmpty);
+        expect(routes.singleWhere((r) => r.kind == ce.ChannelKind.lan).subscribeCursors, ['cursor1']);
+      } else {
+        await eventually(() => errors.any((error) => error is GatewayConnectionException && error.retryable));
+        expect(routes.singleWhere((r) => r.kind == ce.ChannelKind.lan).subscribeCursors, isEmpty);
+        expect(owner.switches, 1);
+      }
+      expect(routes.every((route) => route.writes == 0), isTrue);
+      await transport.close(); await subscription.cancel();
+    });
+  }
+
   test(
     'native cleanup failure retains budget across repeated reconnect inputs',
     () async {
@@ -288,7 +321,8 @@ class FakeRoute
         GatewayTransport,
         ChannelControlGatewayTransport,
         MetricsGatewayTransport {
-  FakeRoute(this.owner, this.kind, this.id, {this.ready});
+  FakeRoute(this.owner, this.kind, this.id, {this.ready, this.inventoryEpoch});
+  final String? inventoryEpoch;
   final Owner owner;
   final ce.ChannelKind kind;
   final String id;
@@ -358,6 +392,7 @@ class FakeRoute
             'systemVersion': '1',
           },
           'providers': [],
+          if (inventoryEpoch != null) ...{'inventoryEpoch': inventoryEpoch, 'inventoryRevision': 0},
           'eventCursor': 'cursor1',
         };
       case 'protocol.ping':

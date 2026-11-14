@@ -864,6 +864,8 @@ class GatewayProvider {
     required this.displayName,
     required this.status,
     required this.capabilities,
+    this.pluginId,
+    this.features = const [],
     this.icon,
     this.defaultWorkspaceRoot,
     this.runtimeVersion,
@@ -883,7 +885,10 @@ class GatewayProvider {
   };
   final String? connectionStatus;
   final int? generation;
+  /// Gateway instance identity; never the plugin package identity.
   final String id;
+  final String? pluginId;
+  final List<String> features;
   final String displayName;
   final String? icon;
   final String? defaultWorkspaceRoot;
@@ -901,6 +906,8 @@ class GatewayProvider {
   GatewayProvider withCapabilities(GatewayCapabilities value) =>
       GatewayProvider(
         id: id,
+        pluginId: pluginId,
+        features: features,
         displayName: displayName,
         status: status,
         capabilities: value,
@@ -1854,12 +1861,17 @@ abstract base class GatewayEvent {
 }
 
 final class GatewayProviderChangedEvent extends GatewayEvent {
-  const GatewayProviderChangedEvent({
-    required super.eventCursor,
-    required this.provider,
-  });
-
+  const GatewayProviderChangedEvent({required super.eventCursor, required this.provider, this.inventoryRevision, this.inventoryEpoch});
   final GatewayProvider provider;
+  final int? inventoryRevision;
+  final String? inventoryEpoch;
+}
+
+final class GatewayProviderRemovedEvent extends GatewayEvent {
+  const GatewayProviderRemovedEvent({required super.eventCursor, required this.providerId, required this.inventoryRevision, this.inventoryEpoch});
+  final String providerId;
+  final int inventoryRevision;
+  final String? inventoryEpoch;
 }
 
 enum ProjectChangeType { created, updated, deleted }

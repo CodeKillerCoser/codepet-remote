@@ -85,6 +85,8 @@ final class ProtocolGatewayClient
   final _providerSnapshots = StreamController<List<GatewayProvider>>.broadcast(sync: true);
   final Map<String, int> _providerVersions = {};
   Map<String, int> _pingVersions = {};
+  int? _inventoryRevision;
+  String? _inventoryEpoch;
   @override
   Stream<List<GatewayProvider>> get providerSnapshots => _providerSnapshots.stream;
   final StreamController<GatewayEvent> _events =
@@ -112,6 +114,9 @@ final class ProtocolGatewayClient
   Future<GatewayHandshake> connect() async {
     _providerIds = const {};
     _providersById.clear();
+    _providerVersions.clear();
+    _inventoryRevision = null;
+    _inventoryEpoch = null;
     _transportEvents ??= transport.events.listen(
       (raw) {
         try {
@@ -136,12 +141,19 @@ final class ProtocolGatewayClient
             return;
           }
           _logReceivedEvent(event);
+          _latestEventCursor = event.eventCursor;
           if (event is GatewayProviderChangedEvent) {
+            if (!_acceptInventoryRevision(event.inventoryRevision, event.inventoryEpoch)) return;
             _providersById[event.provider.id] = _mergeProviderSummary(event.provider);
             _providerIds = {..._providerIds, event.provider.id};
             _providerVersions.update(event.provider.id, (v) => v + 1, ifAbsent: () => 1);
+          } else if (event is GatewayProviderRemovedEvent) {
+            if (!_acceptInventoryRevision(event.inventoryRevision, event.inventoryEpoch)) return;
+            _providersById.remove(event.providerId);
+            _providerIds = _providersById.keys.toSet();
+            _providerVersions.update(event.providerId, (v) => v + 1, ifAbsent: () => 1);
+            _providerSnapshots.add(_providersById.values.toList(growable: false));
           }
-          _latestEventCursor = event.eventCursor;
           final traceContext = _traceCorrelation(envelope.traceContext);
           final shouldTraceEvent = event is! TurnOutputDeltaEvent ||
               _tracedOutputTurns.add(event.turnId);
@@ -223,6 +235,9 @@ final class ProtocolGatewayClient
     final providers = generated.providers
         .map(_mapper.provider)
         .toList(growable: false);
+    _validateInventoryVersion(generated.inventoryRevision, generated.inventoryEpoch);
+    _inventoryRevision = generated.inventoryRevision;
+    _inventoryEpoch = generated.inventoryEpoch;
     _providerIds = providers.map((value) => value.id).toSet();
     _providersById.addEntries(
       providers.map((value) => MapEntry(value.id, value)),
@@ -271,15 +286,28 @@ final class ProtocolGatewayClient
     _heartbeat = sdk.GatewayHeartbeatClient(
       client: _protocol,
       beforePing: () => _pingVersions = Map.of(_providerVersions),
-      onProviders: (summaries) {
+      onProviders: (summaries, revision, epoch) {
+        _validateInventoryVersion(revision, epoch);
+        if (epoch != _inventoryEpoch) {
+          _events.addError(const GatewayConnectionException('Host inventory epoch changed; a fresh handshake is required', retryable: true));
+          return;
+        }
+        if (_inventoryRevision != null && (revision == null || revision < _inventoryRevision!)) return;
+        if (revision != null) _inventoryRevision = revision;
         final fresh = <String, GatewayProvider>{};
         for (final summary in summaries) {
           final previous = _providersById[summary.id];
-          final changedDuringPing = _providerVersions[summary.id] != _pingVersions[summary.id];
+          final changedDuringPing = revision == null && _providerVersions[summary.id] != _pingVersions[summary.id];
           fresh[summary.id] = changedDuringPing && previous != null ? previous : _mergeProviderSummary(_mapper.provider(summary));
         }
         for (final entry in _providersById.entries) {
-          if (_providerVersions[entry.key] != _pingVersions[entry.key]) fresh[entry.key] = entry.value;
+          if (revision == null && _providerVersions[entry.key] != _pingVersions[entry.key]) fresh[entry.key] = entry.value;
+        }
+        // Membership epochs also invalidate a description crossing heartbeat removal/re-add.
+        for (final id in {..._providersById.keys, ...fresh.keys}) {
+          if (_providersById.containsKey(id) != fresh.containsKey(id)) {
+            _providerVersions.update(id, (v) => v + 1, ifAbsent: () => 1);
+          }
         }
         _providersById..clear()..addAll(fresh);
         _providerIds = fresh.keys.toSet();
@@ -296,10 +324,26 @@ final class ProtocolGatewayClient
     )..start();
   }
 
+  void _validateInventoryVersion(int? revision, String? epoch) {
+    if ((revision == null) != (epoch == null)) throw const FormatException('Inventory revision and epoch must be provided together');
+  }
+
+  bool _acceptInventoryRevision(int? revision, String? epoch) {
+    _validateInventoryVersion(revision, epoch);
+    if (epoch != _inventoryEpoch) {
+      // Ignore unversioned old updates; a different non-null epoch needs a full session rebuild.
+      if (epoch != null) _events.addError(const GatewayConnectionException('Host inventory epoch changed; a fresh handshake is required', retryable: true));
+      return false;
+    }
+    if (_inventoryRevision != null && (revision == null || revision <= _inventoryRevision!)) return false;
+    if (revision != null) _inventoryRevision = revision;
+    return true;
+  }
+
   GatewayProvider _mergeProviderSummary(GatewayProvider incoming) {
     final previous = _providersById[incoming.id];
     if (previous == null) return incoming;
-    if (previous.generation != null && incoming.generation != null && incoming.generation! < previous.generation!) return previous;
+    if (_inventoryRevision == null && previous.generation != null && incoming.generation != null && incoming.generation! < previous.generation!) return previous;
     if (previous.capabilitiesLoaded && previous.generation == incoming.generation &&
         previous.capabilities.revision == incoming.capabilities.revision) {
       return incoming.withCapabilities(previous.capabilities);
@@ -325,6 +369,7 @@ final class ProtocolGatewayClient
   @override
   Future<GatewayProvider> describeProvider(String providerId) async {
     _requireProviderId(providerId);
+    final before = _providerVersions[providerId];
     final response = await _call(
       () => _protocol.providerDescribe(
         sdk.ProviderDescribeRequest(providerId: providerId),
@@ -334,6 +379,9 @@ final class ProtocolGatewayClient
         response.capabilities.revision !=
             response.provider.capabilities.revision) {
       throw const FormatException('provider.describe returned stale identity');
+    }
+    if (!_providerIds.contains(providerId) || before != _providerVersions[providerId]) {
+      throw StateError('Provider inventory changed during description');
     }
     final provider = _mapper.provider(
       response.provider,

@@ -9,6 +9,29 @@ import 'package:codepet_remote/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('live provider removal drops the selection and accepts a fresh installation', () async {
+    final old = GatewayProvider(id: _primaryRoute, displayName: 'Old installation',
+      status: ProviderStatus.ready, generation: 9, capabilities: _listProvider.capabilities);
+    const second = GatewayProvider(id: 'second', displayName: 'Other provider',
+      status: ProviderStatus.ready, capabilities: GatewayCapabilities(revision: 'other', methods: []));
+    final client = _FakeClient(const [], providers: [old, second]);
+    final session = DeviceSession(device: _device('live-removal'), clientFactory: () => client);
+    await session.connect();
+    client.emit(GatewayProviderRemovedEvent(eventCursor: 'removed', providerId: _primaryRoute, inventoryRevision: 11));
+    await Future<void>.delayed(Duration.zero);
+    expect(session.handshake!.providers.single.id, 'second');
+    expect(session.selectedProvider?.id, 'second');
+    client.emit(GatewayProviderChangedEvent(eventCursor: 'reinstalled', inventoryRevision: 12,
+      provider: GatewayProvider(id: _primaryRoute, displayName: 'Fresh installation',
+        status: ProviderStatus.ready, generation: 1, pluginId: 'package', features: const ['agent'],
+        capabilities: _listProvider.capabilities)));
+    await Future<void>.delayed(Duration.zero);
+    expect(session.handshake!.providers.last.displayName, 'Fresh installation');
+    expect(session.handshake!.providers.last.generation, 1);
+    expect(session.handshake!.providers.last.features, ['agent']);
+    session.dispose();
+  });
+
   test('managed client owns recovery; triggers never rebuild a healthy business session', () async {
     final client = _ManagedClient();
     var created = 0;

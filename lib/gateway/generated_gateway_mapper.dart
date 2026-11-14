@@ -40,6 +40,8 @@ final class GeneratedGatewayMapper {
   }) =>
       GatewayProvider(
         id: value.id,
+        pluginId: value.pluginId,
+        features: value.features?.where((f) => f.isKnown).map((f) => f.wireValue).toList(growable: false) ?? const [],
         displayName: value.identity.displayName,
         icon: value.identity.icon,
         defaultWorkspaceRoot: value.identity.defaultWorkspaceRoot,
@@ -593,12 +595,17 @@ final class GeneratedGatewayMapper {
             _ => throw const FormatException("Unsupported project change"),
           },
         );
+      case sdk.ProtocolEventName.providerRemoved:
+        final payload = envelope.payload as sdk.ProviderRemovedEvent;
+        return GatewayProviderRemovedEvent(eventCursor: cursor, providerId: payload.providerId, inventoryRevision: payload.inventoryRevision, inventoryEpoch: payload.inventoryEpoch);
       case sdk.ProtocolEventName.providerChanged:
         final payload = envelope.payload as sdk.ProviderChangedEvent;
         final mapped = provider(payload.provider);
         return GatewayProviderChangedEvent(
           eventCursor: cursor,
           provider: mapped,
+          inventoryRevision: payload.inventoryRevision,
+          inventoryEpoch: payload.inventoryEpoch,
         );
       case sdk.ProtocolEventName.conversationUpserted:
         final payload = envelope.payload as sdk.ConversationUpsertedEvent;

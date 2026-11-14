@@ -516,7 +516,9 @@ class DeviceSession extends ApplicationNotifier {
           final current = handshake;
           if (current == null) return;
           final ids = snapshot.map((p) => p.id).toSet();
-          handshake = current.withProviders(current.providers.where((p) => ids.contains(p.id)).toList());
+          for (final removed in current.providers.where((p) => !ids.contains(p.id))) {
+            _removeProvider(removed.id);
+          }
           for (final provider in snapshot) {
             _applyProviderUpdate(provider);
           }
@@ -1216,6 +1218,24 @@ class DeviceSession extends ApplicationNotifier {
     }
   }
 
+  void _removeProvider(String providerId) {
+    final current = handshake;
+    if (current == null || !current.providers.any((p) => p.id == providerId)) return;
+    final remaining = current.providers.where((p) => p.id != providerId).toList();
+    handshake = current.withProviders(remaining);
+    messageCache.invalidateProvider(providerId);
+    _recentControllers.remove(providerId)?.dispose();
+    _pausedInteractionProviders.remove(providerId);
+    _releasingInteractionProviders.remove(providerId);
+    _conversationCursors.removeWhere((scope, _) => scope.providerId == providerId);
+    _loadedConversationScopes.removeWhere((scope) => scope.providerId == providerId);
+    _initialConversationLoads.removeWhere((scope) => scope.providerId == providerId);
+    _projectCursors.remove(providerId);
+    if (_selectedProviderId == providerId) _selectedProviderId = remaining.isEmpty ? null : remaining.first.id;
+    _ensureSelectedProviderLists();
+    _notifyListenersImmediately();
+  }
+
   void _applyProviderUpdate(GatewayProvider provider) {
       final currentHandshake = handshake;
       if (currentHandshake == null) return;
@@ -1266,6 +1286,10 @@ class DeviceSession extends ApplicationNotifier {
       final key = event.conversation.key;
       inputQueueRevisions[key] = event.revision;
       _notifyListenersImmediately();
+      return;
+    }
+    if (event is GatewayProviderRemovedEvent) {
+      _removeProvider(event.providerId);
       return;
     }
     if (event is GatewayProviderChangedEvent) {
