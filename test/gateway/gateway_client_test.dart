@@ -100,26 +100,26 @@ void main() {
     });
     final client = ProtocolGatewayClient(transport: transport, clientId: 'inventory', clientDevice: _clientDevice,
       expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
-    await client.connect(); 
+    await client.connect();
     final snapshots = <List<GatewayProvider>>[];
     final sub = client.providerSnapshots.listen(snapshots.add);
-    await tester.pump(const Duration(seconds: 20)); 
+    await tester.pump(const Duration(seconds: 20));
     expect(pings, 1);
     transport.emit({'event': 'provider.removed', 'eventCursor': 'remove-11',
       'payload': {'providerId': _providerId, 'inventoryRevision': 11, 'inventoryEpoch': 'qa-host-epoch'}});
     pong.complete({'jsonrpc': '2.0', 'id': pingId, 'result': {'sequence': 1,
       'providers': [_providerSummaryJson()], 'inventoryRevision': 10, 'inventoryEpoch': 'qa-host-epoch'}});
-    await tester.pump(); 
+    await tester.pump();
     expect(snapshots.length, 1);
     expect(snapshots.single, isEmpty);
-    await tester.pump(const Duration(seconds: 20)); 
+    await tester.pump(const Duration(seconds: 20));
     expect(pings, 2);
     expect(snapshots.length, 2);
     expect(snapshots.last, isEmpty);
     await tester.runAsync(() async {
       await sub.cancel();
       await client.close();
-    }); 
+    });
   });
 
   test('a description finishing after removal cannot repopulate the provider cache', () async {
