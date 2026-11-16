@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 
 import '../core/domain/models.dart';
 import '../application/ports/gateway_client.dart';
@@ -188,7 +189,7 @@ class DemoGatewayClient implements GatewayClient, ProjectGatewayClient, RecentCo
   Future<GatewayHandshake> connect() async {
     await Future<void>.delayed(const Duration(milliseconds: 250));
     return GatewayHandshake(
-      protocolVersion: gatewayProtocolVersion,
+      protocolVersion: sdk.protocolVersion,
       providers: [_provider],
       eventCursor: _cursor,
       deviceDescriptor: DeviceDescriptor(

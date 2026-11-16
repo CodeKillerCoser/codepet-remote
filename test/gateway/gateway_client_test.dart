@@ -337,7 +337,7 @@ void main() {
     final detail = await client.getConversation(page.conversations.single);
 
     expect(transport.connected, isTrue);
-    expect(handshake.protocolVersion, gatewayProtocolVersion);
+    expect(handshake.protocolVersion, sdk.protocolVersion);
     expect(handshake.providers.single.id, 'codex-work');
     expect(handshake.providers.single.id, _providerId);
     expect(handshake.providers.single.displayName, 'Codex');
@@ -1969,7 +1969,7 @@ void main() {
     ]) {
       final transport = _FakeTransport({'protocol.handshake': {..._handshakeJson(), 'protocol': range}, 'event.subscribe': {'subscribedAfterCursor': 'opaque-handshake'}});
       final client = ProtocolGatewayClient(transport: transport, clientId: 'v2-test', clientDevice: _clientDevice, expectedDeviceId: 'device-test', expectedIdentityFingerprint: _fingerprint);
-      if (range['selectedVersion'] == 3) { expect((await client.connect()).protocolVersion, 3); }
+      if (range['selectedVersion'] == 4) { expect((await client.connect()).protocolVersion, 4); }
       else {
         await expectLater(client.connect(), throwsA(isA<GatewayConnectionException>()));
         expect(transport.requests.map((r) => r.method), ['protocol.handshake']);
@@ -2254,7 +2254,7 @@ final class _FixedTraceRecorder implements TraceRecorder {
 
 JsonMap _handshakeJson() {
   return {
-    'protocol': {'version': 2, 'minVersion': 2, 'selectedVersion': 2},
+    'protocol': {'version': sdk.protocolVersion, 'minVersion': sdk.minProtocolVersion, 'selectedVersion': sdk.protocolVersion},
     'device': {
       'name': 'Test Host',
       'operatingSystem': 'TestOS',

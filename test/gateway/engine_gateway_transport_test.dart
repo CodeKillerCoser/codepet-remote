@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart' as sdk;
 import 'package:codepet_remote/application/errors/application_failures.dart';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -385,7 +386,7 @@ class FakeRoute
     switch (request['method']) {
       case 'protocol.handshake':
         result = {
-          'protocol': {'version': 2, 'minVersion': 2, 'selectedVersion': 2},
+          'protocol': {'version': sdk.protocolVersion, 'minVersion': sdk.minProtocolVersion, 'selectedVersion': sdk.protocolVersion},
           'device': {
             'name': 'Host',
             'operatingSystem': 'Test',

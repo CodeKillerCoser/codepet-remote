@@ -2,8 +2,6 @@ import 'dart:convert';
 
 typedef JsonMap = Map<String, dynamic>;
 
-const gatewayProtocolVersion = 2;
-
 /// Stable, protocol-independent identity for a resource owned by a Provider.
 ///
 /// JSON conversion is intentionally kept at the infrastructure boundary; the
