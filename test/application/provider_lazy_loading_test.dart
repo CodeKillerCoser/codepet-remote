@@ -212,7 +212,7 @@ void main() {
   );
 
   test(
-    'unselected provider events defer list requests until selection',
+    'unselected provider events defer ordinary lists and keep recent manual',
     () async {
       await session.connect();
       await pumpEventQueue();
@@ -235,8 +235,10 @@ void main() {
       await pumpEventQueue();
       expect(
         client.calls.skip(count).map((call) => (call.$1, call.$2)).toSet(),
-        {('projects', 'a'), ('chat', 'a'), ('recent', 'a')},
+        {('projects', 'a'), ('chat', 'a')},
       );
+      await session.selectedProviderRecent!.refresh();
+      expect(client.calls.last, ('recent', 'a', null));
     },
   );
 

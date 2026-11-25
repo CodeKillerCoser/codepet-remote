@@ -79,9 +79,12 @@ void main() {
     await tester.pumpAndSettle();
     final before = tester.getTopLeft(find.text('row-10')).dy;
     client.change('r2');
+    expect(client.requests, hasLength(1));
+    final refresh = controller.refresh();
     client.requests.last.$2.complete(recentPage(
       ['inserted-a', 'inserted-b', ...rows], revision: 'r2', snapshotCursor: 'e1',
     ));
+    await refresh;
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('row-10')).dy, closeTo(before, 1));
     expect(scroll.offset, greaterThan(800));
@@ -108,11 +111,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('expired tail'), findsOneWidget);
     expect(client.requests, hasLength(4));
-    // An unrelated invalidation may update the first page, but cannot unlock
-    // the exhausted automatic recovery cycle.
+    // A passive invalidation starts no request; a manual snapshot refresh still
+    // cannot unlock the exhausted automatic recovery cycle.
     client.change('r3');
+    expect(client.requests, hasLength(4));
+    final refresh = controller.refresh();
     client.requests.last.$2.complete(recentPage(['first'], revision: 'r3',
       snapshotCursor: 'e1', nextCursor: 'tail-3'));
+    await refresh;
     await tester.pumpAndSettle();
     expect(client.requests, hasLength(5));
     expect(controller.canAutoLoadMore, isFalse);
@@ -159,12 +165,15 @@ void main() {
     final neighbor = rows[rows.indexOf(removed) + 1];
     final before = tester.getTopLeft(find.text(neighbor)).dy;
     final replacement = ['inserted', ...rows.where((row) => row != removed)];
+    expect(client.requests, hasLength(1));
+    final refresh = controller.refresh();
     client.requests.last.$2.complete(recentPage(replacement.take(15).toList(),
       revision: 'r2', snapshotCursor: 'e1', nextCursor: 'restore-depth'));
     await tester.pump();
     expect(client.requests.last.$1, 'restore-depth');
     client.requests.last.$2.complete(recentPage(replacement.skip(15).toList(),
       revision: 'r2', snapshotCursor: 'e1', nextCursor: 'large-remaining-feed'));
+    await refresh;
     await tester.pumpAndSettle();
     expect(client.requests, hasLength(3));
     expect(controller.canLoadMore, isTrue);
