@@ -17,7 +17,7 @@ class ConversationMessageSource extends ApplicationNotifier {
   bool interactionAcquired = false;
   Future<ConversationDetail> Function()? loadLatest;
   bool _refreshing = false;
-  bool _refreshPending = false;
+  bool get refreshingLatest => _refreshing;
   final Set<String> _changedDuringRefresh = {};
   int version = 0;
   Completer<void>? initialLoad;
@@ -35,10 +35,8 @@ class ConversationMessageSource extends ApplicationNotifier {
     final event = incoming is ObservedGatewayEvent ? incoming.event : incoming;
     if (event is ConversationItemUpsertedEvent && event.item == null &&
         event.conversationId == detail.summary.id) {
-      if (!interactionAcquired && loadLatest != null) {
-        _refreshPending = true;
-        unawaited(_refreshLatest());
-      }
+      // External Hook observations update status through canonical summaries.
+      // Content without an item is fetched only by an explicit user refresh.
       return;
     }
     if (_refreshing) {
@@ -67,16 +65,16 @@ class ConversationMessageSource extends ApplicationNotifier {
     notifyApplicationListeners();
   }
 
-  Future<void> _refreshLatest() async {
-    if (_refreshing) return;
+  Future<void> refreshLatest() async {
+    if (_refreshing || closed || loadLatest == null) return;
     _refreshing = true;
     final expectedVersion = version;
+    notifyApplicationListeners();
     try {
-      while (_refreshPending && !closed && !interactionAcquired && version == expectedVersion) {
-        _refreshPending = false;
+      if (!closed && version == expectedVersion) {
         _changedDuringRefresh.clear();
         final page = await loadLatest!();
-        if (closed || interactionAcquired || version != expectedVersion) return;
+        if (closed || version != expectedVersion) return;
         // Canonical upserts preserve older pages, item identity and pagination/fence.
         for (final item in page.committedMessages) {
           if (_changedDuringRefresh.contains('${item.turnId}\u0000${item.itemId ?? item.id}')) continue;
@@ -87,12 +85,13 @@ class ConversationMessageSource extends ApplicationNotifier {
         notifyApplicationListeners();
       }
     } catch (error) {
-      if (!closed && version == expectedVersion && !interactionAcquired) {
+      if (!closed && version == expectedVersion) {
         historyError = '更新消息失败：$error';
         notifyApplicationListeners();
       }
     } finally {
       _refreshing = false;
+      if (!closed && version == expectedVersion) notifyApplicationListeners();
     }
   }
 

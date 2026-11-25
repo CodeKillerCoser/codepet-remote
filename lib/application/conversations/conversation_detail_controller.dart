@@ -96,6 +96,13 @@ class ConversationDetailController extends ApplicationNotifier {
   bool get staleCapabilities => _staleCapabilities;
   bool get hasLoadedHistory => _source?.initialized == true;
   bool get loadingEarlier => _source?.loadingEarlier ?? false;
+  bool get canRefreshLatest => _source?.initialized == true &&
+      _source?.loadLatest != null && _source?.refreshingLatest == false &&
+      _session.connectionState == DeviceConnectionState.online;
+
+  Future<void> refreshLatest() async {
+    if (canRefreshLatest) await _source!.refreshLatest();
+  }
   bool get hasEarlier => _source?.nextCursor != null;
   String? get historyError => _source?.historyError;
   bool get interrupting => _interrupting;

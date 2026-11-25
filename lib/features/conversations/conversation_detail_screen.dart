@@ -400,6 +400,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         actions: [
+          IconButton(
+            key: const Key('refresh-conversation'),
+            tooltip: '刷新会话',
+            onPressed: _controller.canRefreshLatest
+                ? () => unawaited(_controller.refreshLatest())
+                : null,
+            icon: const Icon(Icons.refresh),
+          ),
           if (_controller.canRelease)
             PopupMenuButton<String>(
               key: const Key('conversation-actions'),

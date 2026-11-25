@@ -13,7 +13,7 @@ void main() {
     id: id, itemId: id, turnId: 'turn', role: MessageRole.assistant,
     kind: 'message', content: text, createdAt: DateTime(2026), isStreaming: false);
 
-  test('empty updates require no control and merge latest items without clearing history', () async {
+  test('passive hints never pull; manual refresh merges latest items and preserves history', () async {
     final source = ConversationMessageSource(ConversationDetail(summary: conversation('a'),
       committedMessages: [message('old', 'older page'), message('latest', 'before')]), 'runtime', DateTime(2026));
     addTearDown(source.dispose);
@@ -32,12 +32,14 @@ void main() {
     expect(calls, 0);
     source.applyEvent(hint);
     await Future<void>.delayed(Duration.zero);
+    expect(calls, 0);
+    await source.refreshLatest();
     expect(calls, 1);
     expect(source.detail.committedMessages.map((m) => m.content), ['older page', 'after', 'stream', 'new output']);
     expect(source.nextCursor, 'older-cursor');
   });
 
-  test('invalidation requests coalesce and acquiring control discards in-flight results', () async {
+  test('manual refresh is single flight and a changed runtime discards its result', () async {
     final source = ConversationMessageSource(ConversationDetail(summary: conversation('a')), 'runtime', DateTime(2026));
     addTearDown(source.dispose);
     final pending = Completer<ConversationDetail>();
@@ -45,15 +47,18 @@ void main() {
     source.loadLatest = () { calls++; return pending.future; };
     const hint = ConversationItemUpsertedEvent(eventCursor: 'hint', conversationId: 'a', item: null);
     source.applyEvent(hint); source.applyEvent(hint); source.applyEvent(hint);
+    expect(calls, 0);
+    final refresh = source.refreshLatest();
+    await source.refreshLatest();
     expect(calls, 1);
-    source.interactionAcquired = true;
+    source.version++;
     pending.complete(ConversationDetail(summary: conversation('a'), committedMessages: [message('stale', 'stale')]));
-    await Future<void>.delayed(Duration.zero);
+    await refresh;
     expect(calls, 1);
     expect(source.detail.committedMessages, isEmpty);
   });
 
-  test('a hint during fetch schedules one trailing fetch; failure keeps old messages', () async {
+  test('hints during a manual refresh never schedule another fetch; retry keeps history', () async {
     final source = ConversationMessageSource(ConversationDetail(summary: conversation('a'),
       committedMessages: [message('old', 'keep')]), 'runtime', DateTime(2026));
     addTearDown(source.dispose);
@@ -61,9 +66,12 @@ void main() {
     var calls = 0;
     source.loadLatest = () { calls++; if (calls == 1) return pending.future; throw StateError('offline'); };
     const hint = ConversationItemUpsertedEvent(eventCursor: 'hint', conversationId: 'a', item: null);
+    final refresh = source.refreshLatest();
     source.applyEvent(hint); source.applyEvent(hint); source.applyEvent(hint);
     pending.complete(ConversationDetail(summary: conversation('a'), committedMessages: [message('new', 'new')]));
-    await Future<void>.delayed(Duration.zero);
+    await refresh;
+    expect(calls, 1);
+    await source.refreshLatest();
     expect(calls, 2);
     expect(source.detail.committedMessages.map((m) => m.content), ['keep', 'new']);
     expect(source.historyError, contains('offline'));
@@ -74,10 +82,10 @@ void main() {
     addTearDown(source.dispose);
     final pending = Completer<ConversationDetail>();
     source.loadLatest = () => pending.future;
-    source.applyEvent(const ConversationItemUpsertedEvent(eventCursor: 'hint', conversationId: 'a', item: null));
+    final refresh = source.refreshLatest();
     source.applyEvent(ConversationItemUpsertedEvent(eventCursor: 'live', conversationId: 'a', item: message('one', 'fresh')));
     pending.complete(ConversationDetail(summary: conversation('a'), committedMessages: [message('one', 'stale')]));
-    await Future<void>.delayed(Duration.zero);
+    await refresh;
     expect(source.detail.committedMessages.single.content, 'fresh');
     expect(source.detail.lastEventCursor, 'live');
   });

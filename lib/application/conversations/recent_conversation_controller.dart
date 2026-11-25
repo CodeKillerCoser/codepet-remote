@@ -24,6 +24,8 @@ class RecentConversationController extends ApplicationNotifier {
   bool _disposed = false;
   bool _active = true;
   bool _refreshPending = false;
+  bool _snapshotStale = false;
+  final Map<String, ConversationSummary> _liveSummaries = {};
   bool supported = false;
   bool loading = false;
   bool refreshing = false;
@@ -80,6 +82,8 @@ class RecentConversationController extends ApplicationNotifier {
     _automaticRecoveries = 0;
     _automaticRecoveryError = null;
     _refreshPending = false;
+    _snapshotStale = false;
+    _liveSummaries.clear();
     final window = _window;
     _window = null;
     if (window != null) unawaited(window.close());
@@ -97,7 +101,10 @@ class RecentConversationController extends ApplicationNotifier {
     }
     final client = _client;
     if (!supported || client == null || client is! RecentConversationGateway) return;
+    if (loading) return;
     _refreshPending = false;
+    _snapshotStale = false;
+    _liveSummaries.clear();
     final generation = ++_requestGeneration;
     final restoreCount = conversations.length;
     _nextCursor = null;
@@ -129,7 +136,25 @@ class RecentConversationController extends ApplicationNotifier {
           final event = incoming is ObservedGatewayEvent ? incoming.event : incoming;
           if (event is RecentConversationsChangedEvent &&
               event.providerId == providerId && event.revision != snapshotRevision) {
-            unawaited(refresh());
+            // Keep the display, but never continue a cursor invalidated by the
+            // Host. Passive hints must not start another query.
+            _snapshotStale = true;
+            _nextCursor = null;
+            notifyApplicationListeners();
+          } else if (event is ConversationUpsertedEvent &&
+              event.conversation.providerId == providerId) {
+            final row = event.conversation;
+            final key = _identity(row);
+            _liveSummaries.remove(key);
+            _liveSummaries[key] = row;
+            if (_liveSummaries.length > 512) _liveSummaries.remove(_liveSummaries.keys.first);
+            // Host queries alone determine membership and ordering. Events only
+            // update rows already present, without pulling any list or history.
+            conversations = List.unmodifiable([
+              for (final current in conversations)
+                if (_identity(current) == key) _mergeLive(current) else current,
+            ]);
+            notifyApplicationListeners();
           }
         },
         onError: (value, stack) {
@@ -148,7 +173,7 @@ class RecentConversationController extends ApplicationNotifier {
       final cursors = <String>{};
       var anchorLookahead = 0;
       _append(replacement, seen, page.conversations);
-      while ((replacement.length < restoreCount ||
+      while (!_snapshotStale && (replacement.length < restoreCount ||
               anchorCandidates.isNotEmpty &&
                   !anchorCandidates.any(seen.contains) &&
                   anchorLookahead < anchorLookaheadPages) &&
@@ -168,16 +193,16 @@ class RecentConversationController extends ApplicationNotifier {
       if (page.nextCursor != null && cursors.contains(page.nextCursor)) {
         throw const FormatException('最近分页游标重复');
       }
-      conversations = List.unmodifiable(replacement);
+      conversations = List.unmodifiable(replacement.map(_mergeLive));
       _consumedCursors
         ..clear()
         ..addAll(cursors);
       revision = snapshotRevision;
-      _nextCursor = page.nextCursor;
+      _nextCursor = _snapshotStale ? null : page.nextCursor;
       loaded = true;
     } catch (value) {
       if (!_owns(generation, client)) return;
-      if (value is GatewayProtocolException &&
+      if (!_snapshotStale && value is GatewayProtocolException &&
           value.code == 'recent_cursor_expired') {
         await _recoverSnapshot(value);
         return;
@@ -208,6 +233,7 @@ class RecentConversationController extends ApplicationNotifier {
         providerId: providerId, cursor: cursor, limit: pageSize,
       );
       if (!_owns(generation, client)) return;
+      if (_snapshotStale) return;
       if (page.revision != revision) {
         await _recoverSnapshot(const FormatException('最近分页快照已变化'));
         return;
@@ -222,10 +248,11 @@ class RecentConversationController extends ApplicationNotifier {
         _automaticRecoveries = 0;
         _automaticRecoveryError = null;
       }
-      conversations = List.unmodifiable(next);
+      conversations = List.unmodifiable(next.map(_mergeLive));
       _nextCursor = page.nextCursor;
     } catch (value) {
       if (!_owns(generation, client)) return;
+      if (_snapshotStale) return;
       if (value is GatewayProtocolException && value.code == 'recent_cursor_expired') {
         await _recoverSnapshot(value);
         return;
@@ -247,6 +274,7 @@ class RecentConversationController extends ApplicationNotifier {
       return;
     }
     _automaticRecoveries++;
+    loading = false;
     await refresh();
   }
 
@@ -259,6 +287,11 @@ class RecentConversationController extends ApplicationNotifier {
 
   static String _identity(ConversationSummary conversation) =>
       conversation.resource?.key ?? '${conversation.providerId}\u0000${conversation.id}';
+
+  ConversationSummary _mergeLive(ConversationSummary row) {
+    final live = _liveSummaries[_identity(row)];
+    return live == null ? row : live.withReadState(row.readState.merge(live.readState));
+  }
 
   static void _append(List<ConversationSummary> target, Set<String> seen,
       List<ConversationSummary> incoming) {

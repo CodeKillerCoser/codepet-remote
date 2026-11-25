@@ -45,6 +45,8 @@ void main() {
     await session.loadMoreSelectedProviderConversations();
     final ordinary = session.conversations;
     client.change('r2');
+    expect(client.requests, hasLength(1));
+    session.selectedProviderRecent!.refresh();
     client.requests.last.$2.complete(recentPage(['newly-active-old'], revision: 'r2', snapshotCursor: 'e1'));
     await pumpEventQueue();
     expect(identical(session.conversations, ordinary), isTrue);
@@ -67,6 +69,8 @@ void main() {
     await session.ensureProjectConversations(project);
     final ordinary = session.conversations;
     client.change('r2');
+    expect(client.requests, hasLength(1));
+    session.selectedProviderRecent!.refresh();
     client.requests.last.$2.complete(recentPage([], revision: 'r2', snapshotCursor: 'e1'));
     await pumpEventQueue();
     expect(identical(session.conversations, ordinary), isTrue);

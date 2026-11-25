@@ -257,6 +257,17 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                       _SectionTitle(
                         key: Key('recent-section-${session.device.deviceId}'),
                         title: '最近',
+                        action: session.selectedProviderRecent?.supported == true
+                            ? IconButton(
+                                key: const Key('refresh-recent'),
+                                tooltip: '刷新最近会话',
+                                onPressed: session.connectionState == DeviceConnectionState.online &&
+                                        session.selectedProviderRecent?.loading == false
+                                    ? () => unawaited(session.selectedProviderRecent!.refresh())
+                                    : null,
+                                icon: const Icon(Icons.refresh),
+                              )
+                            : null,
                         countLabel:
                             session.selectedProviderConversationCountLabel,
                         expanded: viewState.recentExpanded,

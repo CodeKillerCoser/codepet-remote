@@ -15,11 +15,52 @@ void main() {
   });
   tearDown(() async { controller.dispose(); await client.close(); });
 
+  test('a passive event burst updates only loaded rows without any extra queries', () async {
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(['a', 'b'], nextCursor: 'old-tail'));
+    await pumpEventQueue();
+    for (var i = 0; i < 100; i++) { client.change('r$i'); }
+    final running = recentItem('a').withTurn(TurnTask(id: 'turn', providerId: 'test',
+      conversationId: 'a', status: TurnStatus.running, updatedAt: DateTime(2026)));
+    client.cursor = 'e101';
+    client.stream.add(ConversationUpsertedEvent(eventCursor: client.cursor, conversation: running));
+    client.cursor = 'e102';
+    client.stream.add(ConversationUpsertedEvent(eventCursor: client.cursor, conversation: recentItem('unknown')));
+    controller.setActive(false);
+    controller.setActive(true);
+    await pumpEventQueue();
+    expect(client.requests, hasLength(1));
+    expect(controller.conversations.map((row) => row.id), ['a', 'b']);
+    expect(controller.conversations.first.status, ConversationStatus.running);
+    expect(controller.canAutoLoadMore, isFalse);
+    final manual = controller.refresh();
+    await controller.refresh();
+    expect(client.requests, hasLength(2));
+    client.requests.last.$2.complete(recentPage(['b', 'a', 'unknown'],
+      revision: 'r100', snapshotCursor: client.cursor));
+    await manual;
+    expect(controller.conversations.map((row) => row.id), ['b', 'a', 'unknown']);
+  });
+
+  test('a live status received during a manual snapshot survives its older row', () async {
+    controller.attach(client, recentProvider);
+    client.cursor = 'e1';
+    final running = recentItem('a').withTurn(TurnTask(id: 'turn', providerId: 'test',
+      conversationId: 'a', status: TurnStatus.running, updatedAt: DateTime(2026)));
+    client.stream.add(ConversationUpsertedEvent(eventCursor: client.cursor, conversation: running));
+    client.requests.single.$2.complete(recentPage(['a']));
+    await pumpEventQueue();
+    expect(client.requests, hasLength(1));
+    expect(controller.conversations.single.status, ConversationStatus.running);
+  });
+
   test('inactive refresh preserves cached depth and defers further pages', () async {
     controller.attach(client, recentProvider);
     client.requests.single.$2.complete(recentPage(['a', 'b']));
     await pumpEventQueue();
     client.change('r2');
+    expect(client.requests, hasLength(1));
+    controller.refresh();
     controller.setActive(false);
     client.requests.last.$2.complete(recentPage(['new-a'], revision: 'r2',
       snapshotCursor: 'e1', nextCursor: 'next'));
@@ -57,7 +98,7 @@ void main() {
     expect(controller.canLoadMore, isFalse);
   });
 
-  test('allows one tail and rejects its result after invalidation', () async {
+  test('passive invalidation rejects an old tail without starting another query', () async {
     controller.attach(client, recentProvider);
     client.requests.single.$2.complete(recentPage(['old'], nextCursor: 'old-next'));
     await pumpEventQueue();
@@ -65,25 +106,45 @@ void main() {
     await controller.loadMore();
     expect(client.requests.length, 2);
     client.change('r2');
-    expect(client.requests.last.$1, isNull);
-    client.requests.last.$2.complete(recentPage(['new'], revision: 'r2', snapshotCursor: 'e1'));
-    await pumpEventQueue();
+    expect(client.requests, hasLength(2));
     client.requests[1].$2.complete(recentPage(['stale']));
     await oldTail;
+    expect(controller.conversations.single.id, 'old');
+    expect(controller.canAutoLoadMore, isFalse);
+    final refresh = controller.refresh();
+    client.requests.last.$2.complete(recentPage(['new'], revision: 'r2', snapshotCursor: 'e1'));
+    await refresh;
     expect(controller.conversations.single.id, 'new');
     expect(controller.revision, 'r2');
   });
 
-  test('snapshot fence rejects a response invalidated during initial request', () async {
+  test('invalidation during an initial request keeps the display without automatic queries', () async {
     controller.attach(client, recentProvider);
     client.change('r2');
     client.requests.first.$2.complete(recentPage(['stale']));
     await pumpEventQueue();
-    expect(controller.conversations, isEmpty);
-    expect(client.requests, hasLength(2));
+    expect(controller.conversations.single.id, 'stale');
+    expect(client.requests, hasLength(1));
+    final refresh = controller.refresh();
     client.requests.last.$2.complete(recentPage(['new'], revision: 'r2', snapshotCursor: 'e1'));
-    await pumpEventQueue();
+    await refresh;
     expect(controller.conversations.single.id, 'new');
+  });
+
+  test('a passive invalidation cannot trigger automatic recovery of a failing tail', () async {
+    controller.attach(client, recentProvider);
+    client.requests.single.$2.complete(recentPage(['old'], nextCursor: 'tail'));
+    await pumpEventQueue();
+    final tail = controller.loadMore();
+    client.change('r2');
+    client.requests.last.$2.completeError(const GatewayProtocolException(
+      code: 'recent_cursor_expired', message: 'invalidated', retryable: false,
+    ));
+    await tail;
+    await pumpEventQueue();
+    expect(client.requests, hasLength(2));
+    expect(controller.conversations.single.id, 'old');
+    expect(controller.canAutoLoadMore, isFalse);
   });
 
   test('refresh atomically restores depth and follows an anchor into later pages', () async {
@@ -92,6 +153,7 @@ void main() {
     await pumpEventQueue();
     controller.anchorCandidates = ['test\u0000anchor'];
     client.change('r2');
+    controller.refresh();
     client.requests.last.$2.complete(recentPage(['x', 'y'], revision: 'r2', nextCursor: 'new-next', snapshotCursor: 'e1'));
     await pumpEventQueue();
     expect(controller.conversations.map((item) => item.id), ['a', 'anchor']);
@@ -119,6 +181,7 @@ void main() {
     await pumpEventQueue();
     controller.anchorCandidates = ['test\u0000deleted', 'test\u0000neighbor'];
     client.change('r2');
+    controller.refresh();
     client.requests.last.$2.complete(recentPage(['new', 'neighbor'],
       revision: 'r2', snapshotCursor: 'e1', nextCursor: 'large-unread-tail'));
     await pumpEventQueue();
@@ -134,6 +197,7 @@ void main() {
     await pumpEventQueue();
     controller.anchorCandidates = ['test\u0000deleted', 'test\u0000also-deleted'];
     client.change('r2');
+    controller.refresh();
     client.requests.last.$2.complete(recentPage(['new-0', 'new-1'],
       revision: 'r2', snapshotCursor: 'e1', nextCursor: 'lookahead-1'));
     await pumpEventQueue();
