@@ -364,3 +364,47 @@ then carried outside Gateway business DTOs. DTOs are generated in
 `protocol/channel/control/v1`. A legacy Host is used without control frames and
 without proactive healthy upgrades. Host commits one active connection per
 credential/logical session and filters desktop metrics by this ownership.
+
+## Conversation terminal sheet
+
+The conversation toolbar opens Flutter's Material Bottom Sheet with the official
+`DraggableScrollableSheet`, snapping to small (35%), large (70%) and full (100%)
+heights. Short windows and IME insets raise the minimum to keep controls usable.
+Only the handle drags the sheet; the terminal has its own scroll and input.
+Size selection has no visible segmented control. One compact title-bar icon
+toggles fullscreen and restores the previous partial height; accessible handle
+actions can increase/decrease between detents.
+
+`TerminalSessionController` owns one pure-Dart xterm VT model per device and
+conversation, retained by `DeviceSession` across sheet routes. Raw PTY bytes use
+streaming UTF-8 decoding, preserving ANSI, cursor movement, carriage returns and
+alternate-screen semantics. The view reports dimensions to the same Host PTY;
+keyboard shortcuts use the emulator's current input mode. The terminal type scale
+is adapted from shared theme tokens in `AppTerminalTheme`.
+
+`TerminalGateway` is an optional Host business surface. Its infrastructure adapter
+uses generated `terminal.open/read/write/resize/close` methods and discovers
+`terminal-pty-v1` through `protocol.describe`. Old Hosts show a local upgrade
+message. No terminal failure changes device connection or Provider state, and no
+output is converted to conversation messages or sent through the global replay
+stream. LAN/RTC authentication and transport remain in their existing layers.
+
+Reads use byte offsets (32 KiB per response); the Host retains a bounded 1 MiB.
+A gap is explicit, never silently dropped before feeding the VT parser. The
+client reads at most once concurrently and pauses when the sheet/background is
+hidden. Phone disconnection does not terminate a live shell. Host restart and
+phone process-death restoration are outside the current in-memory lifetime.
+Finished Host sessions may expire after 30 minutes without access.
+
+Dismissal detaches; explicit End closes. New terminal first closes the previous
+PTY. Inputs are serialized, split into 16 KiB chunks with monotonic sequence
+numbers, and never replayed after uncertain acknowledgement. Epoch checks reject
+late output from an ended PTY. Both Host and Remote must be upgraded.
+
+Tests cover narrow/landscape/large sheets, keyboard insets, focus, drag snapping,
+retained models, UTF-8/ANSI chunks, resize, reconnect and unknown writes. Set
+`CODEPET_TERMINAL_PROBE` to the built `codepet-host-terminal-probe` fixture to run
+the generated Dart SDK against a real Rust Gateway and shell. This uses a
+test-only stdio bridge; it does not replace production channel authentication or
+claim real-phone/network acceptance. The Host product record is
+`knowledge/20-product/mobile-terminal-sheet.md`.

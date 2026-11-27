@@ -11,6 +11,8 @@ import '../errors/application_failures.dart';
 import '../ports/application_log.dart';
 import '../ports/trace_recorder.dart';
 import '../ports/gateway_client.dart';
+import '../ports/terminal_gateway.dart';
+import '../terminal/terminal_session_controller.dart';
 import '../support/application_notifier.dart';
 import '../sync/gateway_event_window.dart';
 import '../../core/domain/paired_device.dart';
@@ -100,6 +102,14 @@ class DeviceSession extends ApplicationNotifier {
     _notifyListenersImmediately();
     return true;
   }
+
+  final Map<String, TerminalSessionController> _terminals = {};
+
+  TerminalSessionController terminalForConversation(ConversationSummary conversation) =>
+      _terminals.putIfAbsent(conversationRoutingKey(conversation), () => TerminalSessionController(
+        gateway: () => runtimeLease?.terminalGateway,
+        cwd: conversation.workspaceRoot,
+      ));
 
   final messageCache = ConversationMessageCache();
   final Map<String, RecentConversationController> _recentControllers = {};
@@ -1270,6 +1280,8 @@ class DeviceSession extends ApplicationNotifier {
 
   @override
   void dispose() {
+    for (final terminal in _terminals.values) { terminal.dispose(); }
+    _terminals.clear();
     _cancelConversationNotification();
     _disposed = true;
     for (final controller in _recentControllers.values) {

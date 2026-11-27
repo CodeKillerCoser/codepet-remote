@@ -14,6 +14,7 @@ import 'widgets/conversation_input_queue_view.dart';
 import '../../core/domain/notification.dart';
 import '../common/identity_icons.dart';
 import '../common/floating_detail_panel.dart';
+import '../terminal/conversation_terminal_sheet.dart';
 import '../connection/device_connection_notice.dart';
 import '../connection/connection_traffic_view.dart';
 import 'widgets/conversation_timeline_view.dart';
@@ -400,6 +401,15 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         actions: [
+          IconButton(
+            key: const Key('open-conversation-terminal'),
+            tooltip: '电脑终端',
+            onPressed: () => unawaited(showConversationTerminal(
+              context: context,
+              controller: widget.session.terminalForConversation(summary),
+            )),
+            icon: const Icon(Icons.terminal_outlined),
+          ),
           IconButton(
             key: const Key('refresh-conversation'),
             tooltip: '刷新会话',

@@ -21,6 +21,9 @@ class DeviceSessionRuntimeLease {
       _client is ConversationInputQueueGatewayClient
       ? _client as ConversationInputQueueGatewayClient
       : null;
+  TerminalGateway? get terminalGateway => _client is TerminalGatewayHost
+      ? (_client as TerminalGatewayHost).terminalGateway : null;
+
   GatewayEventWindow openEventWindow() => _client.openEventWindow();
 
   Future<ConversationSnapshot> getConversation(

@@ -16,6 +16,8 @@ import '../diagnostics/app_log.dart';
 import '../diagnostics/gateway_protocol_instrumentation.dart';
 import 'generated_gateway_mapper.dart';
 import 'transport.dart';
+import '../application/ports/terminal_gateway.dart';
+import 'terminal_gateway.dart';
 
 final AppLog _log = AppLog.named('gateway.protocol');
 
@@ -23,6 +25,7 @@ final AppLog _log = AppLog.named('gateway.protocol');
 final class ProtocolGatewayClient
     implements
         GatewayClient,
+        TerminalGatewayHost,
         ConversationInputQueueGatewayClient,
         ManagedConnectionGatewayClient,
         ConnectionMetricsGatewayClient,
@@ -52,6 +55,9 @@ final class ProtocolGatewayClient
       instrumentation: _instrumentation,
     );
   }
+
+  @override
+  late final TerminalGateway terminalGateway = ProtocolTerminalGateway(_protocol, _call);
 
   final GatewayTransport transport;
   @override bool get managesConnection => transport is ManagedGatewayTransport;
