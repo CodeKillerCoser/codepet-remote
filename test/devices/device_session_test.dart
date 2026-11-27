@@ -359,6 +359,53 @@ void main() {
     expect(session.conversations.single.project, moved);
   });
 
+  test('project pages retain Provider batch order and display rows without formal membership', () async {
+    final project = _gatewayProject();
+    ConversationSummary row(String id, int time) => _routedConversation(
+      nativeId: id, providerPluginId: 'dev.codepet.codex',
+      providerInstanceId: _primaryRoute, workspaceRoot: '/worktree', updatedAt: time,
+    );
+    final first = row('directory-match', 1000);
+    final later = row('later-batch-but-newer', 3000);
+    final client = _ProjectFakeClient(projects: [project], conversations: [first]);
+    client.onProjectConversationPage = (cursor) => ConversationPage(
+      conversations: cursor == null ? [first] : [later, first],
+      snapshotCursor: client.latestEventCursor!,
+      nextCursor: cursor == null ? 'paired-cursor' : 'expired-cursor',
+    );
+    final session = DeviceSession(device: _device('display-project'), clientFactory: () => client);
+    addTearDown(session.dispose);
+    await session.connect();
+    await pumpEventQueue();
+    await session.ensureProjectConversations(project);
+    expect(session.conversationsForProject(project).single.project, isNull);
+    expect(session.selectedProviderStandaloneConversations, isEmpty);
+    expect(session.canLoadMoreProjectConversations(project), isTrue);
+    await session.loadMoreProjectConversations(project);
+    expect(
+      session.conversationsForProject(project).map((row) => row.resource?.nativeResourceId),
+      ['directory-match', 'later-batch-but-newer'],
+    );
+    expect(client.listRequests.last.cursor, 'paired-cursor');
+    client.onProjectConversationPage = (cursor) {
+      if (cursor != null) {
+        throw const GatewayProtocolException(
+          code: 'invalid_cursor', message: 'Project filter changed', retryable: false,
+        );
+      }
+      return ConversationPage(
+        conversations: [later], snapshotCursor: client.latestEventCursor!,
+      );
+    };
+    await session.loadMoreProjectConversations(project);
+    expect(client.listRequests.last.cursor, isNull);
+    expect(
+      session.conversationsForProject(project).single.resource?.nativeResourceId,
+      'later-batch-but-newer',
+    );
+    expect(session.canLoadMoreProjectConversations(project), isFalse);
+  });
+
   test('project changed refreshes created and updated values and removes deletes',
       () async {
     final initial = _gatewayProject();

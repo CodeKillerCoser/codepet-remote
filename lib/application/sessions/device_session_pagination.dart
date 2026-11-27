@@ -1,6 +1,22 @@
 part of 'device_session.dart';
 
 extension _DeviceSessionPagination on DeviceSession {
+  void _applyConversationPage(
+    _ConversationListScope scope,
+    ConversationPage page, {
+    required bool append,
+  }) {
+    conversations = mergeRoutedConversations(conversations, page.conversations);
+    if (scope.project case final project?) {
+      final keys = append
+          ? _projectConversationKeys.putIfAbsent(project, () => {})
+          : _projectConversationKeys[project] = {};
+      keys.addAll(page.conversations.map(conversationRoutingKey));
+    }
+    _conversationCursors[scope] = page.nextCursor;
+    _loadedConversationScopes.add(scope);
+  }
+
   Future<void> _loadConversationPages({String? providerId}) async {
     final routes = _conversationCursors.entries
         .where(
@@ -37,22 +53,33 @@ extension _DeviceSessionPagination on DeviceSession {
     final window = client.openEventWindow();
     _notifyListenersImmediately();
     try {
-      final page = await client
+      Future<ConversationPage> readPage(String? nextCursor) => client
           .listConversations(
             providerId: id,
             projectFilter: scope.filter,
-            cursor: cursor,
+            cursor: nextCursor,
             limit: DeviceSession.conversationPageSize,
           )
           .timeout(providerLoadTimeout);
+      var append = cursor != null;
+      ConversationPage page;
+      try {
+        page = await readPage(cursor);
+      } on GatewayProtocolException catch (error) {
+        if (scope.project == null || !append || error.code != 'invalid_cursor' ||
+            !_ownsProviderLoad(generation, client, id, epoch)) {
+          rethrow;
+        }
+        append = false;
+        page = await readPage(null);
+      }
       if (!_ownsProviderLoad(generation, client, id, epoch)) return;
+      if (scope.project != null && cursor != null &&
+          _conversationCursors[scope] != cursor) {
+        return;
+      }
       final tail = _snapshotTail(window, page.snapshotCursor);
-      conversations = mergeRoutedConversations(
-        conversations,
-        page.conversations,
-      );
-      _conversationCursors[scope] = page.nextCursor;
-      _loadedConversationScopes.add(scope);
+      _applyConversationPage(scope, page, append: append);
       _replayConversationTail(tail, id);
       _conversationErrors.remove(id);
     } catch (error, stack) {

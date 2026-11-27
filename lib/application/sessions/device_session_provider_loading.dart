@@ -33,6 +33,7 @@ extension _DeviceSessionProviderLoading on DeviceSession {
     _initialConversationLoads.removeWhere((scope, _) => scope.providerId == id);
     _loadedConversationScopes.removeWhere((scope) => scope.providerId == id);
     _conversationCursors.removeWhere((scope, _) => scope.providerId == id);
+    _projectConversationKeys.removeWhere((project, _) => project.providerId == id);
     _projectCursors.remove(id);
     _conversationPageLoads.removeWhere((scope, _) => scope.providerId == id);
     _projectPageLoads.remove(id);
@@ -347,12 +348,7 @@ extension _DeviceSessionProviderLoading on DeviceSession {
             if (!_ownsProviderLoad(generation, client, providerId, epoch)) {
               return;
             }
-            conversations = mergeRoutedConversations(
-              conversations,
-              page.conversations,
-            );
-            _conversationCursors[scope] = page.nextCursor;
-            _loadedConversationScopes.add(scope);
+            _applyConversationPage(scope, page, append: false);
           }
           for (final pendingTurn in batch.values) {
             _applyTurnToConversation(pendingTurn);

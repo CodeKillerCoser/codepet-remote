@@ -156,6 +156,7 @@ class DeviceSession extends ApplicationNotifier {
   Timer? _reconnectTimer;
   StreamSubscription<void>? _reconnectSignalSubscription;
   final Map<_ConversationListScope, String?> _conversationCursors = {};
+  final Map<RoutedResourceId, Set<String>> _projectConversationKeys = {};
   final Set<_ConversationListScope> _loadedConversationScopes = {};
   final Map<_ConversationListScope, Object> _conversationPageLoads = {};
   final Map<String, Object> _projectPageLoads = {};
@@ -286,17 +287,27 @@ class DeviceSession extends ApplicationNotifier {
   List<ConversationSummary> get selectedProviderRecentConversations =>
       selectedProviderRecent?.conversations ?? const [];
 
-  List<ConversationSummary> get selectedProviderStandaloneConversations =>
-      selectedProviderConversations
-          .where((conversation) => conversation.project == null)
-          .toList(growable: false);
+  List<ConversationSummary> get selectedProviderStandaloneConversations {
+    final grouped = {
+      for (final entry in _projectConversationKeys.entries)
+        if (entry.key.providerId == selectedProviderId) ...entry.value,
+    };
+    return selectedProviderConversations
+        .where((conversation) =>
+            conversation.project == null &&
+            !grouped.contains(conversationRoutingKey(conversation)))
+        .toList(growable: false);
+  }
 
-  List<ConversationSummary> conversationsForProject(GatewayProject project) =>
-      sortRecentConversations(
-        selectedProviderConversations.where(
-          (conversation) => conversation.project == project.resource,
-        ),
-      );
+  List<ConversationSummary> conversationsForProject(GatewayProject project) {
+    final keys = _projectConversationKeys[project.resource];
+    if (keys == null || keys.isEmpty) return const [];
+    final rows = {
+      for (final conversation in selectedProviderConversations)
+        conversationRoutingKey(conversation): conversation,
+    };
+    return [for (final key in keys) ?rows[key]];
+  }
   bool hasLoadedProjectConversations(GatewayProject project) =>
       _loadedConversationScopes.contains(
         _ConversationListScope.project(project.resource),
@@ -758,6 +769,12 @@ class DeviceSession extends ApplicationNotifier {
         throw StateError('连接已变化，请重新新建会话');
       }
       _upsertEventConversation(conversation, allowInsert: true);
+      if (project != null) {
+        _projectConversationKeys[project.resource] = {
+          conversationRoutingKey(conversation),
+          ...?_projectConversationKeys[project.resource],
+        };
+      }
       _notifyListenersImmediately();
       logger.info(
         'Conversation create succeeded for device ${device.deviceId} '
@@ -946,6 +963,7 @@ class DeviceSession extends ApplicationNotifier {
     ];
     _loadedConversationScopes.remove(_ConversationListScope.project(resource));
     _conversationCursors.remove(_ConversationListScope.project(resource));
+    _projectConversationKeys.remove(resource);
   }
 
   bool _ownsRuntime(int generation, GatewayClient client) =>
@@ -959,6 +977,7 @@ class DeviceSession extends ApplicationNotifier {
     conversations = const [];
     projects = const [];
     _conversationCursors.clear();
+    _projectConversationKeys.clear();
     _loadedConversationScopes.clear();
     _conversationPageLoads.clear();
     _projectPageLoads.clear();
@@ -1092,6 +1111,11 @@ class DeviceSession extends ApplicationNotifier {
     }
     // Events update known rows; membership and counts come from paginated list.
     if (current == null && !allowInsert) return;
+    if (incoming.project case final project?) {
+      for (final entry in _projectConversationKeys.entries) {
+        if (entry.key != project) entry.value.remove(key);
+      }
+    }
     final eventConversation = current == null
         ? incoming
         : current

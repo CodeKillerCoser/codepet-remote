@@ -163,6 +163,7 @@ class _ProjectFakeClient extends _FakeClient implements ProjectGatewayClient {
   final List<GatewayProject> projects;
   int projectListCalls = 0;
   Completer<ProjectPage>? nextProjectPage;
+  FutureOr<ConversationPage> Function(String? cursor)? onProjectConversationPage;
 
   @override
   Future<ConversationPage> listConversations({
@@ -177,6 +178,10 @@ class _ProjectFakeClient extends _FakeClient implements ProjectGatewayClient {
       cursor: cursor,
       limit: limit,
     ));
+    final override = onProjectConversationPage;
+    if (projectFilter is ProjectConversationFilter && override != null) {
+      return override(cursor);
+    }
     final filtered = values.where((conversation) => switch (projectFilter) {
           AllConversationFilter() => true,
           StandaloneConversationFilter() => conversation.project == null,
