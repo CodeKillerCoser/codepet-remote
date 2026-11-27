@@ -110,6 +110,7 @@ void main() {
     );
     final session = _session(client);
     await session.connect();
+    await tester.pump();
     expect(session.conversations.map((item) => item.title), ['首页 A']);
     await tester.pumpWidget(MaterialApp(home: _HomeHarness(session: session)));
 

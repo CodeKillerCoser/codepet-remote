@@ -3,6 +3,7 @@ import '../../ui/components/app_navigation_drawer.dart';
 import '../../ui/layout/app_layout.dart';
 import '../../ui/layout/app_scaffold.dart';
 import 'dart:async';
+import 'provider_data_notice.dart';
 
 import 'package:flutter/material.dart';
 
@@ -208,6 +209,7 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                         DeviceConnectionNotice(session: session),
                         const SizedBox(height: AppLayout.space12),
                       ],
+                      ProviderDataNotice(session: session),
                       ...[
                         _SectionTitle(
                           key: Key(
@@ -277,7 +279,11 @@ class _RemoteHomeScreenState extends State<RemoteHomeScreen> {
                       ),
                       if (viewState.recentExpanded) ...[
                         const SizedBox(height: AppLayout.space10),
-                        RecentConversationFeed(
+                        if (selectedProvider?.capabilitiesLoaded == false)
+                          const ListTile(
+                            title: Text('智能体信息加载后显示最近对话'),
+                          )
+                        else RecentConversationFeed(
                           key: ValueKey(viewState),
                           controller: session.selectedProviderRecent,
                           scrollController: viewState.scrollController,

@@ -31,6 +31,38 @@ forbidden import fails CI.
 
 ## Application ownership
 
+### Device connection and Provider business data
+
+`DeviceSession.connect()` completes after transport authentication, Gateway handshake
+and event subscription are installed. It publishes `online` before describing
+Providers or loading projects and conversations. Those reads cannot close the
+device session or postpone its availability subscription. Actual transport/event
+stream failure and authentication/handshake errors retain their connection failure
+and recovery behavior.
+
+Each Provider has independent `ProviderDataState` values for capabilities, projects
+and conversations. Initial reads run separately with a ten-second budget; a failure
+retains cached content and a local retry action. Recent already owns its independent
+controller. Unknown capabilities show a loading/error state, not an unsupported
+capability assertion. Manual retry only repeats the affected read, never reconnects
+the device or replays a write/turn. Lazy loading still fetches lists only for the
+selected Provider.
+
+Business loading and pagination use Provider epochs as well as device runtime
+generations. Provider restart, removal/reinstallation, capability revision or
+availability changes retire old requests. Per-Provider/scope in-flight tokens keep
+old completions from clearing a replacement request's gate, and a pending page in
+one tab cannot block paging in another. Each list request opens its own event window
+before the read and reconciles the returned snapshot fence with later events.
+
+`device_session_provider_loading.dart` owns this loading policy;
+`device_session_pagination.dart` owns independent paging;
+`device_session_runtime_lease.dart` preserves the operation lease API; and
+`device_session_projection.dart` owns projection helpers. These are parts of the
+session library, not additional lifecycle authorities. `ProviderDataNotice` presents
+loading/error/retry beside the selected Provider. A failed business request is not
+rendered as an offline device.
+
 ### Connection status in page headers
 
 The home page keeps `ConnectionTrafficView` above `home-content-scroll`, with

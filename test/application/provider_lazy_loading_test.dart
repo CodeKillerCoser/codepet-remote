@@ -186,11 +186,11 @@ void main() {
     () async {
       await session.connect();
       await pumpEventQueue();
-      expect(client.calls, [
+      expect(client.calls.toSet(), {
         ('projects', 'a', null),
         ('chat', 'a', null),
         ('recent', 'a', null),
-      ]);
+      });
       await session.selectedProviderRecent!.loadMore();
       await session.loadMoreSelectedProviderConversations();
       session.selectProvider(provider('b'));
